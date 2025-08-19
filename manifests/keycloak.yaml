@@ -186,13 +186,13 @@ spec:
 
               # --- Ensure base ROLE exists ---
               psql -h "$PGHOST" -p "$PGPORT" -U "$VAULTADMIN_USER" -d yugabyte <<'EOSQL'
-              DO $$
+              DO \$\$
               BEGIN
                 IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'keycloak') THEN
                   CREATE ROLE keycloak NOLOGIN;
                 END IF;
               END
-              $$;
+              \$\$;
               EOSQL
 
               # --- Schema + grants (idempotent) ---
