@@ -446,6 +446,7 @@ spec:
         # === Vault Agent Injector for dynamic DB creds (Yugabyte/Postgres engine) ===
         vault.hashicorp.com/agent-inject: "true"
         vault.hashicorp.com/role: "keycloak"
+        config.linkerd.io/skip-outbound-ports: "8200"
         vault.hashicorp.com/agent-inject-secret-db-username: "yugabyte-db/creds/keycloak"
         vault.hashicorp.com/agent-inject-secret-db-password: "yugabyte-db/creds/keycloak"
         vault.hashicorp.com/agent-inject-template-db-username: |
