@@ -31,15 +31,10 @@ spec:
         - name: copy-secret
           image: alpine/k8s:1.31.4
           resources:
-            requests:
-              cpu: "50m"
-              memory: "64Mi"
-            limits:
-              cpu: "200m"
-              memory: "256Mi"
-          command:
-            - /bin/sh
-            - -c
+            requests: { cpu: "50m", memory: "64Mi" }
+            limits:   { cpu: "200m", memory: "256Mi" }
+          command: ["/bin/sh","-c"]
+          args:
             - |
               echo "🔁 Copying 'vault-root-token' from vault → keycloak..."
               kubectl get secret vault-root-token -n vault -o yaml | \
@@ -101,10 +96,10 @@ spec:
               PGHOST=yb-tserver-service.yugabyte.svc.cluster.local
               PGPORT=5433
               DB=keycloak
-              ROLE=keycloak
+              ROLE_GROUP=keycloak          # NOLOGIN group for DML
+              ROLE_OWNER=keycloak_app      # LOGIN stable owner (password rotates)
               VAULTADMIN_USER=vaultadmin
 
-              # Alpine packages
               apk add --no-cache postgresql15-client jq netcat-openbsd curl
 
               export PATH="$PATH:/vault-bin"
@@ -117,43 +112,34 @@ spec:
               done
               export VAULT_TOKEN="$(cat /vault-token/VAULT_TOKEN)"
 
-              # --- Ensure KV v2 mount at secret/ (idempotent) ---
+              # --- Ensure KV v2 mount at secret/ (for KC admin creds) ---
               echo "🧩 Ensuring KV v2 at mount 'secret/'..."
-              SECRET_MOUNT_TYPE="$(vault secrets list -format=json | jq -r '.["secret/"].type // empty' || true)"
-              SECRET_MOUNT_VER="$(vault secrets list -format=json | jq -r '.["secret/"].options.version // empty' || true)"
-              if [ -z "$SECRET_MOUNT_TYPE" ]; then
-                echo "ℹ️ Mount 'secret/' not found; enabling KV v2..."
-                vault secrets enable -path=secret -version=2 kv
-              else
-                if [ "$SECRET_MOUNT_TYPE" != "kv" ] || [ "$SECRET_MOUNT_VER" != "2" ]; then
-                  echo "❌ Mount 'secret/' exists but is not KV v2 (type=$SECRET_MOUNT_TYPE version=$SECRET_MOUNT_VER)."
-                  echo "   Refusing to proceed to avoid breaking existing data. Please migrate to KV v2 or adjust your injector templates."
-                  exit 1
+              if ! vault secrets list -format=json | jq -e '."secret/".type=="kv" and ."secret/".options.version=="2"' >/dev/null 2>&1; then
+                if vault secrets list -format=json | jq -e 'has("secret/")' >/dev/null 2>&1; then
+                  echo "❌ 'secret/' exists but is not KVv2; please migrate manually."; exit 1
+                else
+                  vault secrets enable -path=secret -version=2 kv
                 fi
               fi
 
-              # --- Seed Keycloak admin creds at secret/keycloak/admin (KV v2) if absent ---
+              # --- Seed Keycloak admin creds at secret/keycloak/admin if absent ---
               echo "🔐 Seeding Keycloak admin creds (if missing) at secret/keycloak/admin..."
-              if vault kv get -format=json secret/keycloak/admin >/dev/null 2>&1; then
-                echo "✅ Admin secret already exists; leaving as-is."
-              else
+              if ! vault kv get -format=json secret/keycloak/admin >/dev/null 2>&1; then
                 PASS="$(tr -dc 'A-Za-z0-9@#%^+=_' </dev/urandom | head -c 32)"
                 vault kv put secret/keycloak/admin username=admin password="$PASS"
                 echo "✅ Seeded admin secret at secret/keycloak/admin"
+              else
+                echo "✅ Admin secret already present"
               fi
 
               # --- Wait for DB availability ---
               until getent hosts "$PGHOST" >/dev/null 2>&1; do
-                echo "🔄 Waiting for DNS for $PGHOST..."
-                sleep 3
-              done
+                echo "🔄 Waiting for DNS for $PGHOST..."; sleep 3; done
               until nc -z -w1 "$PGHOST" "$PGPORT"; do
-                echo "⏳ Waiting for DB port $PGPORT..."
-                sleep 3
-              done
-              echo "✅ YugabyteDB reachable on $PGHOST:$PGPORT"
+                echo "⏳ Waiting for DB $PGHOST:$PGPORT..."; sleep 3; done
+              echo "✅ Yugabyte reachable"
 
-              # --- Fetch vaultadmin password from Vault (KV v2 then v1 fallback) ---
+              # --- Fetch vaultadmin password from Vault ---
               echo "🔐 Fetching $VAULTADMIN_USER password from Vault..."
               VAULTADMIN_PASS=""
               if OUT="$(vault kv get -format=json "secret/$VAULTADMIN_USER" 2>/dev/null)"; then
@@ -161,94 +147,104 @@ spec:
               fi
               [ -z "$VAULTADMIN_PASS" ] && VAULTADMIN_PASS="$(vault kv get -field=value "secret/$VAULTADMIN_USER" 2>/dev/null || true)"
               [ -z "$VAULTADMIN_PASS" ] && VAULTADMIN_PASS="$(vault kv get -field=password "secret/$VAULTADMIN_USER" 2>/dev/null || true)"
-              if [ -z "$VAULTADMIN_PASS" ]; then
-                echo "❌ Could not find $VAULTADMIN_USER password in Vault (secret/$VAULTADMIN_USER)."
-                exit 1
-              fi
+              [ -z "$VAULTADMIN_PASS" ] && { echo "❌ missing secret/$VAULTADMIN_USER"; exit 1; }
               export PGPASSWORD="$VAULTADMIN_PASS"
 
               # --- Ensure database exists ---
               while :; do
-                echo "📦 Checking if DB '$DB' exists..."
                 DB_EXISTS="$(psql -h "$PGHOST" -p "$PGPORT" -U "$VAULTADMIN_USER" -d yugabyte -tAc "SELECT 1 FROM pg_database WHERE datname='$DB'" 2>/dev/null || true)"
-                if [ "$DB_EXISTS" = "1" ]; then
-                  echo "✅ DB '$DB' already exists"
-                  break
-                fi
+                [ "$DB_EXISTS" = "1" ] && { echo "✅ DB '$DB' exists"; break; }
                 echo "📦 Creating DB '$DB' owned by $VAULTADMIN_USER..."
-                if createdb -h "$PGHOST" -p "$PGPORT" -U "$VAULTADMIN_USER" -O "$VAULTADMIN_USER" "$DB" 2>/dev/null; then
-                  echo "✅ DB '$DB' created"
-                  break
-                fi
-                echo "🔁 Yugabyte not ready for create; retrying..."
-                sleep 3
+                createdb -h "$PGHOST" -p "$PGPORT" -U "$VAULTADMIN_USER" -O "$VAULTADMIN_USER" "$DB" 2>/dev/null && { echo "✅ DB created"; break; }
+                echo "🔁 Retry create DB in 3s..."; sleep 3
               done
 
-              # --- Ensure base ROLE exists ---
+              # --- Roles: group + stable owner ---
               psql -h "$PGHOST" -p "$PGPORT" -U "$VAULTADMIN_USER" -d yugabyte <<EOSQL
               DO \$\$
               BEGIN
-                IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'keycloak') THEN
-                  CREATE ROLE keycloak NOLOGIN;
+                IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = '${ROLE_GROUP}') THEN
+                  CREATE ROLE ${ROLE_GROUP} NOLOGIN;
+                END IF;
+                IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = '${ROLE_OWNER}') THEN
+                  CREATE ROLE ${ROLE_OWNER} LOGIN INHERIT;
                 END IF;
               END
               \$\$;
+              GRANT ${ROLE_GROUP} TO ${ROLE_OWNER};
               EOSQL
 
-              # --- Schema + grants (idempotent) ---
-              until psql -h "$PGHOST" -p "$PGPORT" -U "$VAULTADMIN_USER" -d "$DB" <<'EOSQL'
-              CREATE SCHEMA IF NOT EXISTS keycloak AUTHORIZATION vaultadmin;
-              ALTER SCHEMA keycloak OWNER TO vaultadmin;
-              GRANT keycloak TO vaultadmin;
+              # --- Schema & ownership (idempotent) ---
+              psql -h "$PGHOST" -p "$PGPORT" -U "$VAULTADMIN_USER" -d "$DB" <<'EOSQL'
+              CREATE SCHEMA IF NOT EXISTS keycloak AUTHORIZATION keycloak_app;
+              ALTER SCHEMA keycloak OWNER TO keycloak_app;
 
-              -- App role privileges
+              -- Make sure the owner will always grant DML to the group role on new objects
+              ALTER ROLE keycloak_app SET search_path = keycloak;
+
               GRANT USAGE, CREATE ON SCHEMA keycloak TO keycloak;
-              GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA keycloak TO keycloak;
-              GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA keycloak TO keycloak;
-              ALTER DEFAULT PRIVILEGES IN SCHEMA keycloak GRANT ALL ON TABLES TO keycloak;
-              ALTER DEFAULT PRIVILEGES IN SCHEMA keycloak GRANT USAGE, SELECT ON SEQUENCES TO keycloak;
 
-              -- vaultadmin privileges
-              GRANT USAGE, CREATE ON SCHEMA keycloak TO vaultadmin;
-              GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA keycloak TO vaultadmin;
-              GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA keycloak TO vaultadmin;
-              ALTER DEFAULT PRIVILEGES IN SCHEMA keycloak GRANT ALL ON TABLES TO vaultadmin;
-              ALTER DEFAULT PRIVILEGES IN SCHEMA keycloak GRANT ALL ON SEQUENCES TO vaultadmin;
+              GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES    IN SCHEMA keycloak TO keycloak;
+              GRANT USAGE, SELECT                     ON ALL SEQUENCES IN SCHEMA keycloak TO keycloak;
+
+              ALTER DEFAULT PRIVILEGES FOR ROLE keycloak_app IN SCHEMA keycloak
+                GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES   TO keycloak;
+              ALTER DEFAULT PRIVILEGES FOR ROLE keycloak_app IN SCHEMA keycloak
+                GRANT USAGE, SELECT                ON SEQUENCES TO keycloak;
               EOSQL
-              do
-                echo "⚠️ Schema/grants not yet applied; retrying in 5s..."
-                sleep 5
-              done
-              echo "✅ Schema & grants ensured"
 
-              # --- Wait for role propagation ---
-              echo "⏳ Waiting for role 'keycloak' to propagate..."
-              until psql -h "$PGHOST" -p "$PGPORT" -U "$VAULTADMIN_USER" -d yugabyte -tAc "SELECT 1 FROM pg_roles WHERE rolname='keycloak'" | grep -q 1; do
-                sleep 1
-              done
-              echo "✅ Role visible everywhere"
+              # --- Normalize ownership of existing objects to the stable owner ---
+              psql -h "$PGHOST" -p "$PGPORT" -U "$VAULTADMIN_USER" -d "$DB" <<'EOSQL'
+              DO $$
+              DECLARE r record;
+              BEGIN
+                FOR r IN SELECT format('%I.%I', schemaname, tablename) AS obj
+                         FROM pg_tables WHERE schemaname='keycloak' LOOP
+                  EXECUTE format('ALTER TABLE %s OWNER TO keycloak_app', r.obj);
+                END LOOP;
 
-              # --- Ensure Database engine + connection ---
-              echo "🧩 Ensuring Vault Database engine + connection..."
+                FOR r IN SELECT format('%I.%I', sequence_schema, sequence_name) AS obj
+                         FROM information_schema.sequences WHERE sequence_schema='keycloak' LOOP
+                  EXECUTE format('ALTER SEQUENCE %s OWNER TO keycloak_app', r.obj);
+                END LOOP;
+
+                FOR r IN SELECT format('%I.%I', schemaname, viewname) AS obj
+                         FROM pg_views WHERE schemaname='keycloak' LOOP
+                  EXECUTE format('ALTER VIEW %s OWNER TO keycloak_app', r.obj);
+                END LOOP;
+
+                FOR r IN SELECT format('%I.%I', n.nspname, c.relname) AS obj
+                         FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
+                         WHERE n.nspname='keycloak' AND c.relkind='m' LOOP
+                  EXECUTE format('ALTER MATERIALIZED VIEW %s OWNER TO keycloak_app', r.obj);
+                END LOOP;
+              END$$;
+              EOSQL
+
+              echo "✅ Schema owned by keycloak_app and grants set"
+
+              # --- Vault DB engine config (idempotent) ---
               if ! vault secrets list -format=json | jq -e 'has("yugabyte-db/")' >/dev/null 2>&1; then
                 vault secrets enable -path=yugabyte-db database
               fi
+
+              # Connection for admin ops (uses yugabyte db for control)
               vault write yugabyte-db/config/yugabyte \
                 plugin_name=postgresql-database-plugin \
-                allowed_roles="$ROLE" \
                 connection_url="postgresql://{{username}}:{{password}}@${PGHOST}:${PGPORT}/yugabyte?sslmode=disable" \
                 username="$VAULTADMIN_USER" \
                 password="$VAULTADMIN_PASS"
 
-              # --- Dynamic role + policy (incl. KV v2 admin secret) + K8s binding ---
-              vault write yugabyte-db/roles/$ROLE \
-                db_name=yugabyte \
-                creation_statements="CREATE ROLE \"{{name}}\" WITH LOGIN PASSWORD '{{password}}' INHERIT IN ROLE $ROLE VALID UNTIL '{{expiration}}'; ALTER ROLE \"{{name}}\" SET search_path = keycloak;" \
-                default_ttl="48h" \
-                max_ttl="48h"
+              # --- Static role for rotating the owner password ---
+              vault write yugabyte-db/static-roles/keycloak-app \
+                db_name="yugabyte" \
+                username="${ROLE_OWNER}" \
+                rotation_statements="ALTER ROLE ${ROLE_OWNER} WITH PASSWORD '{{password}}';" \
+                rotation_period="720h"
 
-              vault policy write "$ROLE" - <<EOF
-              path "yugabyte-db/creds/$ROLE" {
+              # --- Policy & K8s role for the Keycloak pod ---
+              vault policy write "keycloak" - <<'EOF'
+              path "yugabyte-db/static-creds/keycloak-app" {
                 capabilities = ["read"]
               }
               path "secret/data/keycloak/admin" {
@@ -256,58 +252,21 @@ spec:
               }
               EOF
 
-              vault write auth/kubernetes/role/$ROLE \
+              vault write auth/kubernetes/role/keycloak \
                 bound_service_account_names="keycloak" \
                 bound_service_account_namespaces="keycloak" \
-                policies="$ROLE" \
-                ttl=48h
+                policies="keycloak" \
+                ttl="48h"
 
-              # --- Verify dynamic creds issuance ---
-              echo "🔁 Verifying Vault dynamic credential issuance..."
-              attempt=0; delay=2
-              while :; do
-                attempt=$((attempt+1))
-                CREDS_JSON="$(vault read -format=json "yugabyte-db/creds/$ROLE" 2>/dev/null || true)"
-                if [ -n "$CREDS_JSON" ] && printf '%s' "$CREDS_JSON" | jq -e '.data.username and .data.password' >/dev/null 2>&1; then
-                  echo "✅ Issued on attempt $attempt"
-                  break
-                fi
-                echo "❌ Attempt $attempt failed; retrying in ${delay}s..."
-                sleep "$delay"
-                [ "$delay" -lt 30 ] && delay=$(( delay * 2 ))
-                [ "$delay" -gt 30 ] && delay=30
-              done
-
+              # Optional: prove we can read & connect with static-creds now
+              CREDS_JSON="$(vault read -format=json yugabyte-db/static-creds/keycloak-app)"
               DB_USER="$(printf '%s' "$CREDS_JSON" | jq -r .data.username)"
               DB_PASS="$(printf '%s' "$CREDS_JSON" | jq -r .data.password)"
               export PGPASSWORD="$DB_PASS"
+              echo "🔎 Sanity check as \$DB_USER=$DB_USER"
+              psql -h "$PGHOST" -p "$PGPORT" -U "$DB_USER" -d "$DB" -c "SELECT current_user, current_schema();"
 
-              # Helper to run SQL and show errors
-              run_psql() {
-                SQL="$1"
-                echo "---------------- SQL ----------------"
-                echo "$SQL"
-                echo "-------------------------------------"
-                set +e
-                echo "$SQL" | psql -h "$PGHOST" -p "$PGPORT" -U "$DB_USER" -d "$DB" -v ON_ERROR_STOP=1 2>&1 | tee /tmp/psql_output.log
-                STATUS=$?
-                set -e
-                if [ $STATUS -ne 0 ]; then
-                  echo "❌ psql failed:"
-                  cat /tmp/psql_output.log
-                  exit $STATUS
-                fi
-              }
-
-              # Final sanity checks with the dynamic user
-              run_psql "SELECT current_user;"
-              run_psql "SELECT has_schema_privilege(current_user, 'keycloak', 'USAGE') AS schema_usage;"
-              run_psql "SET ROLE $ROLE; CREATE TABLE IF NOT EXISTS keycloak.test_perm_check (id SERIAL PRIMARY KEY); RESET ROLE;"
-              run_psql "SELECT has_table_privilege(current_user, 'keycloak.test_perm_check', 'SELECT,INSERT,UPDATE,DELETE') AS table_access;"
-              run_psql "SELECT has_sequence_privilege(current_user, 'keycloak.test_perm_check_id_seq', 'USAGE') AS sequence_usage;"
-              run_psql "SELECT r.rolname FROM pg_roles r JOIN pg_auth_members m ON r.oid = m.roleid JOIN pg_roles u ON u.oid = m.member WHERE u.rolname = current_user;"
-
-              echo "🎉 Keycloak admin creds seeded + Vault DB role ready + Yugabyte privileges set."
+              echo "🎉 Keycloak DB prepared; Vault static role + policy + K8s binding ready."
           volumeMounts:
             - name: root-token
               mountPath: /vault-token
@@ -350,17 +309,17 @@ spec:
         app: keycloak
         linkerd.io/inject: enabled
       annotations:
-        # === Vault Agent Injector for dynamic DB creds (Yugabyte/Postgres engine) ===
+        # === Vault Agent Injector for static creds (rotating password) ===
         vault.hashicorp.com/agent-inject: "true"
         vault.hashicorp.com/role: "keycloak"
 
-        # DB creds stay as you had them
-        vault.hashicorp.com/agent-inject-secret-db-username: "yugabyte-db/creds/keycloak"
+        # Static creds (Vault static role)
+        vault.hashicorp.com/agent-inject-secret-db-username: "yugabyte-db/static-creds/keycloak-app"
         vault.hashicorp.com/agent-inject-template-db-username: |
-          {{- with secret "yugabyte-db/creds/keycloak" -}}{{ .Data.username }}{{- end -}}
-        vault.hashicorp.com/agent-inject-secret-db-password: "yugabyte-db/creds/keycloak"
+          {{- with secret "yugabyte-db/static-creds/keycloak-app" -}}{{ .Data.username }}{{- end -}}
+        vault.hashicorp.com/agent-inject-secret-db-password: "yugabyte-db/static-creds/keycloak-app"
         vault.hashicorp.com/agent-inject-template-db-password: |
-          {{- with secret "yugabyte-db/creds/keycloak" -}}{{ .Data.password }}{{- end -}}
+          {{- with secret "yugabyte-db/static-creds/keycloak-app" -}}{{ .Data.password }}{{- end -}}
 
         # Admin creds – KV v2 explicit path
         vault.hashicorp.com/agent-inject-secret-keycloak-admin: "secret/data/keycloak/admin"
@@ -382,11 +341,12 @@ spec:
         - containerPort: 8080
           name: http
         env:
-        # Static DB settings (Yugabyte Postgres compatibility)
         - name: KC_DB
           value: "postgres"
         - name: KC_DB_URL
           value: "jdbc:postgresql://yb-tserver-service.yugabyte.svc.cluster.local:5433/keycloak"
+        - name: KC_DB_SCHEMA
+          value: "keycloak"
         - name: KC_PROXY
           value: "edge"
         - name: KC_HOSTNAME
@@ -395,36 +355,30 @@ spec:
           value: "false"
         - name: KC_HTTP_ENABLED
           value: "true"
-        - name: KC_DB_SCHEMA
-          value: "keycloak"
 
-        # Start Keycloak after exporting Vault-injected creds from files to env
         command: ["/bin/sh","-lc"]
         args:
         - >
           source /vault/secrets/keycloak-admin &&
           export KC_DB_USERNAME="$(cat /vault/secrets/db-username)" &&
           export KC_DB_PASSWORD="$(cat /vault/secrets/db-password)" &&
-          /opt/keycloak/bin/kc.sh start 
+          /opt/keycloak/bin/kc.sh start
 
         startupProbe:
           httpGet:
             path: /health/ready
             port: http
-          # give Keycloak plenty of time for first-run build & Liquibase
           periodSeconds: 10
-          failureThreshold: 90       # ~15 minutes
+          failureThreshold: 90
           timeoutSeconds: 5
-
         readinessProbe:
           httpGet:
             path: /health/ready
             port: http
-          initialDelaySeconds: 5      # startupProbe gates readiness anyway
+          initialDelaySeconds: 5
           periodSeconds: 10
           timeoutSeconds: 5
           failureThreshold: 10
-
         livenessProbe:
           httpGet:
             path: /health/live
@@ -440,7 +394,6 @@ spec:
             cpu: "2"
             memory: "3Gi"
 ---
-# APISIX route to expose Keycloak GUI at keycloak.app.suncoast.systems
 apiVersion: apisix.apache.org/v2
 kind: ApisixRoute
 metadata:
@@ -451,10 +404,8 @@ spec:
   http:
   - name: keycloak-web
     match:
-      hosts:
-      - keycloak.app.suncoast.systems
-      paths:
-      - /*
+      hosts: [ keycloak.app.suncoast.systems ]
+      paths: [ "/*" ]
     backends:
     - serviceName: keycloak
       servicePort: 8080
