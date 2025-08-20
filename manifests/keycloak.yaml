@@ -283,6 +283,30 @@ spec:
     port: 8080
     targetPort: 8080
 ---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: job-status-reader
+  namespace: vault
+rules:
+  - apiGroups: ["batch"]
+    resources: ["jobs"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: job-status-reader-for-keycloak
+  namespace: vault
+subjects:
+  - kind: ServiceAccount
+    name: keycloak
+    namespace: keycloak   # <-- grants the SA from keycloak namespace
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: job-status-reader
+---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -325,6 +349,19 @@ spec:
         config.linkerd.io/skip-outbound-ports: "8200"
     spec:
       serviceAccountName: keycloak
+      initContainers:
+        - name: wait-for-config-job
+          image: alpine/k8s:1.31.4
+          command: ["/bin/sh","-lc"]
+          args:
+            - |
+              echo "Waiting for Job vault/keycloak-yugabyte-config to complete..."
+              # Loop until the job reaches condition=complete
+              until kubectl -n vault wait --for=condition=complete job/keycloak-yugabyte-config --timeout=10s; do
+                echo "Still waiting for DB bootstrap job..."
+                sleep 5
+              done
+              echo "DB bootstrap job is complete."
       containers:
       - name: keycloak
         image: quay.io/keycloak/keycloak:24.0.5
