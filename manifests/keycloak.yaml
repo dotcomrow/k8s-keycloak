@@ -381,27 +381,28 @@ spec:
           /opt/keycloak/bin/kc.sh start
 
         startupProbe:
-          httpGet:
-            path: /health/ready
-            port: http
-          periodSeconds: 10
-          failureThreshold: 90
-          timeoutSeconds: 5
+          tcpSocket:
+            port: http        # uses the named port 8080
+          periodSeconds: 5
+          failureThreshold: 120   # up to ~10 minutes, adjust as you like
+          timeoutSeconds: 2
+
         readinessProbe:
           httpGet:
             path: /health/ready
             port: http
-          initialDelaySeconds: 5
           periodSeconds: 10
+          failureThreshold: 6
           timeoutSeconds: 5
-          failureThreshold: 10
+
         livenessProbe:
           httpGet:
             path: /health/live
             port: http
           periodSeconds: 10
+          failureThreshold: 6
           timeoutSeconds: 5
-          failureThreshold: 10
+
         resources:
           requests:
             cpu: "500m"
