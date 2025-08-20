@@ -412,19 +412,3 @@ spec:
           limits:
             cpu: "2"
             memory: "3Gi"
----
-apiVersion: apisix.apache.org/v2
-kind: ApisixRoute
-metadata:
-  name: keycloak
-  namespace: keycloak
-spec:
-  ingressClassName: apisix
-  http:
-  - name: keycloak-web
-    match:
-      hosts: [ keycloak.app.suncoast.systems ]
-      paths: [ "/*" ]
-    backends:
-    - serviceName: keycloak
-      servicePort: 8080
