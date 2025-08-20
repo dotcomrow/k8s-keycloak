@@ -133,10 +133,8 @@ spec:
               fi
 
               # --- Wait for DB availability ---
-              until getent hosts "$PGHOST" >/dev/null 2>&1; do
-                echo "🔄 Waiting for DNS for $PGHOST..."; sleep 3; done
-              until nc -z -w1 "$PGHOST" "$PGPORT"; do
-                echo "⏳ Waiting for DB $PGHOST:$PGPORT..."; sleep 3; done
+              until getent hosts "$PGHOST" >/dev/null 2>&1; do echo "🔄 Waiting for DNS for $PGHOST..."; sleep 3; done
+              until nc -z -w1 "$PGHOST" "$PGPORT"; do echo "⏳ Waiting for DB $PGHOST:$PGPORT..."; sleep 3; done
               echo "✅ Yugabyte reachable"
 
               # --- Fetch vaultadmin password from Vault ---
@@ -159,7 +157,7 @@ spec:
                 echo "🔁 Retry create DB in 3s..."; sleep 3
               done
 
-              # --- Roles: group + stable owner ---
+              # --- Roles: group + stable owner + let vaultadmin assume owner ---
               psql -h "$PGHOST" -p "$PGPORT" -U "$VAULTADMIN_USER" -d yugabyte <<EOSQL
               DO \$\$
               BEGIN
@@ -172,69 +170,57 @@ spec:
               END
               \$\$;
               GRANT ${ROLE_GROUP} TO ${ROLE_OWNER};
+              GRANT ${ROLE_OWNER} TO ${VAULTADMIN_USER};
               EOSQL
 
-              # --- Schema & ownership (idempotent) ---
-              psql -h "$PGHOST" -p "$PGPORT" -U "$VAULTADMIN_USER" -d "$DB" <<'EOSQL'
-              CREATE SCHEMA IF NOT EXISTS keycloak AUTHORIZATION keycloak_app;
-              ALTER SCHEMA keycloak OWNER TO keycloak_app;
-
-              -- Make sure the owner will always grant DML to the group role on new objects
-              ALTER ROLE keycloak_app SET search_path = keycloak;
-
-              GRANT USAGE, CREATE ON SCHEMA keycloak TO keycloak;
-
-              GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES    IN SCHEMA keycloak TO keycloak;
-              GRANT USAGE, SELECT                     ON ALL SEQUENCES IN SCHEMA keycloak TO keycloak;
-
-              ALTER DEFAULT PRIVILEGES FOR ROLE keycloak_app IN SCHEMA keycloak
-                GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES   TO keycloak;
-              ALTER DEFAULT PRIVILEGES FOR ROLE keycloak_app IN SCHEMA keycloak
-                GRANT USAGE, SELECT                ON SEQUENCES TO keycloak;
+              # --- Schema creation / ownership (do minimal work as vaultadmin) ---
+              psql -h "$PGHOST" -p "$PGPORT" -U "$VAULTADMIN_USER" -d "$DB" <<EOSQL
+              CREATE SCHEMA IF NOT EXISTS keycloak AUTHORIZATION ${ROLE_OWNER};
+              ALTER SCHEMA keycloak OWNER TO ${ROLE_OWNER};
+              -- Convenience: make owner default to the keycloak schema
+              ALTER ROLE ${ROLE_OWNER} SET search_path = keycloak;
               EOSQL
 
-              # --- Normalize ownership of existing objects to the stable owner ---
-              psql -h "$PGHOST" -p "$PGPORT" -U "$VAULTADMIN_USER" -d "$DB" <<'EOSQL'
-              DO $$
-              DECLARE r record;
-              BEGIN
-                FOR r IN SELECT format('%I.%I', schemaname, tablename) AS obj
-                         FROM pg_tables WHERE schemaname='keycloak' LOOP
-                  EXECUTE format('ALTER TABLE %s OWNER TO keycloak_app', r.obj);
-                END LOOP;
+              # --- All grants & default privileges as the OWNER (prevents permission errors) ---
+              psql -h "$PGHOST" -p "$PGPORT" -U "$VAULTADMIN_USER" -d "$DB" <<EOSQL
+              SET ROLE ${ROLE_OWNER};
 
-                FOR r IN SELECT format('%I.%I', sequence_schema, sequence_name) AS obj
-                         FROM information_schema.sequences WHERE sequence_schema='keycloak' LOOP
-                  EXECUTE format('ALTER SEQUENCE %s OWNER TO keycloak_app', r.obj);
-                END LOOP;
+              -- App group can create and fully use objects; Liquibase tables included
+              GRANT USAGE, CREATE ON SCHEMA keycloak TO ${ROLE_GROUP};
+              GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES    IN SCHEMA keycloak TO ${ROLE_GROUP};
+              GRANT USAGE, SELECT                     ON ALL SEQUENCES IN SCHEMA keycloak TO ${ROLE_GROUP};
 
-                FOR r IN SELECT format('%I.%I', schemaname, viewname) AS obj
-                         FROM pg_views WHERE schemaname='keycloak' LOOP
-                  EXECUTE format('ALTER VIEW %s OWNER TO keycloak_app', r.obj);
-                END LOOP;
+              -- Future objects created by the owner also grant to the group
+              ALTER DEFAULT PRIVILEGES IN SCHEMA keycloak
+                GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES   TO ${ROLE_GROUP};
+              ALTER DEFAULT PRIVILEGES IN SCHEMA keycloak
+                GRANT USAGE, SELECT                ON SEQUENCES TO ${ROLE_GROUP};
 
-                FOR r IN SELECT format('%I.%I', n.nspname, c.relname) AS obj
-                         FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
-                         WHERE n.nspname='keycloak' AND c.relkind='m' LOOP
-                  EXECUTE format('ALTER MATERIALIZED VIEW %s OWNER TO keycloak_app', r.obj);
-                END LOOP;
-              END$$;
+              -- (optional) keep vaultadmin with full access for ops
+              GRANT USAGE, CREATE ON SCHEMA keycloak TO ${VAULTADMIN_USER};
+              GRANT ALL PRIVILEGES ON ALL TABLES    IN SCHEMA keycloak TO ${VAULTADMIN_USER};
+              GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA keycloak TO ${VAULTADMIN_USER};
+              ALTER DEFAULT PRIVILEGES IN SCHEMA keycloak
+                GRANT ALL ON TABLES    TO ${VAULTADMIN_USER};
+              ALTER DEFAULT PRIVILEGES IN SCHEMA keycloak
+                GRANT ALL ON SEQUENCES TO ${VAULTADMIN_USER};
+
+              RESET ROLE;
               EOSQL
 
-              echo "✅ Schema owned by keycloak_app and grants set"
+              echo "✅ Schema owned by ${ROLE_OWNER}; grants & defaults applied as owner"
 
               # --- Vault DB engine config (idempotent) ---
               if ! vault secrets list -format=json | jq -e 'has("yugabyte-db/")' >/dev/null 2>&1; then
                 vault secrets enable -path=yugabyte-db database
               fi
 
-              # Connection for admin ops (uses yugabyte db for control)
               vault write yugabyte-db/config/yugabyte \
                 plugin_name=postgresql-database-plugin \
                 connection_url="postgresql://{{username}}:{{password}}@${PGHOST}:${PGPORT}/yugabyte?sslmode=disable" \
                 username="$VAULTADMIN_USER" \
                 password="$VAULTADMIN_PASS" \
-                allowed_roles="*"
+                allowed_roles="keycloak-app"
 
               # --- Static role for rotating the owner password ---
               vault write yugabyte-db/static-roles/keycloak-app \
@@ -259,7 +245,7 @@ spec:
                 policies="keycloak" \
                 ttl="48h"
 
-              # Optional: prove we can read & connect with static-creds now
+              # Sanity check with static creds
               CREDS_JSON="$(vault read -format=json yugabyte-db/static-creds/keycloak-app)"
               DB_USER="$(printf '%s' "$CREDS_JSON" | jq -r .data.username)"
               DB_PASS="$(printf '%s' "$CREDS_JSON" | jq -r .data.password)"
