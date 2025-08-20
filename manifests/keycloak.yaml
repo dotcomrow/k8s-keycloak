@@ -384,6 +384,8 @@ spec:
           value: "true"
         - name: QUARKUS_TRANSACTION_MANAGER_ENABLE_RECOVERY
           value: "true"
+        - name: KC_PROXY_HEADERS
+          value: "xforwarded"
 
         command: ["/bin/sh","-lc"]
         args:
