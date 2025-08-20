@@ -181,6 +181,13 @@ spec:
               ALTER ROLE ${ROLE_OWNER} SET search_path = keycloak;
               EOSQL
 
+              # --- If Liquibase bootstrap tables already exist, make sure the stable owner owns them ---
+              # (run as vaultadmin; harmless if they don't exist)
+              psql -h "$PGHOST" -p "$PGPORT" -U "$VAULTADMIN_USER" -d "$DB" -v ON_ERROR_STOP=0 <<EOSQL
+              ALTER TABLE IF EXISTS keycloak.databasechangeloglock OWNER TO ${ROLE_OWNER};
+              ALTER TABLE IF EXISTS keycloak.databasechangelog    OWNER TO ${ROLE_OWNER};
+              EOSQL
+
               # --- All grants & default privileges as the OWNER (prevents permission errors) ---
               psql -h "$PGHOST" -p "$PGPORT" -U "$VAULTADMIN_USER" -d "$DB" <<EOSQL
               SET ROLE ${ROLE_OWNER};
@@ -200,10 +207,8 @@ spec:
               GRANT USAGE, CREATE ON SCHEMA keycloak TO ${VAULTADMIN_USER};
               GRANT ALL PRIVILEGES ON ALL TABLES    IN SCHEMA keycloak TO ${VAULTADMIN_USER};
               GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA keycloak TO ${VAULTADMIN_USER};
-              ALTER DEFAULT PRIVILEGES IN SCHEMA keycloak
-                GRANT ALL ON TABLES    TO ${VAULTADMIN_USER};
-              ALTER DEFAULT PRIVILEGES IN SCHEMA keycloak
-                GRANT ALL ON SEQUENCES TO ${VAULTADMIN_USER};
+              ALTER DEFAULT PRIVILEGES IN SCHEMA keycloak GRANT ALL ON TABLES    TO ${VAULTADMIN_USER};
+              ALTER DEFAULT PRIVILEGES IN SCHEMA keycloak GRANT ALL ON SEQUENCES TO ${VAULTADMIN_USER};
 
               RESET ROLE;
               EOSQL
