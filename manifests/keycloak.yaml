@@ -359,8 +359,6 @@ spec:
           value: "jdbc:postgresql://yb-tserver-service.yugabyte.svc.cluster.local:5433/keycloak"
         - name: KC_DB_SCHEMA
           value: "keycloak"
-        - name: KC_HOSTNAME
-          value: "keycloak.app.suncoast.systems"
         - name: KC_HOSTNAME_URL
           value: "https://keycloak.app.suncoast.systems"
         - name: KC_HOSTNAME_ADMIN_URL
