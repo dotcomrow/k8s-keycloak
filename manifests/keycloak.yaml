@@ -443,7 +443,7 @@ spec:
       hosts:
       - keycloak.app.suncoast.systems
       paths:
-      - /
+      - /*
     backends:
     - serviceName: keycloak
       servicePort: 8080
