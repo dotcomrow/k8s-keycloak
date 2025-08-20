@@ -243,7 +243,7 @@ spec:
               # --- Dynamic role + policy (incl. KV v2 admin secret) + K8s binding ---
               vault write yugabyte-db/roles/$ROLE \
                 db_name=yugabyte \
-                creation_statements="CREATE ROLE \"{{name}}\" WITH LOGIN PASSWORD '{{password}}' INHERIT IN ROLE $ROLE VALID UNTIL '{{expiration}}';" \
+                creation_statements="CREATE ROLE \"{{name}}\" WITH LOGIN PASSWORD '{{password}}' INHERIT IN ROLE $ROLE VALID UNTIL '{{expiration}}'; ALTER ROLE \"{{name}}\" SET search_path = keycloak;" \
                 default_ttl="48h" \
                 max_ttl="48h"
 
@@ -395,6 +395,8 @@ spec:
           value: "false"
         - name: KC_HTTP_ENABLED
           value: "true"
+        - name: KC_DB_SCHEMA
+          value: "keycloak"
 
         # Start Keycloak after exporting Vault-injected creds from files to env
         command: ["/bin/sh","-lc"]
