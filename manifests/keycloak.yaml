@@ -42,30 +42,6 @@ spec:
                 kubectl apply -f -
               echo "✅ Secret copied successfully."
 ---
-apiVersion: rbac.authorization.k8s.io/v1
-kind: Role
-metadata:
-  name: job-creator
-  namespace: keycloak
-rules:
-  - apiGroups: ["batch"]
-    resources: ["cronjobs", "jobs"]
-    verbs: ["get", "create"]
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: RoleBinding
-metadata:
-  name: job-creator-binding
-  namespace: keycloak
-subjects:
-  - kind: ServiceAccount
-    name: default
-    namespace: keycloak
-roleRef:
-  kind: Role
-  name: job-creator
-  apiGroup: rbac.authorization.k8s.io
----
 apiVersion: batch/v1
 kind: Job
 metadata:
@@ -323,7 +299,6 @@ spec:
     metadata:
       labels:
         app: keycloak
-        linkerd.io/inject: enabled
       annotations:
         # === Vault Agent Injector for static creds (rotating password) ===
         vault.hashicorp.com/agent-inject: "true"
@@ -356,8 +331,16 @@ spec:
           args:
             - |
               echo "Waiting for Job vault/keycloak-yugabyte-config to complete..."
-              # Loop until the job reaches condition=complete
+              # Bail out early if the job failed
+              if kubectl -n vault get job keycloak-yugabyte-config -o jsonpath='{.status.failed}' 2>/dev/null | grep -q '^[1-9]'; then
+                echo "❌ DB bootstrap job has failures. Exiting."; exit 1
+              fi
+              # Wait loop
               until kubectl -n vault wait --for=condition=complete job/keycloak-yugabyte-config --timeout=10s; do
+                # If it failed while we waited, exit
+                if kubectl -n vault get job keycloak-yugabyte-config -o jsonpath='{.status.failed}' 2>/dev/null | grep -q '^[1-9]'; then
+                  echo "❌ DB bootstrap job failed. Exiting."; exit 1
+                fi
                 echo "Still waiting for DB bootstrap job..."
                 sleep 5
               done
