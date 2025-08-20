@@ -371,8 +371,8 @@ spec:
           value: "true"
         - name: KC_TRANSACTION_XA_ENABLED
           value: "false"
-        - name: KC_PROXY_HEADERS
-          value: "xforwarded"
+        - name: KC_HOSTNAME_STRICT_HTTPS
+          value: "true"
 
         command: ["/bin/sh","-lc"]
         args:
