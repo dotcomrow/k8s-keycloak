@@ -363,6 +363,8 @@ spec:
           value: "https://keycloak.app.suncoast.systems"
         - name: KC_HOSTNAME_ADMIN_URL
           value: "https://keycloak.app.suncoast.systems"
+        - name: KC_HOSTNAME
+          value: "keycloak.app.suncoast.systems"
         - name: KC_HEALTH_ENABLED
           value: "true"
         - name: KC_HOSTNAME_STRICT
@@ -373,8 +375,8 @@ spec:
           value: "false"
         - name: KC_HOSTNAME_STRICT_HTTPS
           value: "true"
-        - name: KC_PROXY
-          value: "edge" 
+        - name: KC_PROXY_HEADERS
+          value: "none"
 
         command: ["/bin/sh","-lc"]
         args:
