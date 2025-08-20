@@ -325,8 +325,8 @@ spec:
         vault.hashicorp.com/agent-inject-secret-keycloak-admin: "secret/data/keycloak/admin"
         vault.hashicorp.com/agent-inject-template-keycloak-admin: |
           {{- with secret "secret/data/keycloak/admin" -}}
-          KEYCLOAK_ADMIN={{ .Data.data.username }}
-          KEYCLOAK_ADMIN_PASSWORD={{ .Data.data.password }}
+          export KEYCLOAK_ADMIN={{ .Data.data.username }}
+          export KEYCLOAK_ADMIN_PASSWORD={{ .Data.data.password }}
           {{- end -}}
 
         # Make sure Linkerd doesn't intercept Vault traffic
