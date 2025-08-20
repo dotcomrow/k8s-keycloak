@@ -375,8 +375,6 @@ spec:
           value: "false"
         - name: KC_HOSTNAME_STRICT_HTTPS
           value: "true"
-        - name: KC_PROXY_HEADERS
-          value: "none"
 
         command: ["/bin/sh","-lc"]
         args:
