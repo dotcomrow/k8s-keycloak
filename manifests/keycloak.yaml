@@ -201,7 +201,7 @@ spec:
                 connection_url="postgresql://{{username}}:{{password}}@${PGHOST}:${PGPORT}/yugabyte?sslmode=disable" \
                 username="$VAULTADMIN_USER" \
                 password="$VAULTADMIN_PASS" \
-                allowed_roles="keycloak-app"
+                allowed_roles="*"
 
               # --- Static role for rotating the owner password ---
               vault write yugabyte-db/static-roles/keycloak-app \
