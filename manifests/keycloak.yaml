@@ -196,13 +196,6 @@ spec:
                 vault secrets enable -path=yugabyte-db database
               fi
 
-              vault write yugabyte-db/config/yugabyte \
-                plugin_name=postgresql-database-plugin \
-                connection_url="postgresql://{{username}}:{{password}}@${PGHOST}:${PGPORT}/yugabyte?sslmode=disable" \
-                username="$VAULTADMIN_USER" \
-                password="$VAULTADMIN_PASS" \
-                allowed_roles="*"
-
               # --- Static role for rotating the owner password ---
               vault write yugabyte-db/static-roles/keycloak-app \
                 db_name="yugabyte" \
