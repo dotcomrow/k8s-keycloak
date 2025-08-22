@@ -296,6 +296,8 @@ spec:
         # === Vault Agent Injector for static creds (rotating password) ===
         vault.hashicorp.com/agent-inject: "true"
         vault.hashicorp.com/role: "keycloak"
+        vault.hashicorp.com/agent-init-first: "true"
+        vault.hashicorp.com/agent-pre-populate: "true"
 
         # Static creds (Vault static role)
         vault.hashicorp.com/agent-inject-secret-db-username: "yugabyte-db/static-creds/keycloak-app"
@@ -348,17 +350,18 @@ spec:
           command: ["/bin/sh","-lc"]
           args:
             - |
-              # DB creds from Vault-injected files
+              set -eu
+              # DB creds rendered by Vault Agent (now available thanks to agent-init-first)
               export KC_DB=postgres
               export KC_DB_URL="jdbc:postgresql://yb-tserver-service.yugabyte.svc.cluster.local:5433/keycloak"
               export KC_DB_SCHEMA=keycloak
               export KC_DB_USERNAME="$(cat /vault/secrets/db-username)"
               export KC_DB_PASSWORD="$(cat /vault/secrets/db-password)"
 
-              # Import everything from the mounted dir and OVERWRITE existing
+              # Run the import and OVERWRITE existing objects
               /opt/keycloak/bin/kc.sh import \
                 --dir=/opt/keycloak/data/import \
-                --strategy=OVERWRITE_EXISTING
+                --override=true
       containers:
       - name: keycloak
         image: quay.io/keycloak/keycloak:24.0.5
