@@ -345,23 +345,29 @@ spec:
               done
               echo "DB bootstrap job is complete."
 
-        - name: import-realm
+        - name: realm-import
           image: quay.io/keycloak/keycloak:24.0.5
-          command: ["/bin/sh","-lc"]
+          imagePullPolicy: IfNotPresent
+          command: ["/bin/bash","-lc"]
           args:
             - |
-              set -eu
-              # DB creds rendered by Vault Agent (now available thanks to agent-init-first)
+              set -euo pipefail
+              # Use the *same DB* as the main server
               export KC_DB=postgres
               export KC_DB_URL="jdbc:postgresql://yb-tserver-service.yugabyte.svc.cluster.local:5433/keycloak"
               export KC_DB_SCHEMA=keycloak
               export KC_DB_USERNAME="$(cat /vault/secrets/db-username)"
               export KC_DB_PASSWORD="$(cat /vault/secrets/db-password)"
 
-              # Run the import and OVERWRITE existing objects
+              # Optional: admin envs in case your JSON references admin ops later
+              source /vault/secrets/keycloak-admin || true
+
+              echo "Running Keycloak import (OVERWRITE_EXISTING) from /opt/keycloak/data/import ..."
               /opt/keycloak/bin/kc.sh import \
                 --dir=/opt/keycloak/data/import \
                 --override=true
+
+              echo "Import done."
           volumeMounts:
             - name: realm-import
               mountPath: /opt/keycloak/data/import
@@ -454,7 +460,9 @@ data:
           "config": {
             "clientId": "<path:secret/data/keycloak-oauth-client-id#value>",
             "clientSecret": "<path:secret/data/keycloak-oauth-client-secret#value>",
-            "defaultScope": "read:user user:email"
+            "defaultScope": "read:user user:email",
+            "hideOnLoginPage": "false",
+            "guiOrder": "1"
           }
         }
       ],
