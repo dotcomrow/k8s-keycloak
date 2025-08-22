@@ -370,8 +370,15 @@ spec:
           value: "false"
         - name: KC_HOSTNAME_STRICT_HTTPS
           value: "true"
-        - name: KC_IMPORT_STRATEGY
+        - name: KC_MIGRATION_STRATEGY
           value: "OVERWRITE_EXISTING"
+      # (optional but explicit)
+        - name: KC_MIGRATION_ACTION
+          value: "import"
+        - name: KC_MIGRATION_PROVIDER
+          value: "dir"
+        - name: KC_MIGRATION_DIR
+          value: "/opt/keycloak/data/import"
 
         command: ["/bin/sh","-lc"]
         args:
