@@ -345,33 +345,94 @@ spec:
               done
               echo "DB bootstrap job is complete."
 
-        - name: realm-import
+        - name: keycloak-configurator
           image: quay.io/keycloak/keycloak:24.0.5
           imagePullPolicy: IfNotPresent
           command: ["/bin/bash","-lc"]
           args:
             - |
               set -euo pipefail
-              # Use the *same DB* as the main server
-              export KC_DB=postgres
-              export KC_DB_URL="jdbc:postgresql://yb-tserver-service.yugabyte.svc.cluster.local:5433/keycloak"
-              export KC_DB_SCHEMA=keycloak
-              export KC_DB_USERNAME="$(cat /vault/secrets/db-username)"
-              export KC_DB_PASSWORD="$(cat /vault/secrets/db-password)"
 
-              # Optional: admin envs in case your JSON references admin ops later
-              source /vault/secrets/keycloak-admin || true
+              # Admin creds & secrets from Vault files
+              source /vault/secrets/keycloak-admin
+              CLIENT_ID="<path:secret/data/keycloak-oauth-client-id#value>"
+              CLIENT_SECRET="<path:secret/data/keycloak-oauth-client-secret#value>"
 
-              echo "Running Keycloak import (OVERWRITE_EXISTING) from /opt/keycloak/data/import ..."
-              /opt/keycloak/bin/kc.sh import \
-                --dir=/opt/keycloak/data/import \
-                --override=true
+              # Wait until the server accepts admin auth
+              until /opt/keycloak/bin/kcadm.sh config credentials \
+                      --server http://127.0.0.1:8080 \
+                      --realm master \
+                      --user "$KEYCLOAK_ADMIN" \
+                      --password "$KEYCLOAK_ADMIN_PASSWORD" >/dev/null 2>&1; do
+                echo "Waiting for Keycloak to be ready..."
+                sleep 3
+              done
 
-              echo "Import done."
-          volumeMounts:
-            - name: realm-import
-              mountPath: /opt/keycloak/data/import
-              readOnly: true
+              # Create or update the GitHub IdP
+              if /opt/keycloak/bin/kcadm.sh get identity-provider/instances/github -r master >/dev/null 2>&1; then
+                echo "Updating existing IdP 'github'..."
+                /opt/keycloak/bin/kcadm.sh update identity-provider/instances/github -r master \
+                  -s enabled=true \
+                  -s displayName=GitHub \
+                  -s providerId=github \
+                  -s "config.clientId=$CLIENT_ID" \
+                  -s "config.clientSecret=$CLIENT_SECRET" \
+                  -s "config.defaultScope=read:user user:email" \
+                  -s "config.guiOrder=1" \
+                  -s "config.hideOnLoginPage=false"
+              else
+                echo "Creating IdP 'github'..."
+                /opt/keycloak/bin/kcadm.sh create identity-provider/instances -r master \
+                  -s alias=github \
+                  -s displayName=GitHub \
+                  -s providerId=github \
+                  -s enabled=true \
+                  -s "config.clientId=$CLIENT_ID" \
+                  -s "config.clientSecret=$CLIENT_SECRET" \
+                  -s "config.defaultScope=read:user user:email" \
+                  -s "config.guiOrder=1" \
+                  -s "config.hideOnLoginPage=false"
+              fi
+
+              # Helper to idempotently create mappers (no jq needed)
+              mapper_exists () {
+                /opt/keycloak/bin/kcadm.sh get identity-provider/instances/github/mappers -r master \
+                  | grep -q "\"name\" : \"$1\""
+              }
+
+              create_mapper () {
+                local NAME="$1"; shift
+                if mapper_exists "$NAME"; then
+                  echo "Mapper '$NAME' already exists."
+                else
+                  /opt/keycloak/bin/kcadm.sh create identity-provider/instances/github/mappers -r master "$@"
+                fi
+              }
+
+              # For GitHub (OAuth2 social), use the attribute-importer mapper
+              create_mapper email \
+                -s name=email \
+                -s identityProviderAlias=github \
+                -s identityProviderMapper=attribute-importer \
+                -s 'config.attribute=email' \
+                -s 'config.user.attribute=email'
+
+              create_mapper username \
+                -s name=username \
+                -s identityProviderAlias=github \
+                -s identityProviderMapper=attribute-importer \
+                -s 'config.attribute=login' \
+                -s 'config.user.attribute=username'
+
+              create_mapper name \
+                -s name=name \
+                -s identityProviderAlias=github \
+                -s identityProviderMapper=attribute-importer \
+                -s 'config.attribute=name' \
+                -s 'config.user.attribute=firstName'
+
+              echo "GitHub IdP configured."
+          # Nothing to expose; it exits after config is applied
       containers:
       - name: keycloak
         image: quay.io/keycloak/keycloak:24.0.5
@@ -439,51 +500,3 @@ spec:
           limits:
             cpu: "2"
             memory: "3Gi"
----
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: keycloak-realm-github
-  namespace: keycloak
-data:
-  github-idp.json: |
-    {
-      "realm": "master",
-      "enabled": true,
-      "identityProviders": [
-        {
-          "alias": "github",
-          "displayName": "GitHub",
-          "providerId": "github",
-          "enabled": true,
-          "storeToken": true,
-          "config": {
-            "clientId": "<path:secret/data/keycloak-oauth-client-id#value>",
-            "clientSecret": "<path:secret/data/keycloak-oauth-client-secret#value>",
-            "defaultScope": "read:user user:email",
-            "hideOnLoginPage": "false",
-            "guiOrder": "1"
-          }
-        }
-      ],
-      "identityProviderMappers": [
-        {
-          "name": "email",
-          "identityProviderAlias": "github",
-          "identityProviderMapper": "oidc-user-attribute-idp-mapper",
-          "config": { "claim": "email", "user.attribute": "email" }
-        },
-        {
-          "name": "username",
-          "identityProviderAlias": "github",
-          "identityProviderMapper": "oidc-user-attribute-idp-mapper",
-          "config": { "claim": "login", "user.attribute": "username" }
-        },
-        {
-          "name": "name",
-          "identityProviderAlias": "github",
-          "identityProviderMapper": "oidc-user-attribute-idp-mapper",
-          "config": { "claim": "name", "user.attribute": "firstName" }
-        }
-      ]
-    }
