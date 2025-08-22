@@ -344,7 +344,7 @@ spec:
                 sleep 5
               done
               echo "DB bootstrap job is complete."
-
+      containers:
         - name: keycloak-configurator
           image: quay.io/keycloak/keycloak:24.0.5
           imagePullPolicy: IfNotPresent
@@ -433,7 +433,6 @@ spec:
 
               echo "GitHub IdP configured."
           # Nothing to expose; it exits after config is applied
-      containers:
       - name: keycloak
         image: quay.io/keycloak/keycloak:24.0.5
         imagePullPolicy: IfNotPresent
