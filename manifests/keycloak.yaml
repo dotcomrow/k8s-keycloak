@@ -317,6 +317,10 @@ spec:
         config.linkerd.io/skip-outbound-ports: "8200"
     spec:
       serviceAccountName: keycloak
+      volumes:
+        - name: realm-import
+          configMap:
+            name: keycloak-realm-github
       initContainers:
         - name: wait-for-config-job
           image: alpine/k8s:1.31.4
@@ -373,7 +377,7 @@ spec:
           source /vault/secrets/keycloak-admin &&
           export KC_DB_USERNAME="$(cat /vault/secrets/db-username)" &&
           export KC_DB_PASSWORD="$(cat /vault/secrets/db-password)" &&
-          /opt/keycloak/bin/kc.sh start
+          /opt/keycloak/bin/kc.sh start --import-realm --override=true
 
         startupProbe:
           tcpSocket:
@@ -398,6 +402,11 @@ spec:
           failureThreshold: 6
           timeoutSeconds: 5
 
+        volumeMounts:
+          - name: realm-import
+            mountPath: /opt/keycloak/data/import
+            readOnly: true
+
         resources:
           requests:
             cpu: "500m"
@@ -405,3 +414,49 @@ spec:
           limits:
             cpu: "2"
             memory: "3Gi"
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: keycloak-realm-github
+  namespace: keycloak
+data:
+  github-idp.json: |
+    {
+      "realm": "master",
+      "enabled": true,
+      "identityProviders": [
+        {
+          "alias": "github",
+          "displayName": "GitHub",
+          "providerId": "github",
+          "enabled": true,
+          "storeToken": true,
+          "config": {
+            "clientId": "<path:secret/data/keycloak-oauth-client-id#value>",
+            "clientSecret": "<path:secret/data/keycloak-oauth-client-secret#value>",
+            "defaultScope": "read:user user:email"
+          }
+        }
+      ],
+      "identityProviderMappers": [
+        {
+          "name": "email",
+          "identityProviderAlias": "github",
+          "identityProviderMapper": "oidc-user-attribute-idp-mapper",
+          "config": { "claim": "email", "user.attribute": "email" }
+        },
+        {
+          "name": "username",
+          "identityProviderAlias": "github",
+          "identityProviderMapper": "oidc-user-attribute-idp-mapper",
+          "config": { "claim": "login", "user.attribute": "username" }
+        },
+        {
+          "name": "name",
+          "identityProviderAlias": "github",
+          "identityProviderMapper": "oidc-user-attribute-idp-mapper",
+          "config": { "claim": "name", "user.attribute": "firstName" }
+        }
+      ]
+    }
