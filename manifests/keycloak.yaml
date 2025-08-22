@@ -370,6 +370,8 @@ spec:
           value: "false"
         - name: KC_HOSTNAME_STRICT_HTTPS
           value: "true"
+        - name: KC_IMPORT_STRATEGY
+          value: "OVERWRITE_EXISTING"
 
         command: ["/bin/sh","-lc"]
         args:
