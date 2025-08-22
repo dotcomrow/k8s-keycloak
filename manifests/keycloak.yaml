@@ -362,6 +362,10 @@ spec:
               /opt/keycloak/bin/kc.sh import \
                 --dir=/opt/keycloak/data/import \
                 --override=true
+          volumeMounts:
+            - name: realm-import
+              mountPath: /opt/keycloak/data/import
+              readOnly: true
       containers:
       - name: keycloak
         image: quay.io/keycloak/keycloak:24.0.5
@@ -421,11 +425,6 @@ spec:
           periodSeconds: 10
           failureThreshold: 6
           timeoutSeconds: 5
-
-        volumeMounts:
-          - name: realm-import
-            mountPath: /opt/keycloak/data/import
-            readOnly: true
 
         resources:
           requests:
