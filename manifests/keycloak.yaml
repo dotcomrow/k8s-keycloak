@@ -385,7 +385,7 @@ spec:
           source /vault/secrets/keycloak-admin &&
           export KC_DB_USERNAME="$(cat /vault/secrets/db-username)" &&
           export KC_DB_PASSWORD="$(cat /vault/secrets/db-password)" &&
-          /opt/keycloak/bin/kc.sh start --import-realm --override=true --import-strategy=OVERWRITE_EXISTING
+          /opt/keycloak/bin/kc.sh start --import-realm --override=true
 
         startupProbe:
           tcpSocket:
