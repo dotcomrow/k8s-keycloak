@@ -342,6 +342,23 @@ spec:
                 sleep 5
               done
               echo "DB bootstrap job is complete."
+
+        - name: import-realm
+          image: quay.io/keycloak/keycloak:24.0.5
+          command: ["/bin/sh","-lc"]
+          args:
+            - |
+              # DB creds from Vault-injected files
+              export KC_DB=postgres
+              export KC_DB_URL="jdbc:postgresql://yb-tserver-service.yugabyte.svc.cluster.local:5433/keycloak"
+              export KC_DB_SCHEMA=keycloak
+              export KC_DB_USERNAME="$(cat /vault/secrets/db-username)"
+              export KC_DB_PASSWORD="$(cat /vault/secrets/db-password)"
+
+              # Import everything from the mounted dir and OVERWRITE existing
+              /opt/keycloak/bin/kc.sh import \
+                --dir=/opt/keycloak/data/import \
+                --strategy=OVERWRITE_EXISTING
       containers:
       - name: keycloak
         image: quay.io/keycloak/keycloak:24.0.5
@@ -370,22 +387,14 @@ spec:
           value: "false"
         - name: KC_HOSTNAME_STRICT_HTTPS
           value: "true"
-        - name: KC_MIGRATION_STRATEGY
-          value: "OVERWRITE_EXISTING"
-        - name: KC_MIGRATION_ACTION
-          value: "import"
-        - name: KC_MIGRATION_PROVIDER
-          value: "dir"
-        - name: KC_MIGRATION_DIR
-          value: "/opt/keycloak/data/import"
 
         command: ["/bin/sh","-lc"]
         args:
-        - >
-          source /vault/secrets/keycloak-admin &&
-          export KC_DB_USERNAME="$(cat /vault/secrets/db-username)" &&
-          export KC_DB_PASSWORD="$(cat /vault/secrets/db-password)" &&
-          /opt/keycloak/bin/kc.sh start --import-realm --override=true
+          - >
+            source /vault/secrets/keycloak-admin &&
+            export KC_DB_USERNAME="$(cat /vault/secrets/db-username)" &&
+            export KC_DB_PASSWORD="$(cat /vault/secrets/db-password)" &&
+            /opt/keycloak/bin/kc.sh start
 
         startupProbe:
           tcpSocket:
