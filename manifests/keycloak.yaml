@@ -432,7 +432,7 @@ spec:
               CLIENT_ID="<path:secret/data/keycloak-oauth-client-id#value>"
               CLIENT_SECRET="<path:secret/data/keycloak-oauth-client-secret#value>"
 
-              # --- helpers (no jq) ---
+              # --- helpers (no jq, no awk) ---
               json_objects_onelines() { tr -d '\n' | sed 's/},[[:space:]]*{/}\n{/g'; }
 
               wait_admin() {
@@ -450,32 +450,35 @@ spec:
                 done
               }
 
-              # Delete flow by alias (resolve to ID first). Retry a few times in case KC is busy.
+              # Find flow ID by alias, then delete by ID (retry a few times if KC is still wiring it up)
               delete_flow_by_alias() {
-                local tries=0
+                local tries=0 max=8
                 while :; do
-                  # If flow doesn't exist, we're done
-                  local FLOW_JSON
-                  FLOW_JSON="$(/opt/keycloak/bin/kcadm.sh get "authentication/flows/${FLOW_ALIAS}" -r "$REALM" 2>/dev/null || true)"
-                  [ -z "$FLOW_JSON" ] && return 0
-
-                  # Extract ID from JSON
-                  local FLOW_ID
-                  FLOW_ID="$(printf '%s' "$FLOW_JSON" | sed -n 's/.*"id"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -n1)"
-                  if [ -n "${FLOW_ID:-}" ]; then
-                    /opt/keycloak/bin/kcadm.sh delete "authentication/flows/${FLOW_ID}" -r "$REALM" || true
+                  local FLOWS LINES ID
+                  FLOWS="$(/opt/keycloak/bin/kcadm.sh get authentication/flows -r "$REALM" 2>/dev/null || true)"
+                  LINES="$(printf '%s' "$FLOWS" | json_objects_onelines)"
+                  ID="$(printf '%s\n' "$LINES" \
+                        | grep -E '"alias"[[:space:]]*:[[:space:]]*"'${FLOW_ALIAS//\//\\/}'"' \
+                        | sed -n 's/.*"id"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' \
+                        | head -n1)"
+                  if [ -n "${ID:-}" ]; then
+                    echo "Deleting flow '${FLOW_ALIAS}' (id=${ID})..."
+                    /opt/keycloak/bin/kcadm.sh delete "authentication/flows/${ID}" -r "$REALM" || true
+                    # loop again to confirm it’s gone
+                    tries=$((tries+1))
+                    [ "$tries" -ge "$max" ] && break
+                    sleep 1
+                    continue
                   fi
-
-                  tries=$((tries+1))
-                  [ "$tries" -ge 6 ] && return 0
-                  sleep 1
+                  # no ID found → nothing to delete
+                  break
                 done
               }
 
               wait_script_provider_available() {
                 local tries=0 max=60
                 while :; do
-                  # ensure flow exists before checking available executions
+                  # ensure flow exists before checking
                   /opt/keycloak/bin/kcadm.sh get "authentication/flows/${FLOW_ALIAS}" -r "$REALM" >/dev/null 2>&1 || \
                     /opt/keycloak/bin/kcadm.sh create authentication/flows -r "$REALM" \
                       -s "alias=${FLOW_ALIAS}" \
@@ -512,7 +515,7 @@ spec:
               /opt/keycloak/bin/kcadm.sh get identity-provider/instances/github -r "$REALM" >/dev/null 2>&1 && \
                 /opt/keycloak/bin/kcadm.sh delete identity-provider/instances/github -r "$REALM" || true
 
-              # Flow (this is the bit you asked for)
+              # Flow (delete by ID found via alias)
               delete_flow_by_alias
 
               # ===== RECREATE =====
@@ -544,7 +547,7 @@ spec:
               create_mapper_file /tmp/mapper-username.json
               create_mapper_file /tmp/mapper-name.json
 
-              # Flow (fresh)
+              # Flow (fresh create)
               /opt/keycloak/bin/kcadm.sh create authentication/flows -r "$REALM" \
                 -s "alias=${FLOW_ALIAS}" \
                 -s 'description=Grant realm-admin to members of a GitHub team' \
@@ -593,7 +596,7 @@ spec:
                 -s permanentLockout=false
 
               set +x
-              echo "✔ Flow deleted (if present) and fully recreated."
+              echo "✔ Flow deleted-by-ID (if present) and fully recreated."
               sleep 365d
 
         - name: keycloak
