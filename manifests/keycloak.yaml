@@ -353,10 +353,10 @@ spec:
             - |
               set -Eeuo pipefail
 
-              # --- Admin creds + GitHub client secrets from Vault-injected files ---
+              # --- Admin creds + GitHub client secrets (Vault-injected files) ---
               . /vault/secrets/keycloak-admin
-              CLIENT_ID="<path:secret/data/keycloak-oauth-client-id#value>"
-              CLIENT_SECRET="<path:secret/data/keycloak-oauth-client-secret#value>"
+                      CLIENT_ID="<path:secret/data/keycloak-oauth-client-id#value>"
+                      CLIENT_SECRET="<path:secret/data/keycloak-oauth-client-secret#value>"
 
               echo "Waiting for Keycloak admin API..."
               until /opt/keycloak/bin/kcadm.sh config credentials \
@@ -367,13 +367,13 @@ spec:
                 sleep 3
               done
 
-              # --- Recreate IdP to avoid partial-update issues ---
+              # --- Clean slate: delete IdP if it exists ---
               if /opt/keycloak/bin/kcadm.sh get identity-provider/instances/github -r master >/dev/null 2>&1; then
                 echo "Deleting existing IdP 'github'..."
                 /opt/keycloak/bin/kcadm.sh delete identity-provider/instances/github -r master || true
               fi
 
-              # --- Create IdP from JSON (injects secrets safely) ---
+              # --- Create IdP (GitHub OIDC) ---
               cat >/tmp/github-idp.json <<'JSON'
               {
                 "alias": "github",
@@ -387,7 +387,8 @@ spec:
                   "trustEmail": "true",
                   "guiOrder": "1",
                   "hideOnLoginPage": "false",
-                  "linkOnly": "false"
+                  "linkOnly": "false",
+                  "syncMode": "IMPORT"
                 }
               }
               JSON
@@ -397,30 +398,44 @@ spec:
               echo "Creating IdP 'github'..."
               /opt/keycloak/bin/kcadm.sh create identity-provider/instances -r master -f /tmp/github-idp.json
 
-              # --- Mappers (use JSON to avoid dotted-key CLI quirks) ---
+              # --- Add OIDC mappers (correct type: oidc-user-attribute-idp-mapper) ---
               cat >/tmp/mapper-email.json <<'JSON'
               {
                 "name": "email",
                 "identityProviderAlias": "github",
-                "identityProviderMapper": "attribute-idp-mapper",
-                "config": { "attribute": "email", "user.attribute": "email" }
+                "identityProviderMapper": "oidc-user-attribute-idp-mapper",
+                "config": { "claim": "email", "user.attribute": "email" }
               }
               JSON
+
               cat >/tmp/mapper-username.json <<'JSON'
               {
                 "name": "username",
                 "identityProviderAlias": "github",
-                "identityProviderMapper": "attribute-idp-mapper",
-                "config": { "attribute": "login", "user.attribute": "username" }
+                "identityProviderMapper": "oidc-user-attribute-idp-mapper",
+                "config": { "claim": "login", "user.attribute": "username" }
+              }
+              JSON
+
+              cat >/tmp/mapper-name.json <<'JSON'
+              {
+                "name": "name->firstName",
+                "identityProviderAlias": "github",
+                "identityProviderMapper": "oidc-user-attribute-idp-mapper",
+                "config": { "claim": "name", "user.attribute": "firstName" }
               }
               JSON
 
               /opt/keycloak/bin/kcadm.sh create identity-provider/instances/github/mappers -r master -f /tmp/mapper-email.json
               /opt/keycloak/bin/kcadm.sh create identity-provider/instances/github/mappers -r master -f /tmp/mapper-username.json
+              /opt/keycloak/bin/kcadm.sh create identity-provider/instances/github/mappers -r master -f /tmp/mapper-name.json
+
+              echo "Current GitHub mappers:"
+              /opt/keycloak/bin/kcadm.sh get identity-provider/instances/github/mappers -r master | sed 's/^/  /'
 
               echo "✅ GitHub IdP configured."
 
-              # Keep the sidecar alive so it doesn't restart and re-run
+              # Keep sidecar alive
               tail -f /dev/null
           resources:
             requests: { cpu: "20m", memory: "64Mi" }
