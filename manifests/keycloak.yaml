@@ -427,12 +427,11 @@ spec:
               SERVER="http://127.0.0.1:8080"
               FLOW_ALIAS="GitHub-PostLogin"
 
-              # --- Admin creds & GitHub OAuth secrets (Vault-injected) ---
+              # --- Admin creds & GitHub secrets (Vault-injected env file) ---
               source /vault/secrets/keycloak-admin
               CLIENT_ID="<path:secret/data/keycloak-oauth-client-id#value>"
               CLIENT_SECRET="<path:secret/data/keycloak-oauth-client-secret#value>"
 
-              # --- helpers (no jq, no awk) ---
               json_objects_onelines() { tr -d '\n' | sed 's/},[[:space:]]*{/}\n{/g'; }
 
               wait_admin() {
@@ -450,48 +449,49 @@ spec:
                 done
               }
 
-              # Find flow ID by alias, then delete by ID (retry a few times if KC is still wiring it up)
+              # Delete a flow by ALIAS with retries; fall back to ID-based deletion if needed
               delete_flow_by_alias() {
-                local tries=0 max=8
+                local tries=0 max=12
                 while :; do
+                  # Try alias delete (works for both top-level and subflows)
+                  /opt/keycloak/bin/kcadm.sh delete "authentication/flows/${FLOW_ALIAS}" -r "$REALM" >/dev/null 2>&1 || true
+
+                  # Verify it’s gone via alias GET
+                  if /opt/keycloak/bin/kcadm.sh get "authentication/flows/${FLOW_ALIAS}" -r "$REALM" >/dev/null 2>&1; then
+                    :
+                  else
+                    echo "Flow '${FLOW_ALIAS}' is gone."
+                    return 0
+                  fi
+
+                  # Fallback: locate an ID among top-level flows and delete that ID
                   local FLOWS LINES ID
                   FLOWS="$(/opt/keycloak/bin/kcadm.sh get authentication/flows -r "$REALM" 2>/dev/null || true)"
                   LINES="$(printf '%s' "$FLOWS" | json_objects_onelines)"
                   ID="$(printf '%s\n' "$LINES" \
-                        | grep -E '"alias"[[:space:]]*:[[:space:]]*"'${FLOW_ALIAS//\//\\/}'"' \
-                        | sed -n 's/.*"id"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' \
-                        | head -n1)"
+                      | grep -E '"alias"[[:space:]]*:[[:space:]]*"'${FLOW_ALIAS//\//\\/}'"' \
+                      | sed -n 's/.*"id"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' \
+                      | head -n1)"
                   if [ -n "${ID:-}" ]; then
-                    echo "Deleting flow '${FLOW_ALIAS}' (id=${ID})..."
-                    /opt/keycloak/bin/kcadm.sh delete "authentication/flows/${ID}" -r "$REALM" || true
-                    # loop again to confirm it’s gone
-                    tries=$((tries+1))
-                    [ "$tries" -ge "$max" ] && break
-                    sleep 1
-                    continue
-                  fi
-                  # no ID found → nothing to delete
-                  break
-                done
-              }
-
-              wait_script_provider_available() {
-                local tries=0 max=60
-                while :; do
-                  # ensure flow exists before checking
-                  /opt/keycloak/bin/kcadm.sh get "authentication/flows/${FLOW_ALIAS}" -r "$REALM" >/dev/null 2>&1 || \
-                    /opt/keycloak/bin/kcadm.sh create authentication/flows -r "$REALM" \
-                      -s "alias=${FLOW_ALIAS}" \
-                      -s 'description=Grant realm-admin to members of a GitHub team' \
-                      -s providerId=basic-flow -s topLevel=true -s builtIn=false >/dev/null
-
-                  if /opt/keycloak/bin/kcadm.sh get "authentication/flows/${FLOW_ALIAS}/executions/available" -r "$REALM" \
-                      | json_objects_onelines | grep -q '"providerId"[[:space:]]*:[[:space:]]*"script"'; then
-                    return 0
+                    /opt/keycloak/bin/kcadm.sh delete "authentication/flows/${ID}" -r "$REALM" >/dev/null 2>&1 || true
                   fi
 
                   tries=$((tries+1))
-                  [ "$tries" -ge "$max" ] && { echo "FATAL: script provider never appeared"; return 1; }
+                  [ "$tries" -ge "$max" ] && { echo "WARN: Could not fully remove flow '${FLOW_ALIAS}' (will recreate anyway)"; return 0; }
+                  sleep 1
+                done
+              }
+
+              # The "script" provider appears in *available* executions list once the feature is active for the realm
+              wait_script_provider_available() {
+                local tries=0 max=60
+                while :; do
+                  if /opt/keycloak/bin/kcadm.sh get "authentication/flows/${FLOW_ALIAS}/executions/available" -r "$REALM" 2>/dev/null \
+                      | json_objects_onelines | grep -q '"providerId"[[:space:]]*:[[:space:]]*"script"'; then
+                    return 0
+                  fi
+                  tries=$((tries+1))
+                  [ "$tries" -ge "$max" ] && { echo "FATAL: 'script' authenticator not available (ensure KC_FEATURES=scripts)"; exit 1; }
                   sleep 2
                 done
               }
@@ -502,7 +502,7 @@ spec:
                   if /opt/keycloak/bin/kcadm.sh create identity-provider/instances/github/mappers -r "$REALM" -f "$file"; then
                     return 0
                   fi
-                  tries=$((tries+1)); [ "$tries" -ge 10 ] && { echo "FATAL: failed to create mapper from $file"; exit 1; }
+                  tries=$((tries+1)); [ "$tries" -ge 12 ] && { echo "FATAL: failed to create mapper from $file"; exit 1; }
                   sleep 2
                 done
               }
@@ -511,11 +511,9 @@ spec:
               set -x
 
               # ===== HARD RESET =====
-              # IdP
               /opt/keycloak/bin/kcadm.sh get identity-provider/instances/github -r "$REALM" >/dev/null 2>&1 && \
                 /opt/keycloak/bin/kcadm.sh delete identity-provider/instances/github -r "$REALM" || true
 
-              # Flow (delete by ID found via alias)
               delete_flow_by_alias
 
               # ===== RECREATE =====
@@ -527,7 +525,7 @@ spec:
                 -s 'config.guiOrder=1' -s 'config.hideOnLoginPage=false'
               wait_idp
 
-              # Mappers
+              # Mappers (GitHub returns OpenID-like claims in its userinfo payload)
               cat >/tmp/mapper-email.json <<'JSON'
               { "name":"email", "identityProviderAlias":"github",
                 "identityProviderMapper":"oidc-user-attribute-idp-mapper",
@@ -547,18 +545,20 @@ spec:
               create_mapper_file /tmp/mapper-username.json
               create_mapper_file /tmp/mapper-name.json
 
-              # Flow (fresh create)
+              # Create fresh top-level flow
               /opt/keycloak/bin/kcadm.sh create authentication/flows -r "$REALM" \
                 -s "alias=${FLOW_ALIAS}" \
                 -s 'description=Grant realm-admin to members of a GitHub team' \
                 -s providerId=basic-flow -s topLevel=true -s builtIn=false || true
 
-              # Ensure "script" provider is available, then add it
+              # Wait until "script" shows up as an available execution for this flow
               wait_script_provider_available
+
+              # Add script step
               /opt/keycloak/bin/kcadm.sh create "authentication/flows/${FLOW_ALIAS}/executions/execution" -r "$REALM" \
                 -s provider=script || true
 
-              # Find execution id for the script and configure it
+              # Get the execution id for the script step
               EXEC_ID="$(
                 /opt/keycloak/bin/kcadm.sh get "authentication/flows/${FLOW_ALIAS}/executions" -r "$REALM" 2>/dev/null \
                 | json_objects_onelines \
@@ -570,6 +570,7 @@ spec:
 
               /opt/keycloak/bin/kcadm.sh update "authentication/executions/${EXEC_ID}" -r "$REALM" -s 'requirement=REQUIRED'
 
+              # Attach the JS from the mounted ConfigMap
               SCRIPT_ESCAPED="$(sed -e 's/\\/\\\\/g' -e 's/"/\\"/g' -e ':a;N;$!ba;s/\n/\\n/g' /opt/keycloak/scripts/github-team-admin.js)"
               cat >/tmp/script-cfg.json <<EOF
               { "alias": "GitHub Team Admin", "config": { "script": "${SCRIPT_ESCAPED}" } }
@@ -582,10 +583,11 @@ spec:
                     [ -n "${CFG_ID:-}" ] && /opt/keycloak/bin/kcadm.sh update "authentication/executions/${EXEC_ID}/config/${CFG_ID}" -r "$REALM" -f /tmp/script-cfg.json
                   }
 
+              # Wire the IdP to use the post-login flow
               /opt/keycloak/bin/kcadm.sh update identity-provider/instances/github -r "$REALM" \
                 -s "postLoginFlowAlias=${FLOW_ALIAS}"
 
-              # Realm knobs
+              # Some realm defaults
               /opt/keycloak/bin/kcadm.sh update "realms/${REALM}" \
                 -s sslRequired=EXTERNAL \
                 -s loginWithEmailAllowed=true \
@@ -596,7 +598,7 @@ spec:
                 -s permanentLockout=false
 
               set +x
-              echo "✔ Flow deleted-by-ID (if present) and fully recreated."
+              echo "✔ Reset + reconfigure complete."
               sleep 365d
 
         - name: keycloak
