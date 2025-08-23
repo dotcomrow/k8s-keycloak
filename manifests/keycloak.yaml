@@ -449,48 +449,47 @@ spec:
                 done
               }
 
-              # True if flow alias currently exists (works for top-level or sub-flows)
               flow_exists() {
                 /opt/keycloak/bin/kcadm.sh get "authentication/flows/${FLOW_ALIAS}" -r "$REALM" >/dev/null 2>&1
               }
 
-              # Hard delete the flow by alias; loop until GET-by-alias fails
+              # Remove references to the target flow from all top-level flows, then delete the flow (by alias)
               delete_flow_everywhere() {
+                echo "Deleting flow '${FLOW_ALIAS}' (and references) if present..."
                 local tries=0 max=30
-                # Also try to remove any executions that *reference* this alias in all top-level flows
+
                 remove_referencing_executions() {
                   local FLOWS LINES
                   FLOWS="$(/opt/keycloak/bin/kcadm.sh get authentication/flows -r "$REALM" 2>/dev/null || true)"
                   LINES="$(printf '%s' "$FLOWS" | json_objects_onelines)"
-                  printf '%s\n' "$LINES" | sed -n 's/.*"alias"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | while read -r TOP_ALIAS; do
-                    [ -z "$TOP_ALIAS" ] && continue
-                    EXECS="$(/opt/keycloak/bin/kcadm.sh get "authentication/flows/${TOP_ALIAS}/executions" -r "$REALM" 2>/dev/null || true)"
-                    printf '%s' "$EXECS" | json_objects_onelines \
-                      | grep -F "\"flowAlias\" : \"${FLOW_ALIAS}\"" \
-                      | sed -n 's/.*"id"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' \
-                      | while read -r EXEC_ID; do
-                          [ -n "$EXEC_ID" ] && /opt/keycloak/bin/kcadm.sh delete "authentication/executions/${EXEC_ID}" -r "$REALM" >/dev/null 2>&1 || true
-                        done
-                  done
+                  printf '%s\n' "$LINES" \
+                    | sed -n 's/.*"alias"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' \
+                    | while read -r TOP_ALIAS; do
+                        [ -z "$TOP_ALIAS" ] && continue
+                        EXECS="$(/opt/keycloak/bin/kcadm.sh get "authentication/flows/${TOP_ALIAS}/executions" -r "$REALM" 2>/dev/null || true)"
+                        printf '%s' "$EXECS" | json_objects_onelines \
+                          | grep -F "\"flowAlias\" : \"${FLOW_ALIAS}\"" \
+                          | sed -n 's/.*"id"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' \
+                          | while read -r EXEC_ID; do
+                              [ -n "$EXEC_ID" ] && /opt/keycloak/bin/kcadm.sh delete "authentication/executions/${EXEC_ID}" -r "$REALM" >/dev/null 2>&1 || true
+                            done
+                      done
                 }
 
-                remove_referencing_executions || true
-
-                while flow_exists; do
-                  /opt/keycloak/bin/kcadm.sh delete "authentication/flows/${FLOW_ALIAS}" -r "$REALM" >/dev/null 2>&1 || true
+                while :; do
                   remove_referencing_executions || true
+                  /opt/keycloak/bin/kcadm.sh delete "authentication/flows/${FLOW_ALIAS}" -r "$REALM" >/dev/null 2>&1 || true
+                  if ! flow_exists; then
+                    echo "Flow '${FLOW_ALIAS}' removed."
+                    return 0
+                  fi
                   tries=$((tries+1))
-                  [ "$tries" -ge "$max" ] && { echo "WARN: flow '${FLOW_ALIAS}' still present after ${max} attempts"; break; }
+                  [ "$tries" -ge "$max" ] && { echo "WARN: flow '${FLOW_ALIAS}' still present after ${max} attempts"; return 0; }
                   sleep 1
                 done
-                if flow_exists; then
-                  echo "WARN: '${FLOW_ALIAS}' appears to still exist (server may be lagging)."
-                else
-                  echo "Flow '${FLOW_ALIAS}' removed."
-                fi
               }
 
-              # Make sure the server has the "script" authenticator provider registered (global check)
+              # Make sure the server has the "script" authenticator provider (global check)
               wait_script_provider_available() {
                 local tries=0 max=60
                 while :; do
@@ -501,8 +500,7 @@ spec:
                   fi
                   tries=$((tries+1))
                   [ "$tries" -ge "$max" ] && {
-                    echo "FATAL: 'script' authenticator provider not registered. Ensure the server starts with KC_FEATURES=scripts (and/or '--features=scripts')."
-                    /opt/keycloak/bin/kcadm.sh get authentication/authenticator-providers -r "$REALM" || true
+                    echo "FATAL: 'script' authenticator not registered. Ensure KC_FEATURES=scripts and server started with --features=scripts."
                     exit 1
                   }
                   sleep 2
@@ -538,7 +536,7 @@ spec:
                 -s 'config.guiOrder=1' -s 'config.hideOnLoginPage=false'
               wait_idp
 
-              # Mappers (GitHub userinfo provides these fields)
+              # Mappers
               cat >/tmp/mapper-email.json <<'JSON'
               { "name":"email", "identityProviderAlias":"github",
                 "identityProviderMapper":"oidc-user-attribute-idp-mapper",
@@ -558,14 +556,14 @@ spec:
               create_mapper_file /tmp/mapper-username.json
               create_mapper_file /tmp/mapper-name.json
 
-              # ===== RECREATE FLOW ===== (only if it truly doesn't exist)
+              # ===== RECREATE FLOW (ONLY IF MISSING) =====
               if ! flow_exists; then
                 /opt/keycloak/bin/kcadm.sh create authentication/flows -r "$REALM" \
                   -s "alias=${FLOW_ALIAS}" \
                   -s 'description=Grant realm-admin to members of a GitHub team' \
                   -s providerId=basic-flow -s topLevel=true -s builtIn=false
               else
-                echo "Flow '${FLOW_ALIAS}' already exists (after delete loop). Proceeding."
+                echo "Flow '${FLOW_ALIAS}' already present after delete loop; skipping create."
               fi
 
               # Ensure 'script' authenticator is globally available
@@ -576,7 +574,6 @@ spec:
                   | json_objects_onelines | grep -q '"providerId"[[:space:]]*:[[:space:]]*"script"'; then
                 /opt/keycloak/bin/kcadm.sh create "authentication/flows/${FLOW_ALIAS}/executions/execution" -r "$REALM" \
                   -s provider=script || true
-                # give KC a beat to register it
                 sleep 1
               fi
 
@@ -605,7 +602,7 @@ spec:
                     [ -n "${CFG_ID:-}" ] && /opt/keycloak/bin/kcadm.sh update "authentication/executions/${EXEC_ID}/config/${CFG_ID}" -r "$REALM" -f /tmp/script-cfg.json
                   }
 
-              # Wire IdP to use the flow (correct field name)
+              # Wire IdP to use the flow
               /opt/keycloak/bin/kcadm.sh update identity-provider/instances/github -r "$REALM" \
                 -s "postBrokerLoginFlowAlias=${FLOW_ALIAS}"
 
