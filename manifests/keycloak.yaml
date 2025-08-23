@@ -276,6 +276,54 @@ roleRef:
   kind: Role
   name: job-status-reader
 ---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: kc-script-github-admin
+  namespace: keycloak
+data:
+  github-team-admin.js: |
+    // Grants realm-management/realm-admin if user is in ORG/TEAM via GitHub API
+    var SimpleHttp = Java.type("org.keycloak.broker.provider.util.SimpleHttp");
+
+    // === EDIT THESE ===
+    var WANT_ORG  = "YOUR_ORG";       // e.g. "suncoast-systems"
+    var WANT_TEAM = "YOUR_TEAM_SLUG"; // e.g. "platform-admins"
+    var IDP_ALIAS = "github";
+
+    function authenticate(context) {
+      var session = context.getSession();
+      var realm   = context.getRealm();
+      var user    = context.getUser();
+
+      // Get federated identity & access token from broker (requires Store Tokens)
+      var fed = session.users().getFederatedIdentity(realm, user, IDP_ALIAS);
+      if (fed == null || fed.getToken() == null) { context.success(); return; }
+
+      var token = fed.getToken();
+
+      // Call GitHub /user/teams (needs scope read:org)
+      var resp = SimpleHttp.doGet("https://api.github.com/user/teams", session)
+          .header("Authorization", "Bearer " + token)
+          .asJson();
+
+      var it = resp.iterator();
+      var isMember = false;
+      while (it.hasNext()) {
+        var t = it.next();
+        var slug = t.get("slug").asText();
+        var org  = t.get("organization").get("login").asText();
+        if (slug.equals(WANT_TEAM) && org.equalsIgnoreCase(WANT_ORG)) { isMember = true; break; }
+      }
+
+      // Map role realm-management/realm-admin on membership
+      var client = session.clients().getClientByClientId(realm, "realm-management");
+      var adminRole = client.getRole("realm-admin");
+      if (isMember) user.grantRole(adminRole); else user.deleteRoleMapping(adminRole);
+
+      context.success();
+    }
+---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -323,6 +371,9 @@ spec:
         - name: realm-import
           configMap:
             name: keycloak-realm-github
+        - name: kc-scripts
+          configMap:
+            name: kc-script-github-admin
       initContainers:
         - name: wait-for-config-job
           image: alpine/k8s:1.31.4
@@ -348,95 +399,98 @@ spec:
         - name: keycloak-configurator
           image: quay.io/keycloak/keycloak:24.0.5
           imagePullPolicy: IfNotPresent
-          command: ["/bin/sh","-lc"]
+          command: ["/bin/bash","-lc"]
+          volumeMounts:
+            - name: kc-scripts
+              mountPath: /opt/keycloak/scripts
+              readOnly: true
           args:
             - |
-              set -Eeuo pipefail
-
-              # --- Admin creds + GitHub client secrets (Vault-injected files) ---
-              . /vault/secrets/keycloak-admin
-                      CLIENT_ID="<path:secret/data/keycloak-oauth-client-id#value>"
-                      CLIENT_SECRET="<path:secret/data/keycloak-oauth-client-secret#value>"
+              set -euo pipefail
+              source /vault/secrets/keycloak-admin
+              CLIENT_ID="<path:secret/data/keycloak-oauth-client-id#value>"
+              CLIENT_SECRET="<path:secret/data/keycloak-oauth-client-secret#value>"
 
               echo "Waiting for Keycloak admin API..."
               until /opt/keycloak/bin/kcadm.sh config credentials \
-                      --server http://127.0.0.1:8080 \
-                      --realm master \
-                      --user "$KEYCLOAK_ADMIN" \
-                      --password "$KEYCLOAK_ADMIN_PASSWORD" >/dev/null 2>&1; do
+                        --server http://127.0.0.1:8080 \
+                        --realm master \
+                        --user "$KEYCLOAK_ADMIN" \
+                        --password "$KEYCLOAK_ADMIN_PASSWORD" >/dev/null 2>&1; do
                 sleep 3
               done
 
-              # --- Clean slate: delete IdP if it exists ---
+              set -x
+
+              # Upsert GitHub IdP (ensure read:org + Store Tokens)
               if /opt/keycloak/bin/kcadm.sh get identity-provider/instances/github -r master >/dev/null 2>&1; then
-                echo "Deleting existing IdP 'github'..."
-                /opt/keycloak/bin/kcadm.sh delete identity-provider/instances/github -r master || true
+                /opt/keycloak/bin/kcadm.sh update identity-provider/instances/github -r master \
+                  -s enabled=true \
+                  -s storeToken=true \
+                  -s alias=github \
+                  -s providerId=github \
+                  -s 'config.clientId='"$CLIENT_ID" \
+                  -s 'config.clientSecret='"$CLIENT_SECRET" \
+                  -s 'config.defaultScope=read:user user:email read:org' \
+                  -s 'config.guiOrder=1' \
+                  -s 'config.hideOnLoginPage=false'
+              else
+                /opt/keycloak/bin/kcadm.sh create identity-provider/instances -r master \
+                  -s enabled=true \
+                  -s storeToken=true \
+                  -s alias=github \
+                  -s providerId=github \
+                  -s 'config.clientId='"$CLIENT_ID" \
+                  -s 'config.clientSecret='"$CLIENT_SECRET" \
+                  -s 'config.defaultScope=read:user user:email read:org' \
+                  -s 'config.guiOrder=1' \
+                  -s 'config.hideOnLoginPage=false'
               fi
 
-              # --- Create IdP (GitHub OIDC) ---
-              cat >/tmp/github-idp.json <<'JSON'
-              {
-                "alias": "github",
-                "displayName": "GitHub",
-                "providerId": "github",
-                "enabled": true,
-                "config": {
-                  "clientId": "__CID__",
-                  "clientSecret": "__CSECRET__",
-                  "defaultScope": "read:user user:email",
-                  "trustEmail": "true",
-                  "guiOrder": "1",
-                  "hideOnLoginPage": "false",
-                  "linkOnly": "false",
-                  "syncMode": "IMPORT"
-                }
-              }
-              JSON
-              sed -i "s/__CID__/${CLIENT_ID}/" /tmp/github-idp.json
-              sed -i "s/__CSECRET__/${CLIENT_SECRET}/" /tmp/github-idp.json
+              FLOW_ALIAS="GitHub-PostLogin"
+              # Create flow if missing
+              if ! /opt/keycloak/bin/kcadm.sh get "authentication/flows/$FLOW_ALIAS" -r master >/dev/null 2>&1; then
+                /opt/keycloak/bin/kcadm.sh create authentication/flows -r master \
+                  -s alias="$FLOW_ALIAS" \
+                  -s description="Grant realm-admin to members of a GitHub team" \
+                  -s providerId=basic-flow \
+                  -s topLevel=false \
+                  -s builtIn=false
+              fi
 
-              echo "Creating IdP 'github'..."
-              /opt/keycloak/bin/kcadm.sh create identity-provider/instances -r master -f /tmp/github-idp.json
+              # Add a script execution if not present
+              if ! /opt/keycloak/bin/kcadm.sh get "authentication/flows/$FLOW_ALIAS/executions" -r master | grep -q '"providerId" : "script-authenticator"'; then
+                /opt/keycloak/bin/kcadm.sh create "authentication/flows/$FLOW_ALIAS/executions/executions" -r master \
+                  -s provider=script-authenticator
+              fi
 
-              # --- Add OIDC mappers (correct type: oidc-user-attribute-idp-mapper) ---
-              cat >/tmp/mapper-email.json <<'JSON'
-              {
-                "name": "email",
-                "identityProviderAlias": "github",
-                "identityProviderMapper": "oidc-user-attribute-idp-mapper",
-                "config": { "claim": "email", "user.attribute": "email" }
-              }
-              JSON
+              # Find execution id of the script
+              EXEC_ID=$(/opt/keycloak/bin/kcadm.sh get "authentication/flows/$FLOW_ALIAS/executions" -r master | \
+                tr -d '\r' | awk -v RS='},' '/"providerId" : "script-authenticator"/{match($0,/"id" *: *"([^"]+)"/,a); if(a[1]!=""){print a[1]; exit}}')
 
-              cat >/tmp/mapper-username.json <<'JSON'
-              {
-                "name": "username",
-                "identityProviderAlias": "github",
-                "identityProviderMapper": "oidc-user-attribute-idp-mapper",
-                "config": { "claim": "login", "user.attribute": "username" }
-              }
-              JSON
+              # Make it REQUIRED
+              /opt/keycloak/bin/kcadm.sh update "authentication/executions/$EXEC_ID" -r master -s 'requirement=REQUIRED'
 
-              cat >/tmp/mapper-name.json <<'JSON'
-              {
-                "name": "name->firstName",
-                "identityProviderAlias": "github",
-                "identityProviderMapper": "oidc-user-attribute-idp-mapper",
-                "config": { "claim": "name", "user.attribute": "firstName" }
-              }
-              JSON
+              # Attach / update script content
+              if /opt/keycloak/bin/kcadm.sh get "authentication/executions/$EXEC_ID/config" -r master >/dev/null 2>&1; then
+                CFG_ID=$(/opt/keycloak/bin/kcadm.sh get "authentication/executions/$EXEC_ID/config" -r master | \
+                  tr -d '\r' | awk -v RS='},' '/"alias" *: *"/{match($0,/"id" *: *"([^"]+)"/,a); if(a[1]!=""){print a[1]; exit}}')
+                /opt/keycloak/bin/kcadm.sh update "authentication/executions/$EXEC_ID/config/$CFG_ID" -r master \
+                  -s 'alias=GitHub Team Admin' \
+                  -s 'config.script='"$(sed 's/"/\\"/g' </opt/keycloak/scripts/github-team-admin.js)"
+              else
+                /opt/keycloak/bin/kcadm.sh create "authentication/executions/$EXEC_ID/config" -r master \
+                  -s 'alias=GitHub Team Admin' \
+                  -s 'config.script='"$(sed 's/"/\\"/g' </opt/keycloak/scripts/github-team-admin.js)"
+              fi
 
-              /opt/keycloak/bin/kcadm.sh create identity-provider/instances/github/mappers -r master -f /tmp/mapper-email.json
-              /opt/keycloak/bin/kcadm.sh create identity-provider/instances/github/mappers -r master -f /tmp/mapper-username.json
-              /opt/keycloak/bin/kcadm.sh create identity-provider/instances/github/mappers -r master -f /tmp/mapper-name.json
+              # Tell the GitHub IdP to use this flow after login
+              /opt/keycloak/bin/kcadm.sh update identity-provider/instances/github -r master \
+                -s "postLoginFlowAlias=$FLOW_ALIAS"
 
-              echo "Current GitHub mappers:"
-              /opt/keycloak/bin/kcadm.sh get identity-provider/instances/github/mappers -r master | sed 's/^/  /'
-
-              echo "✅ GitHub IdP configured."
-
-              # Keep sidecar alive
-              tail -f /dev/null
+              set +x
+              echo "✔ GitHub IdP + Post-Login script configured."
+          # no probes for this helper; it exits when done
           resources:
             requests: { cpu: "20m", memory: "64Mi" }
             limits:   { cpu: "200m", memory: "256Mi" }
@@ -472,6 +526,8 @@ spec:
             value: "/"                 # ensures cookie Path="/"
           - name: KC_HTTP_COOKIE_SAME_SITE
             value: "LAX" 
+          - name: KC_FEATURES
+            value: "scripts"
 
           command: ["/bin/sh","-lc"]
           args:
@@ -511,3 +567,8 @@ spec:
             limits:
               cpu: "2"
               memory: "3Gi"
+
+          volumeMounts:
+            - name: kc-scripts
+              mountPath: /opt/keycloak/scripts
+              readOnly: true
