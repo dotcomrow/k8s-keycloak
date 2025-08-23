@@ -408,7 +408,7 @@ spec:
             - |
               set -euo pipefail
 
-              # ===== settings (always reset) =====
+              # ===== settings =====
               REALM="master"
               SERVER="http://127.0.0.1:8080"
               FLOW_ALIAS="GitHub-PostLogin"
@@ -420,27 +420,39 @@ spec:
 
               echo "Waiting for Keycloak admin API..."
               until /opt/keycloak/bin/kcadm.sh config credentials --server "$SERVER" --realm "$REALM" \
-                      --user "$KEYCLOAK_ADMIN" --password "$KEYCLOAK_ADMIN_PASSWORD" >/dev/null 2>&1; do
+                        --user "$KEYCLOAK_ADMIN" --password "$KEYCLOAK_ADMIN_PASSWORD" >/dev/null 2>&1; do
                 sleep 3
               done
 
               set -x
 
               # ===== ALWAYS RESET what we manage =====
-              # 1) Delete IdP if exists
+              # 1) Delete GitHub IdP if present (clean slate)
               /opt/keycloak/bin/kcadm.sh get identity-provider/instances/github -r "$REALM" >/dev/null 2>&1 && \
                 /opt/keycloak/bin/kcadm.sh delete identity-provider/instances/github -r "$REALM" || true
 
-              # 2) Delete our custom post-login flow (by id)
-              FLOW_ID="$(/opt/keycloak/bin/kcadm.sh get authentication/flows -r "$REALM" \
-                | tr -d '\r' \
-                | sed -n "/\"alias\"[[:space:]]*:[[:space:]]*\"$FLOW_ALIAS\"/,/}/p" \
-                | sed -n 's/.*\"id\"[[:space:]]*:[[:space:]]*\"\([^\"]*\)\".*/\1/p' \
-                | head -n1)"
-              [ -n "${FLOW_ID:-}" ] && /opt/keycloak/bin/kcadm.sh delete "authentication/flows/${FLOW_ID}" -r "$REALM" || true
+              # 2) Ensure the top-level flow exists; if it exists, purge its executions
+              if /opt/keycloak/bin/kcadm.sh get authentication/flows -r "$REALM" | grep -q "\"alias\" *: *\"${FLOW_ALIAS}\""; then
+                echo "Flow ${FLOW_ALIAS} exists — purging executions..."
+                EXECS_JSON="$(
+                  /opt/keycloak/bin/kcadm.sh get "authentication/flows/${FLOW_ALIAS}/executions" -r "$REALM" 2>/dev/null || echo "[]"
+                )"
+                printf '%s\n' "$EXECS_JSON" \
+                  | tr -d '\r' \
+                  | grep -o '"id"[[:space:]]*:[[:space:]]*"[^"]*"' \
+                  | sed 's/.*"id"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/' \
+                  | while read -r EID; do
+                      [ -n "$EID" ] && /opt/keycloak/bin/kcadm.sh delete "authentication/executions/${EID}" -r "$REALM" || true
+                    done
+              else
+                /opt/keycloak/bin/kcadm.sh create authentication/flows -r "$REALM" \
+                  -s alias="$FLOW_ALIAS" \
+                  -s 'description=Grant realm-admin to members of a GitHub team' \
+                  -s providerId=basic-flow -s topLevel=true -s builtIn=false
+              fi
 
               # ===== REBUILD from scratch =====
-              # 3) Create IdP fresh
+              # 3) Recreate IdP fresh
               /opt/keycloak/bin/kcadm.sh create identity-provider/instances -r "$REALM" \
                 -s enabled=true -s storeToken=true -s alias=github -s providerId=github \
                 -s "config.clientId=$CLIENT_ID" \
@@ -448,67 +460,94 @@ spec:
                 -s 'config.defaultScope=read:user user:email read:org' \
                 -s 'config.guiOrder=1' -s 'config.hideOnLoginPage=false'
 
-              # 4) Add attribute import mappers
-              /opt/keycloak/bin/kcadm.sh create identity-provider/instances/github/mappers -r "$REALM" \
-                -s name=email -s identityProviderAlias=github -s identityProviderMapper=attribute-idp-mapper \
-                -s 'config.attribute=email' -s 'config.user.attribute=email'
-              /opt/keycloak/bin/kcadm.sh create identity-provider/instances/github/mappers -r "$REALM" \
-                -s name=username -s identityProviderAlias=github -s identityProviderMapper=attribute-idp-mapper \
-                -s 'config.attribute=login' -s 'config.user.attribute=username'
-              /opt/keycloak/bin/kcadm.sh create identity-provider/instances/github/mappers -r "$REALM" \
-                -s name=name -s identityProviderAlias=github -s identityProviderMapper=attribute-idp-mapper \
-                -s 'config.attribute=name' -s 'config.user.attribute=firstName'
+              # 4) Add OIDC user-attribute mappers (correct mapper type)
+              create_mapper() {
+                local NAME="$1"; shift
+                local tries=0
+                until /opt/keycloak/bin/kcadm.sh create identity-provider/instances/github/mappers -r "$REALM" "$@"; do
+                  tries=$((tries+1))
+                  [ $tries -ge 6 ] && { echo "FATAL: failed to create mapper '$NAME'"; exit 1; }
+                  sleep 2
+                done
+              }
 
-              # 5) Create top-level post-login flow
-              /opt/keycloak/bin/kcadm.sh create authentication/flows -r "$REALM" \
-                -s alias="$FLOW_ALIAS" \
-                -s 'description=Grant realm-admin to members of a GitHub team' \
-                -s providerId=basic-flow -s topLevel=true -s builtIn=false
+              create_mapper email \
+                -s name=email \
+                -s identityProviderAlias=github \
+                -s identityProviderMapper=oidc-user-attribute-idp-mapper \
+                -s 'config.claim=email' \
+                -s 'config.user.attribute=email' \
+                -s 'config.syncMode=INHERIT'
 
-              # 6) Add Script authenticator execution (provider id varies by version)
-              #    Try known ids in order; pick the first that exists.
-              RAW_PROVIDERS="$(/opt/keycloak/bin/kcadm.sh get authentication/authenticator-providers -r "$REALM" | tr -d '\r')"
-              PROVIDER_ID=""
-              for cand in script auth-script-based script-authenticator; do
-                if printf '%s\n' "$RAW_PROVIDERS" | grep -q "\"id\"[[:space:]]*:[[:space:]]*\"$cand\""; then
-                  PROVIDER_ID="$cand"; break
-                fi
-              done
+              create_mapper username \
+                -s name=username \
+                -s identityProviderAlias=github \
+                -s identityProviderMapper=oidc-user-attribute-idp-mapper \
+                -s 'config.claim=login' \
+                -s 'config.user.attribute=username' \
+                -s 'config.syncMode=INHERIT'
+
+              create_mapper name \
+                -s name=name \
+                -s identityProviderAlias=github \
+                -s identityProviderMapper=oidc-user-attribute-idp-mapper \
+                -s 'config.claim=name' \
+                -s 'config.user.attribute=firstName' \
+                -s 'config.syncMode=INHERIT'
+
+              # 5) Detect the Script authenticator provider id (varies by version)
+              RAW_PROVIDERS="$(
+                /opt/keycloak/bin/kcadm.sh get authentication/authenticator-providers -r "$REALM" | tr -d '\r'
+              )"
+              PROVIDER_ID="$(
+                printf '%s\n' "$RAW_PROVIDERS" \
+                  | sed -n '/"displayName"[[:space:]]*:[[:space:]]*"Script"/,/}/p' \
+                  | grep -m1 '"id"' \
+                  | sed 's/.*"id"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/'
+              )"
+              if [ -z "${PROVIDER_ID:-}" ]; then
+                for cand in script auth-script-based script-authenticator; do
+                  echo "$RAW_PROVIDERS" | grep -q "\"id\" *: *\"$cand\"" && { PROVIDER_ID="$cand"; break; }
+                done
+              fi
               [ -z "${PROVIDER_ID:-}" ] && { echo "FATAL: Script authenticator provider not found"; exit 1; }
 
+              # 6) Add a Script execution to the flow
               /opt/keycloak/bin/kcadm.sh create "authentication/flows/${FLOW_ALIAS}/executions/execution" -r "$REALM" \
                 -s "provider=${PROVIDER_ID}"
 
-              # 7) Find execution id for that script step
+              # 7) Get execution id for that Script step
               EXEC_ID="$(
                 /opt/keycloak/bin/kcadm.sh get "authentication/flows/${FLOW_ALIAS}/executions" -r "$REALM" \
-                | tr -d '\r' \
-                | sed -n "/\"providerId\"[[:space:]]*:[[:space:]]*\"${PROVIDER_ID//\//\\/}\"/,/}/p" \
-                | sed -n 's/.*\"id\"[[:space:]]*:[[:space:]]*\"\([^\"]*\)\".*/\1/p' \
-                | head -n1
+                  | tr -d '\r' \
+                  | sed -n "/\"providerId\"[[:space:]]*:[[:space:]]*\"${PROVIDER_ID//\//\\/}\"/,/}/p" \
+                  | grep -m1 '"id"' \
+                  | sed 's/.*"id"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/'
               )"
               [ -z "${EXEC_ID:-}" ] && { echo "FATAL: no script execution id"; exit 1; }
 
-              # Make REQUIRED
+              # 8) Make REQUIRED
               /opt/keycloak/bin/kcadm.sh update "authentication/executions/${EXEC_ID}" -r "$REALM" -s 'requirement=REQUIRED'
 
-              # 8) Attach/update JS from mounted ConfigMap
+              # 9) Attach/update the JS from mounted ConfigMap
               SCRIPT_ESCAPED="$(sed -e 's/\\/\\\\/g' -e 's/"/\\"/g' -e ':a;N;$!ba;s/\n/\\n/g' /opt/keycloak/scripts/github-team-admin.js)"
               cat >/tmp/script-cfg.json <<EOF
               { "alias": "GitHub Team Admin", "config": { "script": "${SCRIPT_ESCAPED}" } }
               EOF
               /opt/keycloak/bin/kcadm.sh create "authentication/executions/${EXEC_ID}/config" -r "$REALM" -f /tmp/script-cfg.json \
-                || { # if exists, update it
-                    CFG_ID=$(/opt/keycloak/bin/kcadm.sh get "authentication/executions/${EXEC_ID}/config" -r "$REALM" \
-                                | tr -d '\r' | sed -n 's/.*\"id\"[[:space:]]*:[[:space:]]*\"\([^\"]*\)\".*/\1/p' | head -n1)
+                || {
+                    CFG_ID=$(
+                      /opt/keycloak/bin/kcadm.sh get "authentication/executions/${EXEC_ID}/config" -r "$REALM" \
+                        | tr -d '\r' | grep -m1 '"id"' | sed 's/.*"id"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/'
+                    )
                     /opt/keycloak/bin/kcadm.sh update "authentication/executions/${EXEC_ID}/config/${CFG_ID}" -r "$REALM" -f /tmp/script-cfg.json
                   }
 
-              # 9) Wire the IdP to use the post-login flow
+              # 10) Point IdP to use this post-login flow
               /opt/keycloak/bin/kcadm.sh update identity-provider/instances/github -r "$REALM" \
                 -s "postLoginFlowAlias=${FLOW_ALIAS}"
 
-              # 10) Realm login/security settings (add more as needed)
+              # 11) (Optional) realm login/security baseline
               /opt/keycloak/bin/kcadm.sh update "realms/${REALM}" \
                 -s sslRequired=EXTERNAL \
                 -s loginWithEmailAllowed=true \
@@ -519,11 +558,10 @@ spec:
                 -s permanentLockout=false
 
               set +x
-              echo "✔ Completed hard reset + reconfigure for realm '${REALM}'."
-              # Prevent restart loop under Deployment (pod would restart a completed sidecar)
+              echo "✔ Completed reset + reconfigure for realm '${REALM}'."
+              # Keep sidecar alive so the pod isn't restarted because this container exited
               sleep 365d
 
-          # no probes for this helper; it exits when done
           resources:
             requests: { cpu: "20m", memory: "64Mi" }
             limits:   { cpu: "200m", memory: "256Mi" }
