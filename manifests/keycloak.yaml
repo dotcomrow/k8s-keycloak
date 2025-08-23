@@ -386,7 +386,7 @@ spec:
                   cfg['guiOrder']='1'
                   cfg['hideOnLoginPage']='false'  # note: config values are strings
                   json.dump(doc,open('/tmp/idp.updated.json','w'))
-                PY
+              PY
                   /opt/keycloak/bin/kcadm.sh update identity-provider/instances/github -r master -f /tmp/idp.updated.json
                 else
                   echo "Creating IdP 'github'..."
@@ -404,7 +404,7 @@ spec:
                       "hideOnLoginPage": "false"
                     }
                   }
-                EOF
+              EOF
                   /opt/keycloak/bin/kcadm.sh create identity-provider/instances -r master -f /tmp/idp.create.json
                 fi
               }
