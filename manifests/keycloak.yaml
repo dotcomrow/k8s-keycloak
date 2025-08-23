@@ -358,53 +358,46 @@ spec:
               CLIENT_ID="<path:secret/data/keycloak-oauth-client-id#value>"
               CLIENT_SECRET="<path:secret/data/keycloak-oauth-client-secret#value>"
 
-              # Wait for KC to accept admin login
+              echo "Waiting for Keycloak admin API..."
               until /opt/keycloak/bin/kcadm.sh config credentials \
-                      --server http://127.0.0.1:8080 \
-                      --realm master \
-                      --user "$KEYCLOAK_ADMIN" \
-                      --password "$KEYCLOAK_ADMIN_PASSWORD" >/dev/null 2>&1; do
-                echo "Waiting for Keycloak to be ready..."
+                       --server http://127.0.0.1:8080 \
+                       --realm master \
+                       --user "$KEYCLOAK_ADMIN" \
+                       --password "$KEYCLOAK_ADMIN_PASSWORD" >/dev/null 2>&1; do
                 sleep 3
               done
 
-              # Create if missing, otherwise update only the fields that matter.
+              # If present, delete to avoid partial-update issues
               if /opt/keycloak/bin/kcadm.sh get identity-provider/instances/github -r master >/dev/null 2>&1; then
-                echo "Updating existing IdP 'github'..."
-                /opt/keycloak/bin/kcadm.sh update identity-provider/instances/github -r master \
-                  -s 'enabled=true' \
-                  -s 'displayName=GitHub' \
-                  -s "config.clientId=${CLIENT_ID}" \
-                  -s "config.clientSecret=${CLIENT_SECRET}" \
-                  -s 'config.defaultScope=read:user user:email' \
-                  -s 'config.guiOrder=1' \
-                  -s 'config.hideOnLoginPage=false'
-              else
-                echo "Creating IdP 'github'..."
-                cat >/tmp/idp.create.json <<EOF
-                {
-                  "alias": "github",
-                  "displayName": "GitHub",
-                  "providerId": "github",
-                  "enabled": true,
-                  "config": {
-                    "clientId": "${CLIENT_ID}",
-                    "clientSecret": "${CLIENT_SECRET}",
-                    "defaultScope": "read:user user:email",
-                    "guiOrder": "1",
-                    "hideOnLoginPage": "false"
-                  }
-                }
-              EOF
-                /opt/keycloak/bin/kcadm.sh create identity-provider/instances -r master -f /tmp/idp.create.json
+                echo "Deleting existing IdP 'github'..."
+                /opt/keycloak/bin/kcadm.sh delete identity-provider/instances/github -r master || true
               fi
 
-              # Idempotent mappers (use OIDC mapper type)
+              # Create fresh IdP
+              cat >/tmp/github-idp.json <<'JSON'
+              {
+                "alias": "github",
+                "displayName": "GitHub",
+                "providerId": "github",
+                "enabled": true,
+                "config": {
+                  "defaultScope": "read:user user:email",
+                  "guiOrder": "1",
+                  "hideOnLoginPage": "false"
+                }
+              }
+              JSON
+              # inject secrets (keep other config keys unchanged)
+              /usr/bin/sed -i "s/\"config\": {/\"config\": {\"clientId\": \"${CLIENT_ID}\", \"clientSecret\": \"${CLIENT_SECRET}\", /" /tmp/github-idp.json
+
+              echo "Creating IdP 'github'..."
+              /opt/keycloak/bin/kcadm.sh create identity-provider/instances -r master -f /tmp/github-idp.json
+
+              # Helper: create mapper if missing
               mapper_exists () {
                 /opt/keycloak/bin/kcadm.sh get identity-provider/instances/github/mappers -r master \
                   | grep -q "\"name\" : \"$1\""
               }
-
               create_mapper () {
                 local NAME="$1"; shift
                 if mapper_exists "$NAME"; then
@@ -414,6 +407,7 @@ spec:
                 fi
               }
 
+              # Idempotent mappers
               create_mapper email \
                 -s name=email \
                 -s identityProviderAlias=github \
@@ -436,7 +430,7 @@ spec:
                 -s 'config.user.attribute=firstName'
 
               echo "GitHub IdP configured."
-
+        
         - name: keycloak
           image: quay.io/keycloak/keycloak:24.0.5
           imagePullPolicy: IfNotPresent
