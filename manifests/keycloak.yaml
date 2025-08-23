@@ -287,8 +287,8 @@ data:
     var SimpleHttp = Java.type("org.keycloak.broker.provider.util.SimpleHttp");
 
     // === EDIT THESE ===
-    var WANT_ORG  = "YOUR_ORG";       // e.g. "suncoast-systems"
-    var WANT_TEAM = "YOUR_TEAM_SLUG"; // e.g. "platform-admins"
+    var WANT_ORG  = "dotcomrow";       // e.g. "suncoast-systems"
+    var WANT_TEAM = "keycloak_admins"; // e.g. "platform-admins"
     var IDP_ALIAS = "github";
 
     function authenticate(context) {
