@@ -473,7 +473,7 @@ spec:
                 echo "script-authenticator execution exists"
               else
                 /opt/keycloak/bin/kcadm.sh create "authentication/flows/${FLOW_ALIAS}/executions/execution" -r master \
-                  -s provider=script-authenticator
+                  -s provider=script
               fi
 
               # Get the execution id for the script-authenticator
