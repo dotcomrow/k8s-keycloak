@@ -407,22 +407,25 @@ spec:
           args:
             - |
               set -euo pipefail
-              source /vault/secrets/keycloak-admin
-              CLIENT_ID="<path:secret/data/keycloak-oauth-client-id#value>"
-              CLIENT_SECRET="<path:secret/data/keycloak-oauth-client-secret#value>"
 
+              # --- Admin creds & GitHub OAuth secrets (from Vault-injected files) ---
+              source /vault/secrets/keycloak-admin
+              CLIENT_ID="$(cat /vault/secrets/github-client-id)"
+              CLIENT_SECRET="$(cat /vault/secrets/github-client-secret)"
+
+              # --- Wait for admin API to accept credentials ---
               echo "Waiting for Keycloak admin API..."
               until /opt/keycloak/bin/kcadm.sh config credentials \
-                        --server http://127.0.0.1:8080 \
-                        --realm master \
-                        --user "$KEYCLOAK_ADMIN" \
-                        --password "$KEYCLOAK_ADMIN_PASSWORD" >/dev/null 2>&1; do
+                      --server http://127.0.0.1:8080 \
+                      --realm master \
+                      --user "$KEYCLOAK_ADMIN" \
+                      --password "$KEYCLOAK_ADMIN_PASSWORD" >/dev/null 2>&1; do
                 sleep 3
               done
 
               set -x
 
-              # Upsert GitHub IdP (ensure read:org + Store Tokens)
+              # === 1) Upsert GitHub IdP ===
               if /opt/keycloak/bin/kcadm.sh get identity-provider/instances/github -r master >/dev/null 2>&1; then
                 /opt/keycloak/bin/kcadm.sh update identity-provider/instances/github -r master \
                   -s enabled=true \
@@ -444,52 +447,76 @@ spec:
                   -s 'config.clientSecret='"$CLIENT_SECRET" \
                   -s 'config.defaultScope=read:user user:email read:org' \
                   -s 'config.guiOrder=1' \
-                  -s 'config.hideOnLoginPage=false'
+                  -s 'config.hideOnLoginPage=false' \
+                || true
               fi
 
+              # === 2) Ensure a TOP-LEVEL post-login flow exists ===
               FLOW_ALIAS="GitHub-PostLogin"
-              # Create flow if missing
-              if ! /opt/keycloak/bin/kcadm.sh get "authentication/flows/$FLOW_ALIAS" -r master >/dev/null 2>&1; then
+
+              # robust existence check by listing top-level flows and grepping alias
+              if /opt/keycloak/bin/kcadm.sh get authentication/flows -r master | grep -q "\"alias\" *: *\"${FLOW_ALIAS}\""; then
+                echo "Flow ${FLOW_ALIAS} already exists"
+              else
                 /opt/keycloak/bin/kcadm.sh create authentication/flows -r master \
-                  -s alias="$FLOW_ALIAS" \
+                  -s alias="${FLOW_ALIAS}" \
                   -s description="Grant realm-admin to members of a GitHub team" \
                   -s providerId=basic-flow \
-                  -s topLevel=false \
-                  -s builtIn=false
+                  -s topLevel=true \
+                  -s builtIn=false \
+                || true
               fi
 
-              # Add a script execution if not present
-              if ! /opt/keycloak/bin/kcadm.sh get "authentication/flows/$FLOW_ALIAS/executions" -r master | grep -q '"providerId" : "script-authenticator"'; then
-                /opt/keycloak/bin/kcadm.sh create "authentication/flows/$FLOW_ALIAS/executions/executions" -r master \
+              # === 3) Ensure a script-authenticator execution on that flow ===
+              if /opt/keycloak/bin/kcadm.sh get "authentication/flows/${FLOW_ALIAS}/executions" -r master \
+                  | grep -q '"providerId" : "script-authenticator"'; then
+                echo "script-authenticator execution exists"
+              else
+                /opt/keycloak/bin/kcadm.sh create "authentication/flows/${FLOW_ALIAS}/executions/executions" -r master \
                   -s provider=script-authenticator
               fi
 
-              # Find execution id of the script
-              EXEC_ID=$(/opt/keycloak/bin/kcadm.sh get "authentication/flows/$FLOW_ALIAS/executions" -r master | \
-                tr -d '\r' | awk -v RS='},' '/"providerId" : "script-authenticator"/{match($0,/"id" *: *"([^"]+)"/,a); if(a[1]!=""){print a[1]; exit}}')
-
-              # Make it REQUIRED
-              /opt/keycloak/bin/kcadm.sh update "authentication/executions/$EXEC_ID" -r master -s 'requirement=REQUIRED'
-
-              # Attach / update script content
-              if /opt/keycloak/bin/kcadm.sh get "authentication/executions/$EXEC_ID/config" -r master >/dev/null 2>&1; then
-                CFG_ID=$(/opt/keycloak/bin/kcadm.sh get "authentication/executions/$EXEC_ID/config" -r master | \
-                  tr -d '\r' | awk -v RS='},' '/"alias" *: *"/{match($0,/"id" *: *"([^"]+)"/,a); if(a[1]!=""){print a[1]; exit}}')
-                /opt/keycloak/bin/kcadm.sh update "authentication/executions/$EXEC_ID/config/$CFG_ID" -r master \
-                  -s 'alias=GitHub Team Admin' \
-                  -s 'config.script='"$(sed 's/"/\\"/g' </opt/keycloak/scripts/github-team-admin.js)"
-              else
-                /opt/keycloak/bin/kcadm.sh create "authentication/executions/$EXEC_ID/config" -r master \
-                  -s 'alias=GitHub Team Admin' \
-                  -s 'config.script='"$(sed 's/"/\\"/g' </opt/keycloak/scripts/github-team-admin.js)"
+              # Get the execution id for the script-authenticator
+              EXEC_ID=$(/opt/keycloak/bin/kcadm.sh get "authentication/flows/${FLOW_ALIAS}/executions" -r master \
+                | tr -d '\r' \
+                | awk '
+                    /"providerId" : "script-authenticator"/ { hit=1 }
+                    hit && /"id" :/ { gsub(/[,"]/,"",$3); print $3; exit }
+                  ')
+              if [ -z "${EXEC_ID:-}" ]; then
+                echo "Failed to determine script execution id"; exit 1
               fi
 
-              # Tell the GitHub IdP to use this flow after login
+              # Make the execution REQUIRED
+              /opt/keycloak/bin/kcadm.sh update "authentication/executions/${EXEC_ID}" -r master -s 'requirement=REQUIRED'
+
+              # === 4) Attach/update the script content ===
+              # Escape the JS script into JSON
+              SCRIPT_ESCAPED="$(sed -e 's/\\/\\\\/g' -e 's/"/\\"/g' -e ':a;N;$!ba;s/\n/\\n/g' /opt/keycloak/scripts/github-team-admin.js)"
+              cat >/tmp/script-cfg.json <<EOF
+              {
+                "alias": "GitHub Team Admin",
+                "config": { "script": "${SCRIPT_ESCAPED}" }
+              }
+              EOF
+
+              # Update if config exists, else create
+              if /opt/keycloak/bin/kcadm.sh get "authentication/executions/${EXEC_ID}/config" -r master >/dev/null 2>&1; then
+                CFG_ID=$(/opt/keycloak/bin/kcadm.sh get "authentication/executions/${EXEC_ID}/config" -r master \
+                  | tr -d '\r' \
+                  | awk '/"id" *:/ { gsub(/[,"]/,"",$3); print $3; exit }')
+                /opt/keycloak/bin/kcadm.sh update "authentication/executions/${EXEC_ID}/config/${CFG_ID}" -r master -f /tmp/script-cfg.json
+              else
+                /opt/keycloak/bin/kcadm.sh create "authentication/executions/${EXEC_ID}/config" -r master -f /tmp/script-cfg.json
+              fi
+
+              # === 5) Point the IdP to use this flow after broker login ===
               /opt/keycloak/bin/kcadm.sh update identity-provider/instances/github -r master \
-                -s "postLoginFlowAlias=$FLOW_ALIAS"
+                -s "postLoginFlowAlias=${FLOW_ALIAS}"
 
               set +x
               echo "✔ GitHub IdP + Post-Login script configured."
+
           # no probes for this helper; it exits when done
           resources:
             requests: { cpu: "20m", memory: "64Mi" }
