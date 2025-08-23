@@ -348,32 +348,32 @@ spec:
         - name: keycloak-configurator
           image: quay.io/keycloak/keycloak:24.0.5
           imagePullPolicy: IfNotPresent
-          command: ["/bin/bash","-lc"]
+          command: ["/bin/sh","-lc"]
           args:
             - |
-              set -euo pipefail
+              set -Eeuo pipefail
 
-              # Admin creds & GitHub secrets from Vault-injected files
-              source /vault/secrets/keycloak-admin
+              # --- Admin creds + GitHub client secrets from Vault-injected files ---
+              . /vault/secrets/keycloak-admin
               CLIENT_ID="<path:secret/data/keycloak-oauth-client-id#value>"
               CLIENT_SECRET="<path:secret/data/keycloak-oauth-client-secret#value>"
 
               echo "Waiting for Keycloak admin API..."
               until /opt/keycloak/bin/kcadm.sh config credentials \
-                       --server http://127.0.0.1:8080 \
-                       --realm master \
-                       --user "$KEYCLOAK_ADMIN" \
-                       --password "$KEYCLOAK_ADMIN_PASSWORD" >/dev/null 2>&1; do
+                      --server http://127.0.0.1:8080 \
+                      --realm master \
+                      --user "$KEYCLOAK_ADMIN" \
+                      --password "$KEYCLOAK_ADMIN_PASSWORD" >/dev/null 2>&1; do
                 sleep 3
               done
 
-              # If present, delete to avoid partial-update issues
+              # --- Recreate IdP to avoid partial-update issues ---
               if /opt/keycloak/bin/kcadm.sh get identity-provider/instances/github -r master >/dev/null 2>&1; then
                 echo "Deleting existing IdP 'github'..."
                 /opt/keycloak/bin/kcadm.sh delete identity-provider/instances/github -r master || true
               fi
 
-              # Create fresh IdP
+              # --- Create IdP from JSON (injects secrets safely) ---
               cat >/tmp/github-idp.json <<'JSON'
               {
                 "alias": "github",
@@ -381,55 +381,51 @@ spec:
                 "providerId": "github",
                 "enabled": true,
                 "config": {
+                  "clientId": "__CID__",
+                  "clientSecret": "__CSECRET__",
                   "defaultScope": "read:user user:email",
+                  "trustEmail": "true",
                   "guiOrder": "1",
-                  "hideOnLoginPage": "false"
+                  "hideOnLoginPage": "false",
+                  "linkOnly": "false"
                 }
               }
               JSON
-              # inject secrets (keep other config keys unchanged)
-              /usr/bin/sed -i "s/\"config\": {/\"config\": {\"clientId\": \"${CLIENT_ID}\", \"clientSecret\": \"${CLIENT_SECRET}\", /" /tmp/github-idp.json
+              sed -i "s/__CID__/${CLIENT_ID}/" /tmp/github-idp.json
+              sed -i "s/__CSECRET__/${CLIENT_SECRET}/" /tmp/github-idp.json
 
               echo "Creating IdP 'github'..."
               /opt/keycloak/bin/kcadm.sh create identity-provider/instances -r master -f /tmp/github-idp.json
-              # Helper: create mapper if missing
-              mapper_exists () {
-                /opt/keycloak/bin/kcadm.sh get identity-provider/instances/github/mappers -r master \
-                  | grep -q "\"name\" : \"$1\""
+
+              # --- Mappers (use JSON to avoid dotted-key CLI quirks) ---
+              cat >/tmp/mapper-email.json <<'JSON'
+              {
+                "name": "email",
+                "identityProviderAlias": "github",
+                "identityProviderMapper": "attribute-idp-mapper",
+                "config": { "attribute": "email", "user.attribute": "email" }
               }
-              create_mapper () {
-                local NAME="$1"; shift
-                if mapper_exists "$NAME"; then
-                  echo "Mapper '$NAME' already exists."
-                else
-                  /opt/keycloak/bin/kcadm.sh create identity-provider/instances/github/mappers -r master "$@"
-                fi
+              JSON
+              cat >/tmp/mapper-username.json <<'JSON'
+              {
+                "name": "username",
+                "identityProviderAlias": "github",
+                "identityProviderMapper": "attribute-idp-mapper",
+                "config": { "attribute": "login", "user.attribute": "username" }
               }
+              JSON
 
-              # Attribute Importer mappers for GitHub (NOT OIDC mappers)
-              create_mapper email \
-                -s name=email \
-                -s identityProviderAlias=github \
-                -s identityProviderMapper=attribute-idp-mapper \
-                -s 'config.attribute=email' \
-                -s 'config.user.attribute=email'
+              /opt/keycloak/bin/kcadm.sh create identity-provider/instances/github/mappers -r master -f /tmp/mapper-email.json
+              /opt/keycloak/bin/kcadm.sh create identity-provider/instances/github/mappers -r master -f /tmp/mapper-username.json
 
-              create_mapper username \
-                -s name=username \
-                -s identityProviderAlias=github \
-                -s identityProviderMapper=attribute-idp-mapper \
-                -s 'config.attribute=login' \
-                -s 'config.user.attribute=username'
+              echo "✅ GitHub IdP configured."
 
-              create_mapper name \
-                -s name=name \
-                -s identityProviderAlias=github \
-                -s identityProviderMapper=attribute-idp-mapper \
-                -s 'config.attribute=name' \
-                -s 'config.user.attribute=firstName'
+              # Keep the sidecar alive so it doesn't restart and re-run
+              tail -f /dev/null
+          resources:
+            requests: { cpu: "20m", memory: "64Mi" }
+            limits:   { cpu: "200m", memory: "256Mi" }
 
-              echo "GitHub IdP configured."
-        
         - name: keycloak
           image: quay.io/keycloak/keycloak:24.0.5
           imagePullPolicy: IfNotPresent
