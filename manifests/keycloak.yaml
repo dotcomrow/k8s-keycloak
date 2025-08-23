@@ -444,7 +444,7 @@ spec:
               provider_id_for_script() {
                 local raw; raw="$(/opt/keycloak/bin/kcadm.sh get authentication/authenticator-providers -r "$REALM" | json_objects_onelines || true)"
                 # common ids across versions
-                for cand in script auth-script-based script-authenticator; do
+                for cand in script auth-script-based script; do
                   if printf '%s\n' "$raw" | grep -q "\"id\"[[:space:]]*:[[:space:]]*\"$cand\""; then
                     echo "$cand"; return 0
                   fi
