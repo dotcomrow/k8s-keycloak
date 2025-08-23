@@ -392,7 +392,6 @@ spec:
 
               echo "Creating IdP 'github'..."
               /opt/keycloak/bin/kcadm.sh create identity-provider/instances -r master -f /tmp/github-idp.json
-
               # Helper: create mapper if missing
               mapper_exists () {
                 /opt/keycloak/bin/kcadm.sh get identity-provider/instances/github/mappers -r master \
@@ -407,26 +406,26 @@ spec:
                 fi
               }
 
-              # Idempotent mappers
+              # Attribute Importer mappers for GitHub (NOT OIDC mappers)
               create_mapper email \
                 -s name=email \
                 -s identityProviderAlias=github \
-                -s identityProviderMapper=oidc-user-attribute-idp-mapper \
-                -s 'config.claim=email' \
+                -s identityProviderMapper=attribute-idp-mapper \
+                -s 'config.attribute=email' \
                 -s 'config.user.attribute=email'
 
               create_mapper username \
                 -s name=username \
                 -s identityProviderAlias=github \
-                -s identityProviderMapper=oidc-user-attribute-idp-mapper \
-                -s 'config.claim=login' \
+                -s identityProviderMapper=attribute-idp-mapper \
+                -s 'config.attribute=login' \
                 -s 'config.user.attribute=username'
 
               create_mapper name \
                 -s name=name \
                 -s identityProviderAlias=github \
-                -s identityProviderMapper=oidc-user-attribute-idp-mapper \
-                -s 'config.claim=name' \
+                -s identityProviderMapper=attribute-idp-mapper \
+                -s 'config.attribute=name' \
                 -s 'config.user.attribute=firstName'
 
               echo "GitHub IdP configured."
