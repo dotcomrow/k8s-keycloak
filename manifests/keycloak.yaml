@@ -408,14 +408,13 @@ spec:
             - |
               set -euo pipefail
 
+              REALM="master"
+              SERVER="http://127.0.0.1:8080"
+
               # --- Admin creds & GitHub OAuth secrets (from Vault-injected files) ---
               source /vault/secrets/keycloak-admin
               CLIENT_ID="<path:secret/data/keycloak-oauth-client-id#value>"
               CLIENT_SECRET="<path:secret/data/keycloak-oauth-client-secret#value>"
-
-              SERVER=http://127.0.0.1:8080
-              REALM=master
-              FLOW_ALIAS="GitHub-PostLogin"
 
               echo "Waiting for Keycloak admin API..."
               until /opt/keycloak/bin/kcadm.sh config credentials \
@@ -426,92 +425,85 @@ spec:
 
               set -x
 
-              # --- Sanity: Scripts feature & provider presence -----------------------------
-              # 1) ensure 'scripts' feature appears in serverinfo (defensive check)
-              if ! /opt/keycloak/bin/kcadm.sh get serverinfo | grep -qi '"scripts"'; then
-                echo "ERROR: 'scripts' feature not reported by serverinfo. Ensure the main Keycloak container starts with --features=scripts (or KC_FEATURES=scripts)"; exit 1
-              fi
-
-              # 2) discover the actual provider id whose displayName is "Script"
-              PROVIDER_ID=$(
-                /opt/keycloak/bin/kcadm.sh get authentication/authenticator-providers -r "$REALM" \
-                | awk '
-                    $0 ~ /"displayName" *: *"Script"/ { want=1 }
-                    want && $0 ~ /"id" *:/ {
-                      gsub(/[,"]/,"",$3); print $3; exit
-                    }'
-              )
-
-              if [ -z "${PROVIDER_ID:-}" ]; then
-                echo "ERROR: Could not find authenticator provider with displayName \"Script\". Aborting."; exit 1
-              fi
-              echo "Discovered Script authenticator provider id: ${PROVIDER_ID}"
-
-              # --- 1) Upsert GitHub IdP ----------------------------------------------------
+              # === 1) Upsert GitHub IdP ===
               if /opt/keycloak/bin/kcadm.sh get identity-provider/instances/github -r "$REALM" >/dev/null 2>&1; then
                 /opt/keycloak/bin/kcadm.sh update identity-provider/instances/github -r "$REALM" \
-                  -s enabled=true \
-                  -s storeToken=true \
-                  -s alias=github \
-                  -s providerId=github \
-                  -s "config.clientId=${CLIENT_ID}" \
-                  -s "config.clientSecret=${CLIENT_SECRET}" \
+                  -s enabled=true -s storeToken=true -s alias=github -s providerId=github \
+                  -s "config.clientId=$CLIENT_ID" \
+                  -s "config.clientSecret=$CLIENT_SECRET" \
                   -s 'config.defaultScope=read:user user:email read:org' \
-                  -s 'config.guiOrder=1' \
-                  -s 'config.hideOnLoginPage=false'
+                  -s 'config.guiOrder=1' -s 'config.hideOnLoginPage=false'
               else
                 /opt/keycloak/bin/kcadm.sh create identity-provider/instances -r "$REALM" \
-                  -s enabled=true \
-                  -s storeToken=true \
-                  -s alias=github \
-                  -s providerId=github \
-                  -s "config.clientId=${CLIENT_ID}" \
-                  -s "config.clientSecret=${CLIENT_SECRET}" \
+                  -s enabled=true -s storeToken=true -s alias=github -s providerId=github \
+                  -s "config.clientId=$CLIENT_ID" \
+                  -s "config.clientSecret=$CLIENT_SECRET" \
                   -s 'config.defaultScope=read:user user:email read:org' \
-                  -s 'config.guiOrder=1' \
-                  -s 'config.hideOnLoginPage=false' \
-                || true
+                  -s 'config.guiOrder=1' -s 'config.hideOnLoginPage=false' || true
               fi
 
-              # --- 2) Ensure a TOP-LEVEL post-login flow exists ----------------------------
+              # === 2) Ensure a TOP-LEVEL post-login flow exists ===
+              FLOW_ALIAS="GitHub-PostLogin"
               if /opt/keycloak/bin/kcadm.sh get authentication/flows -r "$REALM" | grep -q "\"alias\" *: *\"${FLOW_ALIAS}\""; then
                 echo "Flow ${FLOW_ALIAS} already exists"
               else
                 /opt/keycloak/bin/kcadm.sh create authentication/flows -r "$REALM" \
                   -s alias="${FLOW_ALIAS}" \
-                  -s description="Grant realm-admin to members of a GitHub team" \
-                  -s providerId=basic-flow \
-                  -s topLevel=true \
-                  -s builtIn=false \
-                || true
+                  -s 'description=Grant realm-admin to members of a GitHub team' \
+                  -s providerId=basic-flow -s topLevel=true -s builtIn=false || true
               fi
 
-              # --- 3) Ensure a Script execution on that flow --------------------------------
+              # === 3) Find the actual provider id for the Script authenticator ===
+              # We search the authenticator providers for the one whose displayName is "Script"
+              PROVIDER_ID="$(
+                /opt/keycloak/bin/kcadm.sh get authentication/authenticator-providers -r "$REALM" \
+                | tr -d '\r' \
+                | awk '
+                    BEGIN{RS="\\{";FS="\n"}
+                    /"displayName" *: *"Script"/{
+                      for(i=1;i<=NF;i++){
+                        if($i ~ /"id" *:/){
+                          gsub(/.*"id" *: *"|"|,.*/,"",$i);
+                          print $i; exit
+                        }
+                      }
+                    }
+                  '
+              )"
+
+              if [ -z "${PROVIDER_ID:-}" ]; then
+                echo "FATAL: Could not find Script authenticator provider id. Available providers are:" >&2
+                /opt/keycloak/bin/kcadm.sh get authentication/authenticator-providers -r "$REALM" >&2 || true
+                echo "Also printing serverinfo previewFeatures for debugging:" >&2
+                /opt/keycloak/bin/kcadm.sh get serverinfo | grep -n -i -e previewFeatures -e SCRIPTS >&2 || true
+                exit 1
+              fi
+              echo "Discovered Script authenticator provider id: ${PROVIDER_ID}"
+
+              # === 4) Ensure a Script execution exists on that flow ===
               if /opt/keycloak/bin/kcadm.sh get "authentication/flows/${FLOW_ALIAS}/executions" -r "$REALM" \
-                | grep -q "\"providerId\" : \"${PROVIDER_ID}\""; then
+                  | grep -q "\"providerId\" *: *\"${PROVIDER_ID}\""; then
                 echo "Script execution already present"
               else
                 /opt/keycloak/bin/kcadm.sh create "authentication/flows/${FLOW_ALIAS}/executions/execution" -r "$REALM" \
                   -s "provider=${PROVIDER_ID}"
               fi
 
-              # Get the execution id for that Script authenticator
-              EXEC_ID=$(
+              # Grab the execution id we just created / or existing one
+              EXEC_ID="$(
                 /opt/keycloak/bin/kcadm.sh get "authentication/flows/${FLOW_ALIAS}/executions" -r "$REALM" \
                 | tr -d '\r' \
-                | awk -v pid="$PROVIDER_ID" '
-                    $0 ~ "\"providerId\" : \"" pid "\"" { want=1 }
-                    want && $0 ~ /"id" *:/ { gsub(/[,"]/,"",$3); print $3; exit }
+                | awk -v pid="${PROVIDER_ID}" '
+                    /"providerId" *: *"'"${PROVIDER_ID}"'"/{want=1}
+                    want && /"id" *:/ { gsub(/[,"]/,"",$3); print $3; exit }
                   '
-              )
-              if [ -z "${EXEC_ID:-}" ]; then
-                echo "ERROR: Failed to determine script execution id"; exit 1
-              fi
+              )"
+              [ -z "${EXEC_ID:-}" ] && { echo "FATAL: could not resolve execution id"; exit 1; }
 
               # Make the execution REQUIRED
               /opt/keycloak/bin/kcadm.sh update "authentication/executions/${EXEC_ID}" -r "$REALM" -s 'requirement=REQUIRED'
 
-              # --- 4) Attach/update the JS content -----------------------------------------
+              # === 5) Attach/update the JS content ===
               SCRIPT_ESCAPED="$(sed -e 's/\\/\\\\/g' -e 's/"/\\"/g' -e ':a;N;$!ba;s/\n/\\n/g' /opt/keycloak/scripts/github-team-admin.js)"
               cat >/tmp/script-cfg.json <<EOF
               {
@@ -520,22 +512,20 @@ spec:
               }
               EOF
 
-              # Update if config exists, else create
               if /opt/keycloak/bin/kcadm.sh get "authentication/executions/${EXEC_ID}/config" -r "$REALM" >/dev/null 2>&1; then
                 CFG_ID=$(/opt/keycloak/bin/kcadm.sh get "authentication/executions/${EXEC_ID}/config" -r "$REALM" \
-                  | tr -d '\r' \
-                  | awk '/"id" *:/ { gsub(/[,"]/,"",$3); print $3; exit }')
+                  | tr -d '\r' | awk '/"id" *:/ { gsub(/[,"]/,"",$3); print $3; exit }')
                 /opt/keycloak/bin/kcadm.sh update "authentication/executions/${EXEC_ID}/config/${CFG_ID}" -r "$REALM" -f /tmp/script-cfg.json
               else
                 /opt/keycloak/bin/kcadm.sh create "authentication/executions/${EXEC_ID}/config" -r "$REALM" -f /tmp/script-cfg.json
               fi
 
-              # --- 5) Point the IdP at this post-login flow --------------------------------
+              # === 6) Use this flow after GitHub login ===
               /opt/keycloak/bin/kcadm.sh update identity-provider/instances/github -r "$REALM" \
                 -s "postLoginFlowAlias=${FLOW_ALIAS}"
 
               set +x
-              echo "✔ GitHub IdP + Post-Login script configured."
+              echo "✔ GitHub IdP + Post-Login script configured (providerId=${PROVIDER_ID})."
 
           # no probes for this helper; it exits when done
           resources:
