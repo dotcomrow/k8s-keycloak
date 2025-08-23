@@ -562,7 +562,7 @@ spec:
               source /vault/secrets/keycloak-admin &&
               export KC_DB_USERNAME="$(cat /vault/secrets/db-username)" &&
               export KC_DB_PASSWORD="$(cat /vault/secrets/db-password)" &&
-              /opt/keycloak/bin/kc.sh start
+              /opt/keycloak/bin/kc.sh start --features=scripts
 
           startupProbe:
             tcpSocket:
