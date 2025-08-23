@@ -468,6 +468,10 @@ spec:
             value: "false"
           - name: KC_HOSTNAME_STRICT_HTTPS
             value: "true"
+          - name: KC_HTTP_RELATIVE_PATH
+            value: "/"                 # ensures cookie Path="/"
+          - name: KC_HTTP_COOKIE_SAME_SITE
+            value: "LAX" 
 
           command: ["/bin/sh","-lc"]
           args:
