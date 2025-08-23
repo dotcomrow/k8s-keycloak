@@ -410,8 +410,8 @@ spec:
 
               # --- Admin creds & GitHub OAuth secrets (from Vault-injected files) ---
               source /vault/secrets/keycloak-admin
-              CLIENT_ID="$(cat /vault/secrets/github-client-id)"
-              CLIENT_SECRET="$(cat /vault/secrets/github-client-secret)"
+              CLIENT_ID="<path:secret/data/keycloak-oauth-client-id#value>"
+              CLIENT_SECRET="<path:secret/data/keycloak-oauth-client-secret#value>"
 
               # --- Wait for admin API to accept credentials ---
               echo "Waiting for Keycloak admin API..."
