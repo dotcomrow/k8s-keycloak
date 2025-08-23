@@ -469,7 +469,7 @@ spec:
 
               # === 3) Ensure a script-authenticator execution on that flow ===
               if /opt/keycloak/bin/kcadm.sh get "authentication/flows/${FLOW_ALIAS}/executions" -r master \
-                  | grep -q '"providerId" : "script-authenticator"'; then
+                  | grep -q '"providerId" : "script"'; then
                 echo "script-authenticator execution exists"
               else
                 /opt/keycloak/bin/kcadm.sh create "authentication/flows/${FLOW_ALIAS}/executions/execution" -r master \
@@ -480,7 +480,7 @@ spec:
               EXEC_ID=$(/opt/keycloak/bin/kcadm.sh get "authentication/flows/${FLOW_ALIAS}/executions" -r master \
                 | tr -d '\r' \
                 | awk '
-                    /"providerId" : "script-authenticator"/ { hit=1 }
+                    /"providerId" : "script"/ { hit=1 }
                     hit && /"id" :/ { gsub(/[,"]/,"",$3); print $3; exit }
                   ')
               if [ -z "${EXEC_ID:-}" ]; then
