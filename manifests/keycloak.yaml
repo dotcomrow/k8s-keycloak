@@ -453,29 +453,26 @@ spec:
                   -s providerId=basic-flow -s topLevel=true -s builtIn=false || true
               fi
 
-              # === 3) Find the actual provider id for the Script authenticator ===
-              # We search the authenticator providers for the one whose displayName is "Script"
-              PROVIDER_ID="$(
-                /opt/keycloak/bin/kcadm.sh get authentication/authenticator-providers -r "$REALM" \
-                | tr -d '\r' \
-                | awk '
-                    BEGIN{RS="\\{";FS="\n"}
-                    /"displayName" *: *"Script"/{
-                      for(i=1;i<=NF;i++){
-                        if($i ~ /"id" *:/){
-                          gsub(/.*"id" *: *"|"|,.*/,"",$i);
-                          print $i; exit
-                        }
-                      }
-                    }
-                  '
-              )"
+              # === 3) Discover the Script authenticator provider id (no awk/jq) ===
+              RAW_PROVIDERS="$(/opt/keycloak/bin/kcadm.sh get authentication/authenticator-providers -r "$REALM" | tr -d '\r')"
+              PROVIDER_ID="$(printf '%s\n' "$RAW_PROVIDERS" \
+                | sed -n '/"displayName"[[:space:]]*:[[:space:]]*"Script"/,/}/p' \
+                | sed -n 's/.*"id"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' \
+                | head -n1)"
+
+              # As a fallback, try a small list of common ids that are actually present
+              if [ -z "${PROVIDER_ID:-}" ]; then
+                for cand in script script-authenticator auth-script auth-script-based; do
+                  if printf '%s\n' "$RAW_PROVIDERS" | grep -q "\"id\"[[:space:]]*:[[:space:]]*\"$cand\""; then
+                    PROVIDER_ID="$cand"; break
+                  fi
+                done
+              fi
 
               if [ -z "${PROVIDER_ID:-}" ]; then
-                echo "FATAL: Could not find Script authenticator provider id. Available providers are:" >&2
-                /opt/keycloak/bin/kcadm.sh get authentication/authenticator-providers -r "$REALM" >&2 || true
-                echo "Also printing serverinfo previewFeatures for debugging:" >&2
-                /opt/keycloak/bin/kcadm.sh get serverinfo | grep -n -i -e previewFeatures -e SCRIPTS >&2 || true
+                echo "FATAL: Could not find Script authenticator provider id."
+                echo "Available providers:"
+                printf '%s\n' "$RAW_PROVIDERS"
                 exit 1
               fi
               echo "Discovered Script authenticator provider id: ${PROVIDER_ID}"
@@ -489,14 +486,13 @@ spec:
                   -s "provider=${PROVIDER_ID}"
               fi
 
-              # Grab the execution id we just created / or existing one
+              # Grab the execution id for the script
               EXEC_ID="$(
                 /opt/keycloak/bin/kcadm.sh get "authentication/flows/${FLOW_ALIAS}/executions" -r "$REALM" \
                 | tr -d '\r' \
-                | awk -v pid="${PROVIDER_ID}" '
-                    /"providerId" *: *"'"${PROVIDER_ID}"'"/{want=1}
-                    want && /"id" *:/ { gsub(/[,"]/,"",$3); print $3; exit }
-                  '
+                | sed -n '/"providerId"[[:space:]]*:[[:space:]]*"'${PROVIDER_ID//\//\\/}'"/,/}/p' \
+                | sed -n 's/.*"id"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' \
+                | head -n1
               )"
               [ -z "${EXEC_ID:-}" ] && { echo "FATAL: could not resolve execution id"; exit 1; }
 
@@ -514,7 +510,7 @@ spec:
 
               if /opt/keycloak/bin/kcadm.sh get "authentication/executions/${EXEC_ID}/config" -r "$REALM" >/dev/null 2>&1; then
                 CFG_ID=$(/opt/keycloak/bin/kcadm.sh get "authentication/executions/${EXEC_ID}/config" -r "$REALM" \
-                  | tr -d '\r' | awk '/"id" *:/ { gsub(/[,"]/,"",$3); print $3; exit }')
+                          | tr -d '\r' | sed -n 's/.*"id"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -n1)
                 /opt/keycloak/bin/kcadm.sh update "authentication/executions/${EXEC_ID}/config/${CFG_ID}" -r "$REALM" -f /tmp/script-cfg.json
               else
                 /opt/keycloak/bin/kcadm.sh create "authentication/executions/${EXEC_ID}/config" -r "$REALM" -f /tmp/script-cfg.json
