@@ -449,66 +449,12 @@ spec:
                 done
               }
 
-              # ---- Presence checks must return real status (no '|| true') ----
-              flow_present() {
-                local flows
-                flows="$(/opt/keycloak/bin/kcadm.sh get authentication/flows -r "$REALM" 2>/dev/null || true)"
-                printf '%s' "$flows" | grep -Fq "\"alias\" : \"${FLOW_ALIAS}\""
+              # -------- helpers (NO silent || true inside checks) --------
+              flow_exists() {
+                /opt/keycloak/bin/kcadm.sh get "authentication/flows/${FLOW_ALIAS}" -r "$REALM" >/dev/null 2>&1
               }
 
-              wait_flow_absent() {
-                local tries=0 max=60
-                while flow_present; do
-                  tries=$((tries+1)); [ "$tries" -ge "$max" ] && { echo "WARN: flow '${FLOW_ALIAS}' still visible; proceeding"; return 0; }
-                  sleep 1
-                done
-              }
-
-              wait_flow_present() {
-                local tries=0 max=60
-                until flow_present; do
-                  tries=$((tries+1)); [ "$tries" -ge "$max" ] && { echo "FATAL: flow '${FLOW_ALIAS}' not visible after create"; exit 1; }
-                  sleep 1
-                done
-              }
-
-              delete_flow_everywhere() {
-                echo "Deleting flow '${FLOW_ALIAS}' (and references) if present..."
-
-                # Remove executions referencing our subflow from all top-level flows
-                local FLOWS LINES
-                FLOWS="$(/opt/keycloak/bin/kcadm.sh get authentication/flows -r "$REALM" 2>/dev/null || true)"
-                LINES="$(printf '%s' "$FLOWS" | json_objects_onelines || true)"
-
-                printf '%s\n' "$LINES" \
-                  | sed -n 's/.*"id"[[:space:]]*:[[:space:]]*"\([^"]*\)".*"alias"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1 \2/p' \
-                  | while read -r TOP_ID TOP_ALIAS; do
-                      [ -z "${TOP_ID:-}" ] && continue
-                      EXECS="$(/opt/keycloak/bin/kcadm.sh get "authentication/flows/${TOP_ID}/executions" -r "$REALM" 2>/dev/null || true)"
-                      printf '%s' "$EXECS" | json_objects_onelines \
-                        | while read -r LINE; do
-                            printf '%s' "$LINE" | grep -Fq "\"flowAlias\" : \"${FLOW_ALIAS}\"" || continue
-                            EXEC_ID="$(printf '%s\n' "$LINE" | sed -n 's/.*"id"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')"
-                            SUBFLOW_ID="$(printf '%s\n' "$LINE" | sed -n 's/.*"flowId"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')"
-                            [ -n "${EXEC_ID:-}" ] && /opt/keycloak/bin/kcadm.sh delete "authentication/executions/${EXEC_ID}" -r "$REALM" >/dev/null 2>&1 || true
-                            [ -n "${SUBFLOW_ID:-}" ] && /opt/keycloak/bin/kcadm.sh delete "authentication/flows/${SUBFLOW_ID}" -r "$REALM" >/dev/null 2>&1 || true
-                          done || true
-                    done || true
-
-                # Delete any top-level flow with our alias by ID
-                FLOWS="$(/opt/keycloak/bin/kcadm.sh get authentication/flows -r "$REALM" 2>/dev/null || true)"
-                LINES="$(printf '%s' "$FLOWS" | json_objects_onelines || true)"
-                TOP_ID="$(printf '%s\n' "$LINES" \
-                          | grep -F "\"alias\" : \"${FLOW_ALIAS}\"" \
-                          | sed -n 's/.*"id"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' \
-                          | head -n1)"
-                [ -n "${TOP_ID:-}" ] && /opt/keycloak/bin/kcadm.sh delete "authentication/flows/${TOP_ID}" -r "$REALM" >/dev/null 2>&1 || true
-
-                wait_flow_absent
-                echo "Flow '${FLOW_ALIAS}' removed (if it existed)."
-              }
-
-              wait_script_provider_available() {
+              wait_script_feature() {
                 local tries=0 max=60
                 while :; do
                   if /opt/keycloak/bin/kcadm.sh get authentication/authenticator-providers -r "$REALM" 2>/dev/null \
@@ -525,6 +471,39 @@ spec:
                 done
               }
 
+              purge_flow_executions() {
+                # Delete ALL executions beneath FLOW_ALIAS (idempotent)
+                echo "Purging executions under flow '${FLOW_ALIAS}'..."
+                local loop_guard=0
+                while :; do
+                  loop_guard=$((loop_guard+1)); [ "$loop_guard" -gt 20 ] && break
+                  local EXECS IDS
+                  EXECS="$(/opt/keycloak/bin/kcadm.sh get "authentication/flows/${FLOW_ALIAS}/executions" -r "$REALM" 2>/dev/null || true)"
+                  IDS="$(printf '%s' "$EXECS" | json_objects_onelines | sed -n 's/.*"id"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')"
+                  [ -z "${IDS:-}" ] && { echo "Flow '${FLOW_ALIAS}' now has no executions."; return 0; }
+                  # Delete each execution
+                  while read -r EID; do
+                    [ -z "${EID:-}" ] && continue
+                    /opt/keycloak/bin/kcadm.sh delete "authentication/executions/${EID}" -r "$REALM" >/dev/null 2>&1 || true
+                  done <<< "$IDS"
+                  # small wait to let server settle
+                  sleep 1
+                done
+                echo "WARN: executions may still remain (loop guard tripped); continuing."
+              }
+
+              ensure_flow_exists() {
+                if flow_exists; then
+                  echo "Flow '${FLOW_ALIAS}' exists; will reset it."
+                else
+                  echo "Creating flow '${FLOW_ALIAS}'..."
+                  /opt/keycloak/bin/kcadm.sh create authentication/flows -r "$REALM" \
+                    -s "alias=${FLOW_ALIAS}" \
+                    -s 'description=Grant realm-admin to members of a GitHub team' \
+                    -s providerId=basic-flow -s topLevel=true -s builtIn=false
+                fi
+              }
+
               create_mapper_file() {
                 local file="$1" tries=0
                 while :; do
@@ -536,16 +515,48 @@ spec:
                 done
               }
 
+              add_script_execution() {
+                # Try to add the script execution; then fetch its id with retries
+                /opt/keycloak/bin/kcadm.sh create "authentication/flows/${FLOW_ALIAS}/executions/execution" -r "$REALM" \
+                  -s provider=script >/dev/null 2>&1 || true
+
+                local EXEC_ID=""
+                for i in $(seq 1 20); do
+                  EXEC_ID="$(
+                    /opt/keycloak/bin/kcadm.sh get "authentication/flows/${FLOW_ALIAS}/executions" -r "$REALM" 2>/dev/null \
+                    | json_objects_onelines \
+                    | grep -E '"providerId"[[:space:]]*:[[:space:]]*"script"' \
+                    | sed -n 's/.*"id"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' \
+                    | head -n1
+                  )" || true
+                  [ -n "${EXEC_ID:-}" ] && break
+                  sleep 1
+                done
+                [ -z "${EXEC_ID:-}" ] && { echo "FATAL: could not find script execution id"; exit 1; }
+
+                /opt/keycloak/bin/kcadm.sh update "authentication/executions/${EXEC_ID}" -r "$REALM" -s 'requirement=REQUIRED'
+
+                # Attach JS from ConfigMap (create or update)
+                local SCRIPT_ESCAPED
+                SCRIPT_ESCAPED="$(sed -e 's/\\/\\\\/g' -e 's/"/\\"/g' -e ':a;N;$!ba;s/\n/\\n/g' /opt/keycloak/scripts/github-team-admin.js)"
+                cat >/tmp/script-cfg.json <<EOF
+              { "alias": "GitHub Team Admin", "config": { "script": "${SCRIPT_ESCAPED}" } }
+              EOF
+                /opt/keycloak/bin/kcadm.sh create "authentication/executions/${EXEC_ID}/config" -r "$REALM" -f /tmp/script-cfg.json >/dev/null 2>&1 || {
+                  CFG_ID=$(/opt/keycloak/bin/kcadm.sh get "authentication/executions/${EXEC_ID}/config" -r "$REALM" \
+                              | json_objects_onelines \
+                              | sed -n 's/.*"id"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -n1)
+                  [ -n "${CFG_ID:-}" ] && /opt/keycloak/bin/kcadm.sh update "authentication/executions/${EXEC_ID}/config/${CFG_ID}" -r "$REALM" -f /tmp/script-cfg.json
+                }
+              }
+
               wait_admin
               set -x
 
-              # ===== HARD RESET =====
+              # ===== RESET IDP (always) =====
               /opt/keycloak/bin/kcadm.sh get identity-provider/instances/github -r "$REALM" >/dev/null 2>&1 && \
                 /opt/keycloak/bin/kcadm.sh delete identity-provider/instances/github -r "$REALM" || true
 
-              delete_flow_everywhere
-
-              # ===== RECREATE IDP =====
               /opt/keycloak/bin/kcadm.sh create identity-provider/instances -r "$REALM" \
                 -s enabled=true -s storeToken=true -s alias=github -s providerId=github \
                 -s "config.clientId=$CLIENT_ID" \
@@ -574,52 +585,13 @@ spec:
               create_mapper_file /tmp/mapper-username.json
               create_mapper_file /tmp/mapper-name.json
 
-              # ===== RECREATE FLOW IF MISSING =====
-              if flow_present; then
-                echo "Flow '${FLOW_ALIAS}' already present; skipping create."
-              else
-                /opt/keycloak/bin/kcadm.sh create authentication/flows -r "$REALM" \
-                  -s "alias=${FLOW_ALIAS}" \
-                  -s 'description=Grant realm-admin to members of a GitHub team' \
-                  -s providerId=basic-flow -s topLevel=true -s builtIn=false || true
-                wait_flow_present
-              fi
+              # ===== FLOW: ensure exists, then clean & rebuild =====
+              ensure_flow_exists
+              purge_flow_executions
 
-              # Ensure 'script' authenticator is available
-              wait_script_provider_available
-
-              # ===== ALWAYS ATTEMPT TO ADD THE SCRIPT EXECUTION (idempotent) =====
-              /opt/keycloak/bin/kcadm.sh create "authentication/flows/${FLOW_ALIAS}/executions/execution" -r "$REALM" \
-                -s provider=script >/dev/null 2>&1 || true
-
-              # Retry-fetch the execution id
-              EXEC_ID=""
-              for i in $(seq 1 10); do
-                EXEC_ID="$(
-                  /opt/keycloak/bin/kcadm.sh get "authentication/flows/${FLOW_ALIAS}/executions" -r "$REALM" 2>/dev/null \
-                  | json_objects_onelines \
-                  | grep -E '"providerId"[[:space:]]*:[[:space:]]*"script"' \
-                  | sed -n 's/.*"id"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' \
-                  | head -n1
-                )" || true
-                [ -n "${EXEC_ID:-}" ] && break
-                sleep 1
-              done
-              [ -z "${EXEC_ID:-}" ] && { echo "FATAL: could not find script execution id"; exit 1; }
-
-              /opt/keycloak/bin/kcadm.sh update "authentication/executions/${EXEC_ID}" -r "$REALM" -s 'requirement=REQUIRED'
-
-              # Attach JS from ConfigMap
-              SCRIPT_ESCAPED="$(sed -e 's/\\/\\\\/g' -e 's/"/\\"/g' -e ':a;N;$!ba;s/\n/\\n/g' /opt/keycloak/scripts/github-team-admin.js)"
-              cat >/tmp/script-cfg.json <<EOF
-              { "alias": "GitHub Team Admin", "config": { "script": "${SCRIPT_ESCAPED}" } }
-              EOF
-              /opt/keycloak/bin/kcadm.sh create "authentication/executions/${EXEC_ID}/config" -r "$REALM" -f /tmp/script-cfg.json >/dev/null 2>&1 || {
-                CFG_ID=$(/opt/keycloak/bin/kcadm.sh get "authentication/executions/${EXEC_ID}/config" -r "$REALM" \
-                            | json_objects_onelines \
-                            | sed -n 's/.*"id"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -n1)
-                [ -n "${CFG_ID:-}" ] && /opt/keycloak/bin/kcadm.sh update "authentication/executions/${EXEC_ID}/config/${CFG_ID}" -r "$REALM" -f /tmp/script-cfg.json
-              }
+              # scripts feature must be enabled
+              wait_script_feature
+              add_script_execution
 
               # Wire IdP to use the post-broker flow
               /opt/keycloak/bin/kcadm.sh update identity-provider/instances/github -r "$REALM" \
