@@ -751,6 +751,12 @@ spec:
             value: "scripts"
           - name: KC_PROFILE
             value: "preview"
+          - name: KC_LOG_LEVEL
+            value: DEBUG
+          - name: QUARKUS_LOG_CATEGORY__LIQUIBASE__LEVEL
+            value: DEBUG
+          - name: QUARKUS_LOG_CATEGORY__org.keycloak.quarkus.runtime.storage.legacy.liquibase__LEVEL
+            value: DEBUG
 
           command: ["/bin/sh","-lc"]
           args:
