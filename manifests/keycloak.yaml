@@ -391,6 +391,29 @@ spec:
           configMap:
             name: kc-script-github-admin
       initContainers:
+        - name: nuke-schema
+          image: alpine:3.20
+          command: ["/bin/sh","-lc"]
+          args:
+            - |
+              apk add --no-cache postgresql15-client netcat-openbsd >/dev/null
+              PGHOST="yb-tserver-service.yugabyte.svc.cluster.local"
+              PGPORT="5433"
+              PGDB="keycloak"  # must match KC_DB_URL
+              CREDS_JSON="$(vault read -format=json yugabyte-db/static-creds/keycloak-app)"
+              DB_USER="$(printf '%s' "$CREDS_JSON" | jq -r .data.username)"
+              DB_PASS="$(printf '%s' "$CREDS_JSON" | jq -r .data.password)"
+              export PGPASSWORD="$DB_PASS"
+              until getent hosts "$PGHOST" >/dev/null 2>&1; do sleep 2; done
+              until nc -z -w1 "$PGHOST" "$PGPORT"; do sleep 2; done
+              psql -h "$PGHOST" -p "$PGPORT" -U "$DB_USER" -d "$PGDB" -v ON_ERROR_STOP=1 <<'SQL'
+              CREATE EXTENSION IF NOT EXISTS pgcrypto;
+              DROP TABLE IF EXISTS public.databasechangeloglock CASCADE;
+              DROP TABLE IF EXISTS public.databasechangelog     CASCADE;
+              DROP SCHEMA IF EXISTS keycloak CASCADE;
+              CREATE SCHEMA keycloak AUTHORIZATION :"DB_USER";
+              ALTER ROLE :"DB_USER" IN DATABASE :"PGDB" SET search_path = keycloak, public;
+              SQL
         - name: wait-for-config-job
           image: alpine/k8s:1.31.4
           command: ["/bin/sh","-lc"]
