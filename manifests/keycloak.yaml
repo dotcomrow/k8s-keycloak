@@ -133,6 +133,19 @@ spec:
                 echo "🔁 Retry create DB in 3s..."; sleep 3
               done
 
+              # --- DB-level extension (needed by Keycloak for gen_random_uuid) ---
+              echo "🧩 Ensuring pgcrypto is installed in DB '$DB'..."
+              psql -h "$PGHOST" -p "$PGPORT" -U "$VAULTADMIN_USER" -d "$DB" -v ON_ERROR_STOP=1 <<'EOSQL'
+              CREATE EXTENSION IF NOT EXISTS pgcrypto;
+              EOSQL
+
+              # --- Remove stray Liquibase tables in public (they cause mismatched state) ---
+              echo "🧹 Dropping stray Liquibase tables from public schema (if any)..."
+              psql -h "$PGHOST" -p "$PGPORT" -U "$VAULTADMIN_USER" -d "$DB" -v ON_ERROR_STOP=0 <<'EOSQL'
+              DROP TABLE IF EXISTS public.databasechangeloglock CASCADE;
+              DROP TABLE IF EXISTS public.databasechangelog     CASCADE;
+              EOSQL
+
               # --- Roles: group + stable owner + let vaultadmin assume owner ---
               psql -h "$PGHOST" -p "$PGPORT" -U "$VAULTADMIN_USER" -d yugabyte <<EOSQL
               DO \$\$
@@ -149,12 +162,15 @@ spec:
               GRANT ${ROLE_OWNER} TO ${VAULTADMIN_USER};
               EOSQL
 
-              # --- Schema creation / ownership (do minimal work as vaultadmin) ---
-              psql -h "$PGHOST" -p "$PGPORT" -U "$VAULTADMIN_USER" -d "$DB" <<EOSQL
-              CREATE SCHEMA IF NOT EXISTS keycloak AUTHORIZATION ${ROLE_OWNER};
+              # --- Schema hard reset / ownership (destructive & idempotent) ---
+              echo "💣 Dropping and recreating schema 'keycloak' in DB '$DB'..."
+              psql -h "$PGHOST" -p "$PGPORT" -U "$VAULTADMIN_USER" -d "$DB" -v ON_ERROR_STOP=1 <<EOSQL
+              DROP SCHEMA IF EXISTS keycloak CASCADE;
+              CREATE SCHEMA keycloak AUTHORIZATION ${ROLE_OWNER};
               ALTER SCHEMA keycloak OWNER TO ${ROLE_OWNER};
-              -- Convenience: make owner default to the keycloak schema
-              ALTER ROLE ${ROLE_OWNER} SET search_path = keycloak;
+
+              -- Make sure the app owner (used by Keycloak) writes into 'keycloak' first for THIS DB
+              ALTER ROLE ${ROLE_OWNER} IN DATABASE ${DB} SET search_path = keycloak, public;
               EOSQL
 
               # --- If Liquibase bootstrap tables already exist, make sure the stable owner owns them ---
