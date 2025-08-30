@@ -426,6 +426,7 @@ spec:
               REALM="master"
               SERVER="http://127.0.0.1:8080"
               FLOW_ALIAS="GitHub-PostLogin"
+              FIRST_LOGIN_FLOW_ALIAS="github-first-login-nolink"   # >>> NEW <<<
 
               # --- Admin creds & GitHub secrets (Vault-injected env file) ---
               source /vault/secrets/keycloak-admin
@@ -465,9 +466,8 @@ spec:
                     -s "alias=${FLOW_ALIAS}" \
                     -s 'description=Grant realm-admin to members of a GitHub team' \
                     -s providerId=basic-flow -s topLevel=true -s builtIn=false \
-                    >/dev/null 2>&1 || true   # ok if server races and says "already exists"
+                    >/dev/null 2>&1 || true
                 fi
-                # Wait until visible via the list endpoint (handles eventual consistency)
                 local tries=0 max=60
                 until flow_present; do
                   tries=$((tries+1))
@@ -576,6 +576,65 @@ spec:
                 }
               }
 
+              # ---------- NEW: helpers for First Broker Login flow ----------
+              # Ensure a flow exists by alias (generic)
+              ensure_named_flow_exists() { # alias description
+                local alias="$1" desc="$2"
+                if ! /opt/keycloak/bin/kcadm.sh get authentication/flows -r "$REALM" 2>/dev/null \
+                    | json_objects_onelines | grep -q "\"alias\"[[:space:]]*:[[:space:]]*\"${alias//\//\\/}\""; then
+                  echo "Creating flow '${alias}'..."
+                  /opt/keycloak/bin/kcadm.sh create authentication/flows -r "$REALM" \
+                    -s "alias=${alias}" -s "description=${desc}" \
+                    -s providerId=basic-flow -s topLevel=true -s builtIn=false >/dev/null 2>&1 || true
+                fi
+                # Wait until it shows up
+                for i in $(seq 1 60); do
+                  if /opt/keycloak/bin/kcadm.sh get authentication/flows -r "$REALM" 2>/dev/null \
+                      | json_objects_onelines | grep -q "\"alias\"[[:space:]]*:[[:space:]]*\"${alias//\//\\/}\""; then
+                    return 0
+                  fi
+                  sleep 1
+                done
+                echo "FATAL: flow '${alias}' not visible after create"; exit 1
+              }
+
+              # Ensure an execution with a given provider exists under a flow and set its requirement
+              ensure_exec_req() { # flow_alias provider requirement
+                local alias="$1" provider="$2" req="$3"
+                if ! /opt/keycloak/bin/kcadm.sh get "authentication/flows/${alias}/executions" -r "$REALM" 2>/dev/null \
+                    | json_objects_onelines | grep -q "\"providerId\"[[:space:]]*:[[:space:]]*\"${provider}\""; then
+                  /opt/keycloak/bin/kcadm.sh create "authentication/flows/${alias}/executions/execution" -r "$REALM" \
+                    -s "provider=${provider}" >/dev/null 2>&1 || true
+                fi
+                # find the execution id for that provider
+                local EID=""
+                for i in $(seq 1 30); do
+                  EID="$(
+                    /opt/keycloak/bin/kcadm.sh get "authentication/flows/${alias}/executions" -r "$REALM" \
+                      | json_objects_onelines \
+                      | awk -v p="\"providerId\"[[:space:]]*:[[:space:]]*\"${provider}\"" '
+                          $0 ~ p { if (match($0, /"id"[[:space:]]*:[[:space:]]*"([^"]*)"/, m)) { print m[1]; exit } }'
+                  )"
+                  [ -n "${EID:-}" ] && break
+                  sleep 1
+                done
+                [ -z "${EID:-}" ] && { echo "FATAL: couldn't find execution id for ${provider} in flow ${alias}"; exit 1; }
+                /opt/keycloak/bin/kcadm.sh update "authentication/executions/${EID}" -r "$REALM" -s "requirement=${req}"
+              }
+
+              ensure_first_broker_login_flow() {
+                ensure_named_flow_exists "${FIRST_LOGIN_FLOW_ALIAS}" "Auto-create user, no link prompt"   # >>> NEW <<<
+                # Create User If Unique = REQUIRED
+                ensure_exec_req "${FIRST_LOGIN_FLOW_ALIAS}" "idp-create-user-if-unique" "REQUIRED"
+                # Confirm Link Existing Account = DISABLED (prevents linking prompt)
+                ensure_exec_req "${FIRST_LOGIN_FLOW_ALIAS}" "idp-confirm-link" "DISABLED"
+                # Review Profile = OPTIONAL (change to REQUIRED if you want edits)
+                ensure_exec_req "${FIRST_LOGIN_FLOW_ALIAS}" "idp-review-profile" "OPTIONAL"
+                # Verify Email = DISABLED if we trust email from GitHub (see IdP config below)
+                ensure_exec_req "${FIRST_LOGIN_FLOW_ALIAS}" "idp-verify-email" "DISABLED"
+              }
+              # ---------- /NEW ----------
+
               wait_admin
               set -x
 
@@ -588,7 +647,9 @@ spec:
                 -s "config.clientId=$CLIENT_ID" \
                 -s "config.clientSecret=$CLIENT_SECRET" \
                 -s 'config.defaultScope=read:user user:email read:org' \
-                -s 'config.guiOrder=1' -s 'config.hideOnLoginPage=false'
+                -s 'config.guiOrder=1' -s 'config.hideOnLoginPage=false' \
+                -s 'config.syncMode=IMPORT' \                    # >>> NEW <<< ensure local user import
+                -s 'config.trustEmail=true'                      # >>> NEW <<< trust GitHub email
               wait_idp
 
               # ===== Mappers =====
@@ -607,11 +668,19 @@ spec:
                 "identityProviderMapper":"oidc-user-attribute-idp-mapper",
                 "config":{ "claim":"name", "user.attribute":"firstName", "syncMode":"INHERIT" } }
               JSON
+              # >>> NEW <<< Username Template Importer (prevents collisions, guarantees unique usernames)
+              cat >/tmp/mapper-username-template.json <<'JSON'
+              { "name":"username-template", "identityProviderAlias":"github",
+                "identityProviderMapper":"username-template-importer",
+                "config":{ "template":"${ALIAS}.${CLAIM.sub}", "syncMode":"INHERIT" } }
+              JSON
+
               create_mapper_file /tmp/mapper-email.json
               create_mapper_file /tmp/mapper-username.json
               create_mapper_file /tmp/mapper-name.json
+              create_mapper_file /tmp/mapper-username-template.json   # >>> NEW <<<
 
-              # ===== FLOW: ensure exists, then clean & rebuild =====
+              # ===== FLOW: ensure exists, then clean & rebuild (your post-broker script) =====
               ensure_flow_exists
               purge_flow_executions
 
@@ -624,6 +693,11 @@ spec:
               /opt/keycloak/bin/kcadm.sh update identity-provider/instances/github -r "$REALM" \
                 -s "postBrokerLoginFlowAlias=${FLOW_ALIAS}"
 
+              # >>> NEW <<< Ensure First Broker Login flow exists & wire it
+              ensure_first_broker_login_flow
+              /opt/keycloak/bin/kcadm.sh update identity-provider/instances/github -r "$REALM" \
+                -s "firstBrokerLoginFlowAlias=${FIRST_LOGIN_FLOW_ALIAS}"
+
               # Optional realm defaults
               /opt/keycloak/bin/kcadm.sh update "realms/${REALM}" \
                 -s sslRequired=EXTERNAL \
@@ -635,7 +709,7 @@ spec:
                 -s permanentLockout=false
 
               set +x
-              echo "✔ Reset + reconfigure complete."
+              echo "✔ Reset + reconfigure complete (GitHub: auto-create user, no link prompt)."
               # keep sidecar alive in a Deployment
               sleep 365d
           resources:
