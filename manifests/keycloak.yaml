@@ -84,7 +84,79 @@ roleRef:
   kind: Role
   name: write-root-token
 ---
-# ===== PreSync (-20): Copy vault-root-token from "vault" -> "keycloak" (idempotent)
+# --- ensure the copier SA/RBAC exist in 'vault' before the job ---
+
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: secret-copier
+  namespace: vault
+  annotations:
+    argocd.argoproj.io/hook: PreSync
+    argocd.argoproj.io/sync-wave: "-30"
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: read-root-token
+  namespace: vault
+  annotations:
+    argocd.argoproj.io/hook: PreSync
+    argocd.argoproj.io/sync-wave: "-30"
+rules:
+- apiGroups: [""]
+  resources: ["secrets"]
+  resourceNames: ["vault-root-token"]
+  verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: write-root-token
+  namespace: keycloak
+  annotations:
+    argocd.argoproj.io/hook: PreSync
+    argocd.argoproj.io/sync-wave: "-30"
+rules:
+- apiGroups: [""]
+  resources: ["secrets"]
+  verbs: ["create","update","patch","get","list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: read-root-token-binding
+  namespace: vault
+  annotations:
+    argocd.argoproj.io/hook: PreSync
+    argocd.argoproj.io/sync-wave: "-30"
+subjects:
+- kind: ServiceAccount
+  name: secret-copier
+  namespace: vault
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: read-root-token
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: write-root-token-binding
+  namespace: keycloak
+  annotations:
+    argocd.argoproj.io/hook: PreSync
+    argocd.argoproj.io/sync-wave: "-30"
+subjects:
+- kind: ServiceAccount
+  name: secret-copier
+  namespace: vault
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: write-root-token
+---
+# ===== PreSync (-20): Copy vault-root-token from "vault" -> "keycloak"
 apiVersion: batch/v1
 kind: Job
 metadata:
@@ -105,17 +177,18 @@ spec:
       restartPolicy: Never
       containers:
         - name: copy-secret
-          image: bitnami/kubectl:1.31
+          image: alpine/k8s:1.31.4
           command: ["/bin/sh","-c"]
           args:
             - |
               set -eu
+              apk add --no-cache jq >/dev/null
               echo "Ensuring 'vault-root-token' exists in keycloak namespace..."
-              # Delete first to avoid immutable metadata issues
+              # Delete first to avoid immutable metadata errors
               kubectl -n keycloak delete secret vault-root-token --ignore-not-found
               # Copy and scrub metadata safely
               kubectl -n vault get secret vault-root-token -o json \
-              | jq '.metadata |= {name:"vault-root-token", namespace:"keycloak"} 
+              | jq '.metadata |= {name:"vault-root-token", namespace:"keycloak"}
                     | del(.metadata.resourceVersion,.metadata.uid,.metadata.creationTimestamp,
                           .metadata.annotations,.metadata.ownerReferences,.metadata.managedFields)' \
               | kubectl apply -f -
