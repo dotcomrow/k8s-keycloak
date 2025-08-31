@@ -408,8 +408,7 @@ spec:
           command: ["/bin/sh","-lc"]
           args:
             - |
-              set -euo pipefail
-
+              
               # ---- settings ----
               JOB_NS="vault"
               JOB_NAME="keycloak-yugabyte-config"
