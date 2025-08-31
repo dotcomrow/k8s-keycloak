@@ -223,7 +223,6 @@ spec:
         - name: root-token
           secret:
             secretName: vault-root-token
-            optional: true   # present in vault ns already; not mounted here
       containers:
         - name: setup-role
           image: hashicorp/vault:1.15.4
@@ -231,6 +230,8 @@ spec:
           args:
             - |
               set -eu
+
+              # --- Config ---
               PGHOST=yb-tserver-service.yugabyte.svc.cluster.local
               PGPORT=5433
               DB=keycloak
@@ -238,26 +239,32 @@ spec:
               ROLE_OWNER=keycloak_app
               VAULTADMIN_USER=vaultadmin
 
+              # --- Tools (no kubectl needed here) ---
+              apk update >/dev/null 2>&1 || true
               apk add --no-cache postgresql15-client jq netcat-openbsd curl >/dev/null
 
-              # Get vaultadmin password from Vault
+              # --- Vault env from mounted secret ---
               export VAULT_ADDR="http://vault.vault.svc.cluster.local:8200"
-              # Use root token from vault namespace secret directly
-              export VAULT_TOKEN="$(kubectl -n vault get secret vault-root-token -o jsonpath='{.data.VAULT_TOKEN}' | base64 -d)"
-              VAULTADMIN_PASS="$(vault kv get -field=value secret/${VAULTADMIN_USER} 2>/dev/null || true)"
+              export VAULT_TOKEN="$(cat /vault-token/VAULT_TOKEN)"
+
+              # --- Fetch vaultadmin password from KV v2 ---
+              VAULTADMIN_PASS="$(vault kv get -field=value  secret/${VAULTADMIN_USER} 2>/dev/null || true)"
               [ -z "$VAULTADMIN_PASS" ] && VAULTADMIN_PASS="$(vault kv get -field=password secret/${VAULTADMIN_USER})"
               export PGPASSWORD="$VAULTADMIN_PASS"
 
-              until nc -z -w1 "$PGHOST" "$PGPORT"; do echo "⏳ waiting DB…"; sleep 2; done
+              # --- Wait for DB ---
+              until getent hosts "$PGHOST" >/dev/null 2>&1; do sleep 2; done
+              until nc -z -w1 "$PGHOST" "$PGPORT"; do sleep 2; done
 
-              # ensure DB
-              psql -h "$PGHOST" -p "$PGPORT" -U "$VAULTADMIN_USER" -d yugabyte -At -c "SELECT 1 FROM pg_database WHERE datname='${DB}'" \
-              | grep -q 1 || createdb -h "$PGHOST" -p "$PGPORT" -U "$VAULTADMIN_USER" -O "$VAULTADMIN_USER" "$DB"
+              # --- Ensure DB exists ---
+              if ! psql -h "$PGHOST" -p "$PGPORT" -U "$VAULTADMIN_USER" -d yugabyte -At -c "SELECT 1 FROM pg_database WHERE datname='${DB}'" | grep -q 1; then
+                createdb -h "$PGHOST" -p "$PGPORT" -U "$VAULTADMIN_USER" -O "$VAULTADMIN_USER" "$DB"
+              fi
 
-              # pgcrypto
+              # --- pgcrypto for gen_random_uuid ---
               psql -h "$PGHOST" -p "$PGPORT" -U "$VAULTADMIN_USER" -d "$DB" -v ON_ERROR_STOP=1 -c "CREATE EXTENSION IF NOT EXISTS pgcrypto;"
 
-              # roles + grants
+              # --- Roles & grants ---
               psql -h "$PGHOST" -p "$PGPORT" -U "$VAULTADMIN_USER" -d yugabyte <<EOSQL
               DO \$\$
               BEGIN
@@ -273,7 +280,7 @@ spec:
               GRANT ${ROLE_OWNER} TO ${VAULTADMIN_USER};
               EOSQL
 
-              # recreate empty schema & default privileges
+              # --- Recreate empty schema & default privileges (idempotent) ---
               psql -h "$PGHOST" -p "$PGPORT" -U "$VAULTADMIN_USER" -d "$DB" <<EOSQL
               CREATE SCHEMA IF NOT EXISTS keycloak AUTHORIZATION ${ROLE_OWNER};
               ALTER SCHEMA keycloak OWNER TO ${ROLE_OWNER};
@@ -289,6 +296,10 @@ spec:
               EOSQL
 
               echo "✅ DB '${DB}' ready; schema 'keycloak' empty & owned by ${ROLE_OWNER}."
+          volumeMounts:
+            - name: root-token
+              mountPath: /vault-token
+              readOnly: true
 ---
 # ============================================================================
 # ServiceAccount Keycloak (for pod Vault auth and RBAC already used elsewhere)
