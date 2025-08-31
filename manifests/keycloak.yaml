@@ -192,7 +192,7 @@ spec:
 
               apk add --no-cache postgresql15-client jq curl netcat-openbsd >/dev/null
 
-              # fetch vaultadmin password from KV
+              # fetch vaultadmin password from KV (value or password key)
               VAULTADMIN_USER="vaultadmin"
               VAULTADMIN_PASS="$(curl -sf -H "X-Vault-Token: ${VAULT_TOKEN}" \
                 "${VAULT_ADDR}/v1/secret/data/${VAULTADMIN_USER}" \
@@ -203,7 +203,7 @@ spec:
               # wait for DB
               until nc -z -w1 "$PGHOST" "$PGPORT"; do echo "⏳ waiting for DB…"; sleep 2; done
 
-              echo "🧹 Drop stray Liquibase tables in public (if any)…"
+              echo "🧹 Drop stray Liquibase tables in public (harmless if absent)…"
               psql -h "$PGHOST" -p "$PGPORT" -U "$VAULTADMIN_USER" -d "$PGDB" -v ON_ERROR_STOP=0 <<'SQL'
               DROP TABLE IF EXISTS public.databasechangeloglock CASCADE;
               DROP TABLE IF EXISTS public.databasechangelog     CASCADE;
@@ -212,11 +212,43 @@ spec:
               echo "💣 DROP SCHEMA keycloak CASCADE (if exists)…"
               psql -h "$PGHOST" -p "$PGPORT" -U "$VAULTADMIN_USER" -d "$PGDB" -v ON_ERROR_STOP=0 -c "DROP SCHEMA IF EXISTS keycloak CASCADE;"
 
-              echo "🔎 Verify schema is gone…"
-              CNT="$(psql -h "$PGHOST" -p "$PGPORT" -U "$VAULTADMIN_USER" -d "$PGDB" -At -c "SELECT count(*) FROM pg_namespace WHERE nspname='keycloak'")"
-              [ "${CNT:-0}" = "0" ] || { echo "❌ schema still present"; exit 1; }
+              echo "🔎 Double-check: no objects owned by keycloak_app remain anywhere…"
+              psql -h "$PGHOST" -p "$PGPORT" -U "$VAULTADMIN_USER" -d "$PGDB" -v ON_ERROR_STOP=0 <<'SQL'
+              DO $$
+              DECLARE r RECORD;
+              BEGIN
+                -- drop any leftover objects that survived due to ownership, just in case
+                FOR r IN
+                  SELECT format('%s %s', c.relkind, quote_ident(n.nspname)||'.'||quote_ident(c.relname)) AS stmt
+                  FROM pg_class c
+                  JOIN pg_namespace n ON n.oid=c.relnamespace
+                  JOIN pg_roles    o ON o.oid=c.relowner
+                  WHERE n.nspname NOT IN ('pg_catalog','information_schema')
+                    AND (n.nspname='keycloak' OR o.rolname='keycloak_app')
+                LOOP
+                  EXECUTE 'DROP '||
+                          CASE c.relkind WHEN 'r' THEN 'TABLE'
+                                         WHEN 'v' THEN 'VIEW'
+                                         WHEN 'm' THEN 'MATERIALIZED VIEW'
+                                         WHEN 'S' THEN 'SEQUENCE'
+                                         WHEN 'f' THEN 'FOREIGN TABLE'
+                                         WHEN 'p' THEN 'TABLE'
+                                         ELSE 'TABLE' END
+                          ||' IF EXISTS '|| rtrim(split_part(r.stmt,' ',2)) ||' CASCADE';
+                END LOOP;
+              END$$;
+              SQL
 
-              echo "✅ Nuked."
+              echo "✅ Verify schema truly empty…"
+              LEFTOVERS="$(psql -h "$PGHOST" -p "$PGPORT" -U "$VAULTADMIN_USER" -d "$PGDB" -At \
+                -c "SELECT table_schema||'.'||table_name FROM information_schema.tables WHERE table_schema='keycloak' ORDER BY 1")"
+              if [ -n "${LEFTOVERS}" ]; then
+                echo "❌ Still found tables:"
+                echo "${LEFTOVERS}"
+                exit 1
+              fi
+
+              echo "✅ Nuked clean."
           volumeMounts:
             - name: root-token
               mountPath: /vault-token
@@ -411,13 +443,13 @@ spec:
             command: ["/bin/sh","-lc"]
             args:
               - |
+                set -e
                 apk add --no-cache postgresql15-client netcat-openbsd >/dev/null
 
                 PGHOST="yb-tserver-service.yugabyte.svc.cluster.local"
                 PGPORT="5433"
                 PGDB="keycloak"
                 TIMEOUT_SECS=900
-                SLEEP=3
 
                 # Wait for Vault Agent to drop DB creds
                 for i in $(seq 1 120); do
@@ -433,23 +465,27 @@ spec:
                 # Wait for DB port
                 until nc -z -w1 "$PGHOST" "$PGPORT"; do echo "waiting for DB..."; sleep 2; done
 
+                # Wait until schema exists (created by PreSync config job)
+                echo "Waiting for schema 'keycloak' to exist…"
                 start=$(date +%s)
-                echo "Waiting for schema 'keycloak' to exist (created by PreSync job)..."
-                while :; do
-                  # schema exists?
-                  if psql -h "$PGHOST" -p "$PGPORT" -U "$DB_USER" -d "$PGDB" -At \
-                      -c "SELECT 1 FROM pg_namespace WHERE nspname='keycloak'" | grep -q 1; then
-                    echo "✅ schema exists"
-                    break
-                  fi
-                  now=$(date +%s); [ $((now-start)) -ge $TIMEOUT_SECS ] && echo "❌ timeout waiting for schema" && exit 1
-                  sleep $SLEEP
+                while ! psql -h "$PGHOST" -p "$PGPORT" -U "$DB_USER" -d "$PGDB" -At \
+                        -c "SELECT 1 FROM pg_namespace WHERE nspname='keycloak'" | grep -q 1; do
+                  now=$(date +%s)
+                  [ $((now-start)) -ge $TIMEOUT_SECS ] && echo "❌ timeout waiting for schema" && exit 1
+                  sleep 3
                 done
+                echo "✅ schema exists"
 
                 CNT="$(psql -h "$PGHOST" -p "$PGPORT" -U "$DB_USER" -d "$PGDB" -At \
                         -c "SELECT count(*) FROM information_schema.tables WHERE table_schema='keycloak'")"
-                echo "Tables in 'keycloak' before start: $CNT"
-                [ "$CNT" = "0" ] || { echo "❌ Schema not empty; failing to block Keycloak."; exit 1; }
+                if [ "$CNT" != "0" ]; then
+                  echo "❌ Schema not empty ($CNT tables). Listing:"
+                  psql -h "$PGHOST" -p "$PGPORT" -U "$DB_USER" -d "$PGDB" -At \
+                    -c "SELECT table_schema||'.'||table_name FROM information_schema.tables WHERE table_schema='keycloak' ORDER BY 1"
+                  exit 1
+                fi
+
+                echo "✅ Schema empty; safe to start Keycloak."
       containers:
         - name: keycloak-configurator
           image: quay.io/keycloak/keycloak:24.0.5
