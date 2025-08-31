@@ -156,7 +156,92 @@ roleRef:
   kind: Role
   name: write-root-token
 ---
-# ===== PreSync (-20): Copy vault-root-token from "vault" -> "keycloak"
+# --- Ensure the namespace exists very early
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: keycloak
+  annotations:
+    argocd.argoproj.io/hook: PreSync
+    argocd.argoproj.io/sync-wave: "-60"
+    linkerd.io/inject: enabled
+    field.cattle.io/projectId: local:applications
+    scheduler.alpha.kubernetes.io/node-selector: "dedicated=srvr-node"
+---
+# --- SA used by the copier job (in vault)
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: secret-copier
+  namespace: vault
+  annotations:
+    argocd.argoproj.io/hook: PreSync
+    argocd.argoproj.io/sync-wave: "-40"
+---
+# --- Allow the SA to read the source secret in vault
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: read-root-token
+  namespace: vault
+  annotations:
+    argocd.argoproj.io/hook: PreSync
+    argocd.argoproj.io/sync-wave: "-40"
+rules:
+- apiGroups: [""]
+  resources: ["secrets"]
+  resourceNames: ["vault-root-token"]
+  verbs: ["get","list","watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: read-root-token-binding
+  namespace: vault
+  annotations:
+    argocd.argoproj.io/hook: PreSync
+    argocd.argoproj.io/sync-wave: "-40"
+subjects:
+- kind: ServiceAccount
+  name: secret-copier
+  namespace: vault
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: read-root-token
+---
+# --- Allow the SA (from vault) to manage the target secret in keycloak
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: write-root-token
+  namespace: keycloak
+  annotations:
+    argocd.argoproj.io/hook: PreSync
+    argocd.argoproj.io/sync-wave: "-40"
+rules:
+- apiGroups: [""]
+  resources: ["secrets"]
+  verbs: ["get","list","create","update","patch","delete"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: write-root-token-binding
+  namespace: keycloak
+  annotations:
+    argocd.argoproj.io/hook: PreSync
+    argocd.argoproj.io/sync-wave: "-40"
+subjects:
+- kind: ServiceAccount
+  name: secret-copier
+  namespace: vault       # <-- SA lives in vault
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: write-root-token
+---
+# ===== PreSync (-20): Copy vault-root-token from "vault" -> "keycloak" (idempotent)
 apiVersion: batch/v1
 kind: Job
 metadata:
@@ -182,16 +267,20 @@ spec:
           args:
             - |
               set -eu
-              apk add --no-cache jq >/dev/null
-              echo "Ensuring 'vault-root-token' exists in keycloak namespace..."
-              # Delete first to avoid immutable metadata errors
-              kubectl -n keycloak delete secret vault-root-token --ignore-not-found
-              # Copy and scrub metadata safely
+              # jq is needed to scrub metadata; retry if APK mirror is flaky
+              apk add --no-cache jq >/dev/null 2>&1 || { echo "APK retry…"; sleep 3; apk add --no-cache jq >/dev/null; }
+              echo "Ensuring 'vault-root-token' exists in keycloak namespace…"
+
+              # Best effort delete (avoids immutable-field issues); ignore errors
+              kubectl -n keycloak delete secret vault-root-token --ignore-not-found || true
+
+              # Copy & scrub server-managed metadata
               kubectl -n vault get secret vault-root-token -o json \
               | jq '.metadata |= {name:"vault-root-token", namespace:"keycloak"}
                     | del(.metadata.resourceVersion,.metadata.uid,.metadata.creationTimestamp,
                           .metadata.annotations,.metadata.ownerReferences,.metadata.managedFields)' \
               | kubectl apply -f -
+
               echo "✅ Secret synced to keycloak."
 ---
 # ===== PreSync (-10): Hard nuke schema (relies on the Secret now present in keycloak)
