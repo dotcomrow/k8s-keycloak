@@ -403,95 +403,51 @@ spec:
           configMap: { name: kc-script-github-admin }
       initContainers:
         # Wait for PreSync config job to complete
-        - name: wait-for-config-job
-          image: alpine:3.20
-          command: ["/bin/sh","-lc"]
-          args:
-            - |
-              apk add --no-cache postgresql15-client kubectl >/dev/null
-              # ---- settings ----
-              JOB_NS="vault"
-              JOB_NAME="keycloak-yugabyte-config"
-              PGHOST="yb-tserver-service.yugabyte.svc.cluster.local"
-              PGPORT="5433"
-              PGDB="keycloak"
-              TIMEOUT_SECS=900   # 15m total
-              SLEEP=3
+        initContainers:
+          - name: db-wait-schema-empty
+            image: alpine:3.20
+            command: ["/bin/sh","-lc"]
+            args:
+              - |
+                apk add --no-cache postgresql15-client netcat-openbsd >/dev/null
 
-              # We’ll also verify DB schema to avoid racing with hook deletion.
-              # Wait for Vault Agent to lay down db creds (it’s an injected init that runs first).
-              for i in $(seq 1 120); do
-                if [ -s /vault/secrets/db-username ] && [ -s /vault/secrets/db-password ]; then
-                  break
-                fi
-                echo "waiting for /vault/secrets/db-username|db-password..."
-                sleep 2
-              done
+                PGHOST="yb-tserver-service.yugabyte.svc.cluster.local"
+                PGPORT="5433"
+                PGDB="keycloak"
+                TIMEOUT_SECS=900
+                SLEEP=3
 
-              # Lightweight psql via busybox/apk is not available in this image; just use kubectl to judge the Job,
-              # and when the Job is gone, assume success ONLY if the schema exists.
-              start_ts=$(date +%s)
+                # Wait for Vault Agent to drop DB creds
+                for i in $(seq 1 120); do
+                  [ -s /vault/secrets/db-username ] && [ -s /vault/secrets/db-password ] && break
+                  echo "waiting for Vault-injected DB creds..."
+                  sleep 2
+                done
 
-              job_exists() {
-                kubectl -n "$JOB_NS" get job "$JOB_NAME" >/dev/null 2>&1
-              }
+                DB_USER="$(cat /vault/secrets/db-username)"
+                DB_PASS="$(cat /vault/secrets/db-password)"
+                export PGPASSWORD="$DB_PASS"
 
-              job_succeeded() {
-                kubectl -n "$JOB_NS" get job "$JOB_NAME" -o jsonpath='{.status.succeeded}' 2>/dev/null | grep -q '^[1-9]'
-              }
+                # Wait for DB port
+                until nc -z -w1 "$PGHOST" "$PGPORT"; do echo "waiting for DB..."; sleep 2; done
 
-              schema_exists() {
-                # Use the app creds to check the schema exists (no table requirement here—just existence)
-                DB_USER="$(cat /vault/secrets/db-username || true)"
-                DB_PASS="$(cat /vault/secrets/db-password || true)"
-                [ -n "${DB_USER:-}" ] && [ -n "${DB_PASS:-}" ] || return 1
-                # Run a one-shot psql in a tiny throwaway pod so we don't need psql in this image.
-                kubectl -n "$JOB_NS" run tmp-psql-check --rm -i --quiet --image=alpine:3.20 --restart=Never -- \
-                  sh -lc "apk add --no-cache postgresql15-client >/dev/null 2>&1 && \
-                          PGPASSWORD='${DB_PASS}' psql -h '$PGHOST' -p '$PGPORT' -U '$DB_USER' -d '$PGDB' -At \
-                            -c \"SELECT 1 FROM pg_namespace WHERE nspname='keycloak'\" | grep -q 1"
-              }
-
-              echo "Waiting for ${JOB_NS}/${JOB_NAME} to complete (or for schema to exist)..."
-              while :; do
-                now=$(date +%s)
-                elapsed=$(( now - start_ts ))
-                [ $elapsed -ge $TIMEOUT_SECS ] && echo "❌ Timeout waiting for config job or schema" && exit 1
-
-                if job_exists; then
-                  if job_succeeded; then
-                    echo "✅ Job succeeded."
+                start=$(date +%s)
+                echo "Waiting for schema 'keycloak' to exist (created by PreSync job)..."
+                while :; do
+                  # schema exists?
+                  if psql -h "$PGHOST" -p "$PGPORT" -U "$DB_USER" -d "$PGDB" -At \
+                      -c "SELECT 1 FROM pg_namespace WHERE nspname='keycloak'" | grep -q 1; then
+                    echo "✅ schema exists"
                     break
                   fi
-                  echo "…job exists but not complete yet"; sleep $SLEEP; continue
-                else
-                  echo "Job not found (likely cleaned up by Argo). Verifying DB schema exists…"
-                  if schema_exists; then
-                    echo "✅ Schema present; proceeding."
-                    break
-                  fi
-                  echo "…schema not present yet; retrying"; sleep $SLEEP; continue
-                fi
-              done
+                  now=$(date +%s); [ $((now-start)) -ge $TIMEOUT_SECS ] && echo "❌ timeout waiting for schema" && exit 1
+                  sleep $SLEEP
+                done
 
-        # Hard guard: refuse to start if schema not empty
-        - name: db-guard-empty-schema
-          image: alpine:3.20
-          command: ["/bin/sh","-lc"]
-          args:
-            - |
-              set -e
-              apk add --no-cache postgresql15-client netcat-openbsd >/dev/null
-              PGHOST="yb-tserver-service.yugabyte.svc.cluster.local"
-              PGPORT="5433"
-              PGDB="keycloak"
-              DB_USER="$(cat /vault/secrets/db-username)"
-              DB_PASS="$(cat /vault/secrets/db-password)"
-              export PGPASSWORD="$DB_PASS"
-              until nc -z -w1 "$PGHOST" "$PGPORT"; do sleep 2; done
-              CNT="$(psql -h "$PGHOST" -p "$PGPORT" -U "$DB_USER" -d "$PGDB" -At -c "SELECT count(*) FROM information_schema.tables WHERE table_schema='keycloak'")"
-              echo "Tables in schema 'keycloak' before start: $CNT"
-              [ "$CNT" = "0" ] || { echo "❌ Schema not empty. Failing init to block Keycloak."; exit 1; }
+                CNT="$(psql -h "$PGHOST" -p "$PGPORT" -U "$DB_USER" -d "$PGDB" -At \
+                        -c "SELECT count(*) FROM information_schema.tables WHERE table_schema='keycloak'")"
+                echo "Tables in 'keycloak' before start: $CNT"
+                [ "$CNT" = "0" ] || { echo "❌ Schema not empty; failing to block Keycloak."; exit 1; }
       containers:
         - name: keycloak-configurator
           image: quay.io/keycloak/keycloak:24.0.5
