@@ -86,7 +86,7 @@ roleRef:
   name: write-root-token
 ---
 # ============================================================================
-# PreSync (-40): Copy 'vault-root-token' into keycloak (idempotent)
+# PreSync (-40): Copy 'vault-root-token' into keycloak (idempotent; no jq needed)
 # ============================================================================
 apiVersion: batch/v1
 kind: Job
@@ -102,31 +102,31 @@ spec:
   template:
     metadata:
       annotations:
-        linkerd.io/inject: disabled
+        linkerd.io/inject: "disabled"
     spec:
       serviceAccountName: secret-copier
       restartPolicy: Never
       containers:
         - name: copy-secret
-          image: alpine/k8s:1.31.4
+          image: bitnami/kubectl:1.31
           command: ["/bin/sh","-c"]
           args:
             - |
               set -eu
-              # we need jq; apk mirrors sometimes hiccup → retry once
-              apk add --no-cache jq >/dev/null 2>&1 || { echo "apk retry…"; sleep 3; apk add --no-cache jq >/dev/null; }
-
               echo "Ensuring 'vault-root-token' exists in keycloak namespace…"
-              # best-effort delete to avoid immutable field issues
+              # delete first to avoid immutability/ownerReference issues (ok if missing)
               kubectl -n keycloak delete secret vault-root-token --ignore-not-found || true
 
-              # copy & scrub server-managed metadata
-              kubectl -n vault get secret vault-root-token -o json \
-              | jq '.metadata |= {name:"vault-root-token", namespace:"keycloak"}
-                    | del(.metadata.resourceVersion,.metadata.uid,.metadata.creationTimestamp,
-                          .metadata.annotations,.metadata.ownerReferences,.metadata.managedFields)' \
+              # copy and scrub server-managed metadata using pure sed
+              kubectl -n vault get secret vault-root-token -o yaml \
+              | sed -E \
+                  -e 's/^metadata:\s*$/metadata:\n  name: vault-root-token\n  namespace: keycloak/' \
+                  -e '/^\s*resourceVersion:/d' \
+                  -e '/^\s*uid:/d' \
+                  -e '/^\s*creationTimestamp:/d' \
+                  -e '/^\s*managedFields:/,/^  [^ ]/d' \
+                  -e '/^\s*annotations:/,/^  [^ ]/d' \
               | kubectl apply -f -
-
               echo "✅ Secret synced to keycloak."
 ---
 # ============================================================================
@@ -167,14 +167,14 @@ spec:
               PGDB="keycloak"   # must match KC_DB_URL
               VAULT_ADDR="http://vault.vault.svc.cluster.local:8200"
               VAULT_TOKEN="$(cat /vault-token/VAULT_TOKEN)"
-              apk add --no-cache postgresql15-client jq curl netcat-openbsd >/dev/null
+              apk add --no-cache postgresql15-client curl netcat-openbsd >/dev/null
 
               # fetch vaultadmin password from KV
               VAULTADMIN_USER="vaultadmin"
               VAULTADMIN_PASS="$(curl -sf -H "X-Vault-Token: ${VAULT_TOKEN}" \
                 "${VAULT_ADDR}/v1/secret/data/${VAULTADMIN_USER}" \
-                | jq -r '.data.data.value // .data.data.password')"
-              [ -n "${VAULTADMIN_PASS}" ] && [ "${VAULTADMIN_PASS}" != "null" ] || { echo "❌ no vaultadmin password"; exit 1; }
+                | sed -n 's/.*"value":"\([^"]*\)".*/\1/p')"
+              [ -n "${VAULTADMIN_PASS}" ] || { echo "❌ no vaultadmin password"; exit 1; }
               export PGPASSWORD="${VAULTADMIN_PASS}"
 
               until nc -z -w1 "$PGHOST" "$PGPORT"; do echo "⏳ waiting for DB…"; sleep 2; done
@@ -239,32 +239,30 @@ spec:
               ROLE_OWNER=keycloak_app
               VAULTADMIN_USER=vaultadmin
 
-              # --- Tools (no kubectl needed here) ---
-              apk update >/dev/null 2>&1 || true
-              apk add --no-cache postgresql15-client jq netcat-openbsd curl >/dev/null
+              apk add --no-cache postgresql15-client netcat-openbsd curl >/dev/null
 
-              # --- Vault env from mounted secret ---
               export VAULT_ADDR="http://vault.vault.svc.cluster.local:8200"
               export VAULT_TOKEN="$(cat /vault-token/VAULT_TOKEN)"
 
-              # --- Fetch vaultadmin password from KV v2 ---
-              VAULTADMIN_PASS="$(vault kv get -field=value  secret/${VAULTADMIN_USER} 2>/dev/null || true)"
-              [ -z "$VAULTADMIN_PASS" ] && VAULTADMIN_PASS="$(vault kv get -field=password secret/${VAULTADMIN_USER})"
+              # Fetch vaultadmin password (KV v2)
+              VAULTADMIN_PASS="$(curl -sf -H "X-Vault-Token: ${VAULT_TOKEN}" \
+                "${VAULT_ADDR}/v1/secret/data/${VAULTADMIN_USER}" \
+                | sed -n 's/.*"value":"\([^"]*\)".*/\1/p')"
+              [ -n "$VAULTADMIN_PASS" ] || { echo "❌ missing secret/${VAULTADMIN_USER}"; exit 1; }
               export PGPASSWORD="$VAULTADMIN_PASS"
 
-              # --- Wait for DB ---
               until getent hosts "$PGHOST" >/dev/null 2>&1; do sleep 2; done
               until nc -z -w1 "$PGHOST" "$PGPORT"; do sleep 2; done
 
-              # --- Ensure DB exists ---
+              # Ensure DB exists
               if ! psql -h "$PGHOST" -p "$PGPORT" -U "$VAULTADMIN_USER" -d yugabyte -At -c "SELECT 1 FROM pg_database WHERE datname='${DB}'" | grep -q 1; then
                 createdb -h "$PGHOST" -p "$PGPORT" -U "$VAULTADMIN_USER" -O "$VAULTADMIN_USER" "$DB"
               fi
 
-              # --- pgcrypto for gen_random_uuid ---
+              # pgcrypto for gen_random_uuid
               psql -h "$PGHOST" -p "$PGPORT" -U "$VAULTADMIN_USER" -d "$DB" -v ON_ERROR_STOP=1 -c "CREATE EXTENSION IF NOT EXISTS pgcrypto;"
 
-              # --- Roles & grants ---
+              # Roles & grants
               psql -h "$PGHOST" -p "$PGPORT" -U "$VAULTADMIN_USER" -d yugabyte <<EOSQL
               DO \$\$
               BEGIN
@@ -280,7 +278,7 @@ spec:
               GRANT ${ROLE_OWNER} TO ${VAULTADMIN_USER};
               EOSQL
 
-              # --- Recreate empty schema & default privileges (idempotent) ---
+              # Recreate empty schema & default privileges (idempotent)
               psql -h "$PGHOST" -p "$PGPORT" -U "$VAULTADMIN_USER" -d "$DB" <<EOSQL
               CREATE SCHEMA IF NOT EXISTS keycloak AUTHORIZATION ${ROLE_OWNER};
               ALTER SCHEMA keycloak OWNER TO ${ROLE_OWNER};
@@ -302,13 +300,27 @@ spec:
               readOnly: true
 ---
 # ============================================================================
-# ServiceAccount Keycloak (for pod Vault auth and RBAC already used elsewhere)
+# ServiceAccount Keycloak (for pod Vault auth)
 # ============================================================================
 apiVersion: v1
 kind: ServiceAccount
 metadata:
   name: keycloak
   namespace: keycloak
+---
+# ============================================================================
+# Script ConfigMap required by the Deployment
+# ============================================================================
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: kc-script-github-admin
+  namespace: keycloak
+data:
+  github-team-admin.js: |
+    // Minimal placeholder script: replace with your real logic
+    var SimpleHttp = Java.type("org.keycloak.broker.provider.util.SimpleHttp");
+    function authenticate(context) { context.success(); }
 ---
 # ============================================================================
 # Service
@@ -371,7 +383,7 @@ spec:
       initContainers:
         # Wait for PreSync config job to complete
         - name: wait-for-config-job
-          image: alpine/k8s:1.31.4
+          image: bitnami/kubectl:1.31
           command: ["/bin/sh","-lc"]
           args:
             - |
