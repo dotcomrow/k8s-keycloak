@@ -153,11 +153,12 @@ spec:
 # ============================================================================
 # PreSync (-30): Nuke schema hard (drop keycloak schema + stray public changelog)
 # ============================================================================
+# PreSync (-30): Nuke schema hard (drop keycloak schema + stray public changelog)
 apiVersion: batch/v1
 kind: Job
 metadata:
   name: keycloak-nuke-schema
-  namespace: keycloak
+  namespace: vault               # ← was keycloak
   annotations:
     argocd.argoproj.io/hook: PreSync
     argocd.argoproj.io/hook-delete-policy: HookSucceeded
@@ -175,7 +176,7 @@ spec:
       volumes:
         - name: root-token
           secret:
-            secretName: vault-root-token
+            secretName: vault-root-token   # secret lives in vault ns
       containers:
         - name: nuke
           image: hashicorp/vault:1.15.4
@@ -188,19 +189,21 @@ spec:
               PGDB="keycloak"   # must match KC_DB_URL
               VAULT_ADDR="http://vault.vault.svc.cluster.local:8200"
               VAULT_TOKEN="$(cat /vault-token/VAULT_TOKEN)"
-              apk add --no-cache postgresql15-client curl netcat-openbsd >/dev/null
+
+              apk add --no-cache postgresql15-client jq curl netcat-openbsd >/dev/null
 
               # fetch vaultadmin password from KV
               VAULTADMIN_USER="vaultadmin"
               VAULTADMIN_PASS="$(curl -sf -H "X-Vault-Token: ${VAULT_TOKEN}" \
                 "${VAULT_ADDR}/v1/secret/data/${VAULTADMIN_USER}" \
-                | sed -n 's/.*"value":"\([^"]*\)".*/\1/p')"
-              [ -n "${VAULTADMIN_PASS}" ] || { echo "❌ no vaultadmin password"; exit 1; }
+                | jq -r '.data.data.value // .data.data.password')"
+              [ -n "${VAULTADMIN_PASS}" ] && [ "${VAULTADMIN_PASS}" != "null" ] || { echo "❌ no vaultadmin password"; exit 1; }
               export PGPASSWORD="${VAULTADMIN_PASS}"
 
+              # wait for DB
               until nc -z -w1 "$PGHOST" "$PGPORT"; do echo "⏳ waiting for DB…"; sleep 2; done
 
-              echo "🧹 Drop stray liquibase tables in public (if any)…"
+              echo "🧹 Drop stray Liquibase tables in public (if any)…"
               psql -h "$PGHOST" -p "$PGPORT" -U "$VAULTADMIN_USER" -d "$PGDB" -v ON_ERROR_STOP=0 <<'SQL'
               DROP TABLE IF EXISTS public.databasechangeloglock CASCADE;
               DROP TABLE IF EXISTS public.databasechangelog     CASCADE;
