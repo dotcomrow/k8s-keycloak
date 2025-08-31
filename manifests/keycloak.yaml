@@ -408,9 +408,73 @@ spec:
           command: ["/bin/sh","-lc"]
           args:
             - |
-              echo "Waiting for Job vault/keycloak-yugabyte-config to complete…"
-              until kubectl -n vault get job keycloak-yugabyte-config >/dev/null 2>&1; do sleep 3; done
-              kubectl -n vault wait --for=condition=complete job/keycloak-yugabyte-config --timeout=600s
+              set -euo pipefail
+
+              # ---- settings ----
+              JOB_NS="vault"
+              JOB_NAME="keycloak-yugabyte-config"
+              PGHOST="yb-tserver-service.yugabyte.svc.cluster.local"
+              PGPORT="5433"
+              PGDB="keycloak"
+              TIMEOUT_SECS=900   # 15m total
+              SLEEP=3
+
+              # We’ll also verify DB schema to avoid racing with hook deletion.
+              # Wait for Vault Agent to lay down db creds (it’s an injected init that runs first).
+              for i in $(seq 1 120); do
+                if [ -s /vault/secrets/db-username ] && [ -s /vault/secrets/db-password ]; then
+                  break
+                fi
+                echo "waiting for /vault/secrets/db-username|db-password..."
+                sleep 2
+              done
+
+              # Lightweight psql via busybox/apk is not available in this image; just use kubectl to judge the Job,
+              # and when the Job is gone, assume success ONLY if the schema exists.
+              start_ts=$(date +%s)
+
+              job_exists() {
+                kubectl -n "$JOB_NS" get job "$JOB_NAME" >/dev/null 2>&1
+              }
+
+              job_succeeded() {
+                kubectl -n "$JOB_NS" get job "$JOB_NAME" -o jsonpath='{.status.succeeded}' 2>/dev/null | grep -q '^[1-9]'
+              }
+
+              schema_exists() {
+                # Use the app creds to check the schema exists (no table requirement here—just existence)
+                DB_USER="$(cat /vault/secrets/db-username || true)"
+                DB_PASS="$(cat /vault/secrets/db-password || true)"
+                [ -n "${DB_USER:-}" ] && [ -n "${DB_PASS:-}" ] || return 1
+                # Run a one-shot psql in a tiny throwaway pod so we don't need psql in this image.
+                kubectl -n "$JOB_NS" run tmp-psql-check --rm -i --quiet --image=alpine:3.20 --restart=Never -- \
+                  sh -lc "apk add --no-cache postgresql15-client >/dev/null 2>&1 && \
+                          PGPASSWORD='${DB_PASS}' psql -h '$PGHOST' -p '$PGPORT' -U '$DB_USER' -d '$PGDB' -At \
+                            -c \"SELECT 1 FROM pg_namespace WHERE nspname='keycloak'\" | grep -q 1"
+              }
+
+              echo "Waiting for ${JOB_NS}/${JOB_NAME} to complete (or for schema to exist)..."
+              while :; do
+                now=$(date +%s)
+                elapsed=$(( now - start_ts ))
+                [ $elapsed -ge $TIMEOUT_SECS ] && echo "❌ Timeout waiting for config job or schema" && exit 1
+
+                if job_exists; then
+                  if job_succeeded; then
+                    echo "✅ Job succeeded."
+                    break
+                  fi
+                  echo "…job exists but not complete yet"; sleep $SLEEP; continue
+                else
+                  echo "Job not found (likely cleaned up by Argo). Verifying DB schema exists…"
+                  if schema_exists; then
+                    echo "✅ Schema present; proceeding."
+                    break
+                  fi
+                  echo "…schema not present yet; retrying"; sleep $SLEEP; continue
+                fi
+              done
+
         # Hard guard: refuse to start if schema not empty
         - name: db-guard-empty-schema
           image: alpine:3.20
