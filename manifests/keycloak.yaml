@@ -1,162 +1,6 @@
-apiVersion: v1
-kind: Namespace
-metadata:
-  name: keycloak
-  annotations:
-    linkerd.io/inject: enabled
-    field.cattle.io/projectId: local:applications
-    scheduler.alpha.kubernetes.io/node-selector: "dedicated=srvr-node"
----
-apiVersion: v1
-kind: ServiceAccount
-metadata:
-  name: keycloak
-  namespace: keycloak
----
-# ===== PreSync (-30): SA/RBAC so the copy job can read in "vault" and write in "keycloak"
-apiVersion: v1
-kind: ServiceAccount
-metadata:
-  name: secret-copier
-  namespace: vault
-  annotations:
-    argocd.argoproj.io/hook: PreSync
-    argocd.argoproj.io/sync-wave: "-30"
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: Role
-metadata:
-  name: read-root-token
-  namespace: vault
-  annotations:
-    argocd.argoproj.io/hook: PreSync
-    argocd.argoproj.io/sync-wave: "-30"
-rules:
-- apiGroups: [""]
-  resources: ["secrets"]
-  resourceNames: ["vault-root-token"]
-  verbs: ["get"]
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: RoleBinding
-metadata:
-  name: read-root-token-binding
-  namespace: vault
-  annotations:
-    argocd.argoproj.io/hook: PreSync
-    argocd.argoproj.io/sync-wave: "-30"
-subjects:
-- kind: ServiceAccount
-  name: secret-copier
-  namespace: vault
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: Role
-  name: read-root-token
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: Role
-metadata:
-  name: write-root-token
-  namespace: keycloak
-  annotations:
-    argocd.argoproj.io/hook: PreSync
-    argocd.argoproj.io/sync-wave: "-30"
-rules:
-- apiGroups: [""]
-  resources: ["secrets"]
-  verbs: ["create","update","patch","get","list"]
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: RoleBinding
-metadata:
-  name: write-root-token-binding
-  namespace: keycloak
-  annotations:
-    argocd.argoproj.io/hook: PreSync
-    argocd.argoproj.io/sync-wave: "-30"
-subjects:
-- kind: ServiceAccount
-  name: secret-copier
-  namespace: vault
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: Role
-  name: write-root-token
----
-# --- ensure the copier SA/RBAC exist in 'vault' before the job ---
-
-apiVersion: v1
-kind: ServiceAccount
-metadata:
-  name: secret-copier
-  namespace: vault
-  annotations:
-    argocd.argoproj.io/hook: PreSync
-    argocd.argoproj.io/sync-wave: "-30"
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: Role
-metadata:
-  name: read-root-token
-  namespace: vault
-  annotations:
-    argocd.argoproj.io/hook: PreSync
-    argocd.argoproj.io/sync-wave: "-30"
-rules:
-- apiGroups: [""]
-  resources: ["secrets"]
-  resourceNames: ["vault-root-token"]
-  verbs: ["get"]
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: Role
-metadata:
-  name: write-root-token
-  namespace: keycloak
-  annotations:
-    argocd.argoproj.io/hook: PreSync
-    argocd.argoproj.io/sync-wave: "-30"
-rules:
-- apiGroups: [""]
-  resources: ["secrets"]
-  verbs: ["create","update","patch","get","list"]
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: RoleBinding
-metadata:
-  name: read-root-token-binding
-  namespace: vault
-  annotations:
-    argocd.argoproj.io/hook: PreSync
-    argocd.argoproj.io/sync-wave: "-30"
-subjects:
-- kind: ServiceAccount
-  name: secret-copier
-  namespace: vault
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: Role
-  name: read-root-token
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: RoleBinding
-metadata:
-  name: write-root-token-binding
-  namespace: keycloak
-  annotations:
-    argocd.argoproj.io/hook: PreSync
-    argocd.argoproj.io/sync-wave: "-30"
-subjects:
-- kind: ServiceAccount
-  name: secret-copier
-  namespace: vault
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: Role
-  name: write-root-token
----
-# --- Ensure the namespace exists very early
+# ============================================================================
+# PreSync (-60): Ensure target namespace exists BEFORE anything else
+# ============================================================================
 apiVersion: v1
 kind: Namespace
 metadata:
@@ -168,7 +12,9 @@ metadata:
     field.cattle.io/projectId: local:applications
     scheduler.alpha.kubernetes.io/node-selector: "dedicated=srvr-node"
 ---
-# --- SA used by the copier job (in vault)
+# ============================================================================
+# PreSync (-50..-40): SA + RBAC so copier in 'vault' can touch secrets in BOTH namespaces
+# ============================================================================
 apiVersion: v1
 kind: ServiceAccount
 metadata:
@@ -176,9 +22,8 @@ metadata:
   namespace: vault
   annotations:
     argocd.argoproj.io/hook: PreSync
-    argocd.argoproj.io/sync-wave: "-40"
+    argocd.argoproj.io/sync-wave: "-50"
 ---
-# --- Allow the SA to read the source secret in vault
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
@@ -186,7 +31,7 @@ metadata:
   namespace: vault
   annotations:
     argocd.argoproj.io/hook: PreSync
-    argocd.argoproj.io/sync-wave: "-40"
+    argocd.argoproj.io/sync-wave: "-50"
 rules:
 - apiGroups: [""]
   resources: ["secrets"]
@@ -200,7 +45,7 @@ metadata:
   namespace: vault
   annotations:
     argocd.argoproj.io/hook: PreSync
-    argocd.argoproj.io/sync-wave: "-40"
+    argocd.argoproj.io/sync-wave: "-50"
 subjects:
 - kind: ServiceAccount
   name: secret-copier
@@ -210,7 +55,6 @@ roleRef:
   kind: Role
   name: read-root-token
 ---
-# --- Allow the SA (from vault) to manage the target secret in keycloak
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
@@ -218,7 +62,7 @@ metadata:
   namespace: keycloak
   annotations:
     argocd.argoproj.io/hook: PreSync
-    argocd.argoproj.io/sync-wave: "-40"
+    argocd.argoproj.io/sync-wave: "-50"
 rules:
 - apiGroups: [""]
   resources: ["secrets"]
@@ -231,17 +75,19 @@ metadata:
   namespace: keycloak
   annotations:
     argocd.argoproj.io/hook: PreSync
-    argocd.argoproj.io/sync-wave: "-40"
+    argocd.argoproj.io/sync-wave: "-50"
 subjects:
 - kind: ServiceAccount
   name: secret-copier
-  namespace: vault       # <-- SA lives in vault
+  namespace: vault
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: Role
   name: write-root-token
 ---
-# ===== PreSync (-20): Copy vault-root-token from "vault" -> "keycloak" (idempotent)
+# ============================================================================
+# PreSync (-40): Copy 'vault-root-token' into keycloak (idempotent)
+# ============================================================================
 apiVersion: batch/v1
 kind: Job
 metadata:
@@ -250,7 +96,7 @@ metadata:
   annotations:
     argocd.argoproj.io/hook: PreSync
     argocd.argoproj.io/hook-delete-policy: HookSucceeded
-    argocd.argoproj.io/sync-wave: "-20"
+    argocd.argoproj.io/sync-wave: "-40"
 spec:
   backoffLimit: 1
   template:
@@ -267,14 +113,14 @@ spec:
           args:
             - |
               set -eu
-              # jq is needed to scrub metadata; retry if APK mirror is flaky
-              apk add --no-cache jq >/dev/null 2>&1 || { echo "APK retry…"; sleep 3; apk add --no-cache jq >/dev/null; }
-              echo "Ensuring 'vault-root-token' exists in keycloak namespace…"
+              # we need jq; apk mirrors sometimes hiccup → retry once
+              apk add --no-cache jq >/dev/null 2>&1 || { echo "apk retry…"; sleep 3; apk add --no-cache jq >/dev/null; }
 
-              # Best effort delete (avoids immutable-field issues); ignore errors
+              echo "Ensuring 'vault-root-token' exists in keycloak namespace…"
+              # best-effort delete to avoid immutable field issues
               kubectl -n keycloak delete secret vault-root-token --ignore-not-found || true
 
-              # Copy & scrub server-managed metadata
+              # copy & scrub server-managed metadata
               kubectl -n vault get secret vault-root-token -o json \
               | jq '.metadata |= {name:"vault-root-token", namespace:"keycloak"}
                     | del(.metadata.resourceVersion,.metadata.uid,.metadata.creationTimestamp,
@@ -283,7 +129,9 @@ spec:
 
               echo "✅ Secret synced to keycloak."
 ---
-# ===== PreSync (-10): Hard nuke schema (relies on the Secret now present in keycloak)
+# ============================================================================
+# PreSync (-30): Nuke schema hard (drop keycloak schema + stray public changelog)
+# ============================================================================
 apiVersion: batch/v1
 kind: Job
 metadata:
@@ -292,16 +140,17 @@ metadata:
   annotations:
     argocd.argoproj.io/hook: PreSync
     argocd.argoproj.io/hook-delete-policy: HookSucceeded
-    argocd.argoproj.io/sync-wave: "-10"
+    argocd.argoproj.io/sync-wave: "-30"
 spec:
   backoffLimit: 0
+  activeDeadlineSeconds: 600
   template:
     metadata:
       annotations:
         linkerd.io/inject: "disabled"
     spec:
-      serviceAccountName: default
       restartPolicy: Never
+      serviceAccountName: default
       volumes:
         - name: root-token
           secret:
@@ -313,53 +162,54 @@ spec:
           args:
             - |
               set -euo pipefail
-
               PGHOST="yb-tserver-service.yugabyte.svc.cluster.local"
               PGPORT="5433"
-              PGDB="keycloak"
+              PGDB="keycloak"   # must match KC_DB_URL
               VAULT_ADDR="http://vault.vault.svc.cluster.local:8200"
               VAULT_TOKEN="$(cat /vault-token/VAULT_TOKEN)"
-
               apk add --no-cache postgresql15-client jq curl netcat-openbsd >/dev/null
 
+              # fetch vaultadmin password from KV
               VAULTADMIN_USER="vaultadmin"
-              VAULTADMIN_PASS="$(curl -sf \
-                  -H "X-Vault-Token: ${VAULT_TOKEN}" \
-                  "${VAULT_ADDR}/v1/secret/data/${VAULTADMIN_USER}" \
+              VAULTADMIN_PASS="$(curl -sf -H "X-Vault-Token: ${VAULT_TOKEN}" \
+                "${VAULT_ADDR}/v1/secret/data/${VAULTADMIN_USER}" \
                 | jq -r '.data.data.value // .data.data.password')"
-              [ -n "${VAULTADMIN_PASS}" ] && [ "${VAULTADMIN_PASS}" != "null" ] || { echo "❌ vaultadmin password missing"; exit 1; }
+              [ -n "${VAULTADMIN_PASS}" ] && [ "${VAULTADMIN_PASS}" != "null" ] || { echo "❌ no vaultadmin password"; exit 1; }
               export PGPASSWORD="${VAULTADMIN_PASS}"
 
-              until nc -z -w1 "$PGHOST" "$PGPORT"; do echo "⏳ waiting DB..."; sleep 2; done
+              until nc -z -w1 "$PGHOST" "$PGPORT"; do echo "⏳ waiting for DB…"; sleep 2; done
 
-              echo "🧩 Ensuring pgcrypto exists..."
-              psql -h "$PGHOST" -p "$PGPORT" -U "$VAULTADMIN_USER" -d "$PGDB" -v ON_ERROR_STOP=0 -c "CREATE EXTENSION IF NOT EXISTS pgcrypto;"
-
-              echo "🧹 Dropping stray Liquibase tables in public..."
+              echo "🧹 Drop stray liquibase tables in public (if any)…"
               psql -h "$PGHOST" -p "$PGPORT" -U "$VAULTADMIN_USER" -d "$PGDB" -v ON_ERROR_STOP=0 <<'SQL'
               DROP TABLE IF EXISTS public.databasechangeloglock CASCADE;
               DROP TABLE IF EXISTS public.databasechangelog     CASCADE;
               SQL
 
-              echo "💣 DROP SCHEMA keycloak CASCADE (if exists)..."
+              echo "💣 DROP SCHEMA keycloak CASCADE (if exists)…"
               psql -h "$PGHOST" -p "$PGPORT" -U "$VAULTADMIN_USER" -d "$PGDB" -v ON_ERROR_STOP=0 -c "DROP SCHEMA IF EXISTS keycloak CASCADE;"
 
-              CNT="$(psql -h "$PGHOST" -p "$PGPORT" -U "$VAULTADMIN_USER" -d "$PGDB" -At -c "SELECT count(*) FROM information_schema.tables WHERE table_schema='keycloak'")"
-              [ "${CNT:-0}" = "0" ] || { echo "❌ keycloak schema not empty ($CNT tables)"; exit 1; }
+              echo "🔎 Verify schema is gone…"
+              CNT="$(psql -h "$PGHOST" -p "$PGPORT" -U "$VAULTADMIN_USER" -d "$PGDB" -At -c "SELECT count(*) FROM pg_namespace WHERE nspname='keycloak'")"
+              [ "${CNT:-0}" = "0" ] || { echo "❌ schema still present"; exit 1; }
+
               echo "✅ Nuked."
           volumeMounts:
             - name: root-token
               mountPath: /vault-token
               readOnly: true
 ---
-# ===== Sync wave (-1): DB prep / recreate schema / roles / grants
+# ============================================================================
+# PreSync (-20): DB prep / recreate schema / roles / grants (runs in vault ns)
+# ============================================================================
 apiVersion: batch/v1
 kind: Job
 metadata:
   name: keycloak-yugabyte-config
   namespace: vault
   annotations:
-    argocd.argoproj.io/sync-wave: "-1"
+    argocd.argoproj.io/hook: PreSync
+    argocd.argoproj.io/hook-delete-policy: HookSucceeded
+    argocd.argoproj.io/sync-wave: "-20"
 spec:
   backoffLimit: 1
   template:
@@ -373,15 +223,14 @@ spec:
         - name: root-token
           secret:
             secretName: vault-root-token
+            optional: true   # present in vault ns already; not mounted here
       containers:
         - name: setup-role
           image: hashicorp/vault:1.15.4
           command: ["/bin/sh","-c"]
           args:
             - |
-              #!/bin/sh
               set -eu
-
               PGHOST=yb-tserver-service.yugabyte.svc.cluster.local
               PGPORT=5433
               DB=keycloak
@@ -389,58 +238,33 @@ spec:
               ROLE_OWNER=keycloak_app
               VAULTADMIN_USER=vaultadmin
 
-              apk add --no-cache postgresql15-client jq netcat-openbsd curl
-              export PATH="$PATH:/vault-bin"
+              apk add --no-cache postgresql15-client jq netcat-openbsd curl >/dev/null
+
+              # Get vaultadmin password from Vault
               export VAULT_ADDR="http://vault.vault.svc.cluster.local:8200"
-
-              while [ ! -f /vault-token/VAULT_TOKEN ]; do sleep 2; done
-              export VAULT_TOKEN="$(cat /vault-token/VAULT_TOKEN)"
-
-              if ! vault secrets list -format=json | jq -e '."secret/".type=="kv" and ."secret/".options.version=="2"' >/dev/null 2>&1; then
-                if vault secrets list -format=json | jq -e 'has("secret/")' >/dev/null 2>&1; then
-                  echo "❌ 'secret/' exists but not KVv2"; exit 1
-                else
-                  vault secrets enable -path=secret -version=2 kv
-                fi
-              fi
-
-              if ! vault kv get -format=json secret/keycloak/admin >/dev/null 2>&1; then
-                PASS="$(tr -dc 'A-Za-z0-9@#%^+=_' </dev/urandom | head -c 32)"
-                vault kv put secret/keycloak/admin username=admin password="$PASS"
-              fi
-
-              until getent hosts "$PGHOST" >/dev/null 2>&1; do sleep 3; done
-              until nc -z -w1 "$PGHOST" "$PGPORT"; do sleep 3; done
-
-              VAULTADMIN_PASS=""
-              if OUT="$(vault kv get -format=json "secret/$VAULTADMIN_USER" 2>/dev/null)"; then
-                VAULTADMIN_PASS="$(printf '%s' "$OUT" | jq -r '.data.data.value // .data.data.password // empty')"
-              fi
-              [ -z "$VAULTADMIN_PASS" ] && VAULTADMIN_PASS="$(vault kv get -field=value "secret/$VAULTADMIN_USER" 2>/dev/null || true)"
-              [ -z "$VAULTADMIN_PASS" ] && VAULTADMIN_PASS="$(vault kv get -field=password "secret/$VAULTADMIN_USER" 2>/dev/null || true)"
-              [ -z "$VAULTADMIN_PASS" ] && { echo "❌ missing secret/$VAULTADMIN_USER"; exit 1; }
+              # Use root token from vault namespace secret directly
+              export VAULT_TOKEN="$(kubectl -n vault get secret vault-root-token -o jsonpath='{.data.VAULT_TOKEN}' | base64 -d)"
+              VAULTADMIN_PASS="$(vault kv get -field=value secret/${VAULTADMIN_USER} 2>/dev/null || true)"
+              [ -z "$VAULTADMIN_PASS" ] && VAULTADMIN_PASS="$(vault kv get -field=password secret/${VAULTADMIN_USER})"
               export PGPASSWORD="$VAULTADMIN_PASS"
 
-              while :; do
-                DB_EXISTS="$(psql -h "$PGHOST" -p "$PGPORT" -U "$VAULTADMIN_USER" -d yugabyte -tAc "SELECT 1 FROM pg_database WHERE datname='$DB'" 2>/dev/null || true)"
-                [ "$DB_EXISTS" = "1" ] && break
-                createdb -h "$PGHOST" -p "$PGPORT" -U "$VAULTADMIN_USER" -O "$VAULTADMIN_USER" "$DB" 2>/dev/null && break
-                sleep 3
-              done
+              until nc -z -w1 "$PGHOST" "$PGPORT"; do echo "⏳ waiting DB…"; sleep 2; done
 
-              psql -h "$PGHOST" -p "$PGPORT" -U "$VAULTADMIN_USER" -d "$DB" -v ON_ERROR_STOP=1 <<'EOSQL'
-              CREATE EXTENSION IF NOT EXISTS pgcrypto;
-              DROP TABLE IF EXISTS public.databasechangeloglock CASCADE;
-              DROP TABLE IF EXISTS public.databasechangelog     CASCADE;
-              EOSQL
+              # ensure DB
+              psql -h "$PGHOST" -p "$PGPORT" -U "$VAULTADMIN_USER" -d yugabyte -At -c "SELECT 1 FROM pg_database WHERE datname='${DB}'" \
+              | grep -q 1 || createdb -h "$PGHOST" -p "$PGPORT" -U "$VAULTADMIN_USER" -O "$VAULTADMIN_USER" "$DB"
 
+              # pgcrypto
+              psql -h "$PGHOST" -p "$PGPORT" -U "$VAULTADMIN_USER" -d "$DB" -v ON_ERROR_STOP=1 -c "CREATE EXTENSION IF NOT EXISTS pgcrypto;"
+
+              # roles + grants
               psql -h "$PGHOST" -p "$PGPORT" -U "$VAULTADMIN_USER" -d yugabyte <<EOSQL
               DO \$\$
               BEGIN
-                IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = '${ROLE_GROUP}') THEN
+                IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname='${ROLE_GROUP}') THEN
                   CREATE ROLE ${ROLE_GROUP} NOLOGIN;
                 END IF;
-                IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = '${ROLE_OWNER}') THEN
+                IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname='${ROLE_OWNER}') THEN
                   CREATE ROLE ${ROLE_OWNER} LOGIN INHERIT;
                 END IF;
               END
@@ -449,163 +273,67 @@ spec:
               GRANT ${ROLE_OWNER} TO ${VAULTADMIN_USER};
               EOSQL
 
-              psql -h "$PGHOST" -p "$PGPORT" -U "$VAULTADMIN_USER" -d "$DB" -v ON_ERROR_STOP=1 <<EOSQL
+              # recreate empty schema & default privileges
+              psql -h "$PGHOST" -p "$PGPORT" -U "$VAULTADMIN_USER" -d "$DB" <<EOSQL
               CREATE SCHEMA IF NOT EXISTS keycloak AUTHORIZATION ${ROLE_OWNER};
               ALTER SCHEMA keycloak OWNER TO ${ROLE_OWNER};
               ALTER ROLE ${ROLE_OWNER} IN DATABASE ${DB} SET search_path = keycloak, public;
-              EOSQL
 
-              psql -h "$PGHOST" -p "$PGPORT" -U "$VAULTADMIN_USER" -d "$DB" -v ON_ERROR_STOP=0 <<EOSQL
-              ALTER TABLE IF EXISTS keycloak.databasechangeloglock OWNER TO ${ROLE_OWNER};
-              ALTER TABLE IF EXISTS keycloak.databasechangelog    OWNER TO ${ROLE_OWNER};
-              EOSQL
-
-              psql -h "$PGHOST" -p "$PGPORT" -U "$VAULTADMIN_USER" -d "$DB" <<EOSQL
               SET ROLE ${ROLE_OWNER};
               GRANT USAGE, CREATE ON SCHEMA keycloak TO ${ROLE_GROUP};
               GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES    IN SCHEMA keycloak TO ${ROLE_GROUP};
               GRANT USAGE, SELECT                     ON ALL SEQUENCES IN SCHEMA keycloak TO ${ROLE_GROUP};
-              ALTER DEFAULT PRIVILEGES IN SCHEMA keycloak
-                GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES   TO ${ROLE_GROUP};
-              ALTER DEFAULT PRIVILEGES IN SCHEMA keycloak
-                GRANT USAGE, SELECT                ON SEQUENCES TO ${ROLE_GROUP};
-              GRANT USAGE, CREATE ON SCHEMA keycloak TO ${VAULTADMIN_USER};
-              GRANT ALL PRIVILEGES ON ALL TABLES    IN SCHEMA keycloak TO ${VAULTADMIN_USER};
-              GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA keycloak TO ${VAULTADMIN_USER};
-              ALTER DEFAULT PRIVILEGES IN SCHEMA keycloak GRANT ALL ON TABLES    TO ${VAULTADMIN_USER};
-              ALTER DEFAULT PRIVILEGES IN SCHEMA keycloak GRANT ALL ON SEQUENCES TO ${VAULTADMIN_USER};
+              ALTER DEFAULT PRIVILEGES IN SCHEMA keycloak GRANT SELECT,INSERT,UPDATE,DELETE ON TABLES TO ${ROLE_GROUP};
+              ALTER DEFAULT PRIVILEGES IN SCHEMA keycloak GRANT USAGE,SELECT ON SEQUENCES TO ${ROLE_GROUP};
               RESET ROLE;
               EOSQL
 
-              if ! vault secrets list -format=json | jq -e 'has("yugabyte-db/")' >/dev/null 2>&1; then
-                vault secrets enable -path=yugabyte-db database
-              fi
-
-              vault write yugabyte-db/static-roles/keycloak-app \
-                db_name="yugabyte" \
-                username="${ROLE_OWNER}" \
-                rotation_statements="ALTER ROLE ${ROLE_OWNER} WITH PASSWORD '{{password}}';" \
-                rotation_period="720h"
-
-              vault policy write "keycloak" - <<'EOF'
-              path "yugabyte-db/static-creds/keycloak-app" {
-                capabilities = ["read"]
-              }
-              path "secret/data/keycloak/admin" {
-                capabilities = ["read"]
-              }
-              EOF
-
-              vault write auth/kubernetes/role/keycloak \
-                bound_service_account_names="keycloak" \
-                bound_service_account_namespaces="keycloak" \
-                policies="keycloak" \
-                ttl="48h"
-
-              CREDS_JSON="$(vault read -format=json yugabyte-db/static-creds/keycloak-app)"
-              DB_USER="$(printf '%s' "$CREDS_JSON" | jq -r .data.username)"
-              DB_PASS="$(printf '%s' "$CREDS_JSON" | jq -r .data.password)"
-              export PGPASSWORD="$DB_PASS"
-              psql -h "$PGHOST" -p "$PGPORT" -U "$DB_USER" -d "$DB" -c "SELECT current_user, current_schema();"
-          volumeMounts:
-            - name: root-token
-              mountPath: /vault-token
-              readOnly: true
-          resources:
-            requests: { cpu: "50m",  memory: "64Mi" }
-            limits:   { cpu: "200m", memory: "256Mi" }
+              echo "✅ DB '${DB}' ready; schema 'keycloak' empty & owned by ${ROLE_OWNER}."
 ---
+# ============================================================================
+# ServiceAccount Keycloak (for pod Vault auth and RBAC already used elsewhere)
+# ============================================================================
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: keycloak
+  namespace: keycloak
+---
+# ============================================================================
+# Service
+# ============================================================================
 apiVersion: v1
 kind: Service
 metadata:
   name: keycloak
   namespace: keycloak
-  labels:
-    app: keycloak
+  labels: { app: keycloak }
 spec:
   type: ClusterIP
-  selector:
-    app: keycloak
+  selector: { app: keycloak }
   ports:
   - name: http
     port: 8080
     targetPort: 8080
 ---
-apiVersion: rbac.authorization.k8s.io/v1
-kind: Role
-metadata:
-  name: job-status-reader
-  namespace: vault
-rules:
-  - apiGroups: ["batch"]
-    resources: ["jobs"]
-    verbs: ["get", "list", "watch"]
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: RoleBinding
-metadata:
-  name: job-status-reader-for-keycloak
-  namespace: vault
-subjects:
-  - kind: ServiceAccount
-    name: keycloak
-    namespace: keycloak
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: Role
-  name: job-status-reader
----
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: kc-script-github-admin
-  namespace: keycloak
-data:
-  github-team-admin.js: |
-    var SimpleHttp = Java.type("org.keycloak.broker.provider.util.SimpleHttp");
-    var WANT_ORG  = "<path:secret/data/k8s-teleport-teleport-github-org#value>";
-    var WANT_TEAM = "keycloak_admins";
-    var IDP_ALIAS = "github";
-    function authenticate(context) {
-      var session = context.getSession();
-      var realm   = context.getRealm();
-      var user    = context.getUser();
-      var fed = session.users().getFederatedIdentity(realm, user, IDP_ALIAS);
-      if (fed == null || fed.getToken() == null) { context.success(); return; }
-      var token = fed.getToken();
-      var resp = SimpleHttp.doGet("https://api.github.com/user/teams", session)
-          .header("Authorization", "Bearer " + token)
-          .asJson();
-      var it = resp.iterator();
-      var isMember = false;
-      while (it.hasNext()) {
-        var t = it.next();
-        var slug = t.get("slug").asText();
-        var org  = t.get("organization").get("login").asText();
-        if (slug.equals(WANT_TEAM) && org.equalsIgnoreCase(WANT_ORG)) { isMember = true; break; }
-      }
-      var client = session.clients().getClientByClientId(realm, "realm-management");
-      var adminRole = client.getRole("realm-admin");
-      if (isMember) user.grantRole(adminRole); else user.deleteRoleMapping(adminRole);
-      context.success();
-    }
----
+# ============================================================================
+# Deployment (guard refuses to start if schema has any tables)
+# ============================================================================
 apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: keycloak
   namespace: keycloak
-  labels:
-    app: keycloak
+  labels: { app: keycloak }
+  annotations:
+    argocd.argoproj.io/sync-wave: "0"
 spec:
   replicas: 1
   selector:
-    matchLabels:
-      app: keycloak
+    matchLabels: { app: keycloak }
   template:
     metadata:
-      labels:
-        app: keycloak
+      labels: { app: keycloak }
       annotations:
         vault.hashicorp.com/agent-inject: "true"
         vault.hashicorp.com/role: "keycloak"
@@ -627,34 +355,19 @@ spec:
     spec:
       serviceAccountName: keycloak
       volumes:
-        - name: realm-import
-          configMap:
-            name: keycloak-realm-github
         - name: kc-scripts
-          configMap:
-            name: kc-script-github-admin
+          configMap: { name: kc-script-github-admin }
       initContainers:
+        # Wait for PreSync config job to complete
         - name: wait-for-config-job
           image: alpine/k8s:1.31.4
           command: ["/bin/sh","-lc"]
           args:
             - |
-              echo "Waiting for Job vault/keycloak-yugabyte-config to complete..."
-              while true; do
-                if ! kubectl -n vault get job keycloak-yugabyte-config >/dev/null 2>&1; then
-                  echo "  └─ job not found yet..."; sleep 5; continue
-                fi
-                SUCC="$(kubectl -n vault get job keycloak-yugabyte-config -o jsonpath='{.status.succeeded}' 2>/dev/null || true)"
-                SUCC="${SUCC:-0}"
-                if [ "$SUCC" -ge 1 ] 2>/dev/null; then echo "✅ DB bootstrap job is complete."; break; fi
-                if kubectl -n vault wait --for=condition=complete job/keycloak-yugabyte-config --timeout=10s >/dev/null 2>&1; then
-                  echo "✅ DB bootstrap job is complete."; break
-                fi
-                FAIL="$(kubectl -n vault get job keycloak-yugabyte-config -o jsonpath='{.status.failed}' 2>/dev/null || true)"; FAIL="${FAIL:-0}"
-                ACTV="$(kubectl -n vault get job keycloak-yugabyte-config -o jsonpath='{.status.active}' 2>/dev/null || true)"; ACTV="${ACTV:-0}"
-                echo "  └─ still waiting... succeeded=${SUCC} failed=${FAIL} active=${ACTV}"
-                sleep 5
-              done
+              echo "Waiting for Job vault/keycloak-yugabyte-config to complete…"
+              until kubectl -n vault get job keycloak-yugabyte-config >/dev/null 2>&1; do sleep 3; done
+              kubectl -n vault wait --for=condition=complete job/keycloak-yugabyte-config --timeout=600s
+        # Hard guard: refuse to start if schema not empty
         - name: db-guard-empty-schema
           image: alpine:3.20
           command: ["/bin/sh","-lc"]
@@ -670,8 +383,8 @@ spec:
               export PGPASSWORD="$DB_PASS"
               until nc -z -w1 "$PGHOST" "$PGPORT"; do sleep 2; done
               CNT="$(psql -h "$PGHOST" -p "$PGPORT" -U "$DB_USER" -d "$PGDB" -At -c "SELECT count(*) FROM information_schema.tables WHERE table_schema='keycloak'")"
-              echo "Tables in keycloak schema before start: $CNT"
-              [ "$CNT" = "0" ] || { echo "❌ Refusing to start: schema not empty"; exit 1; }
+              echo "Tables in schema 'keycloak' before start: $CNT"
+              [ "$CNT" = "0" ] || { echo "❌ Schema not empty. Failing init to block Keycloak."; exit 1; }
       containers:
         - name: keycloak-configurator
           image: quay.io/keycloak/keycloak:24.0.5
@@ -691,142 +404,68 @@ spec:
               source /vault/secrets/keycloak-admin
               CLIENT_ID="<path:secret/data/keycloak-oauth-client-id#value>"
               CLIENT_SECRET="<path:secret/data/keycloak-oauth-client-secret#value>"
-              json_objects_onelines() { tr -d '\n' | sed 's/},[[:space:]]*{/}\n{/g'; }
-              wait_admin() {
-                until /opt/keycloak/bin/kcadm.sh config credentials --server "$SERVER" --realm "$REALM" --user "$KEYCLOAK_ADMIN" --password "$KEYCLOAK_ADMIN_PASSWORD" >/dev/null 2>&1; do sleep 3; done
-              }
-              wait_idp() {
-                until /opt/keycloak/bin/kcadm.sh get identity-provider/instances/github -r "$REALM" >/dev/null 2>&1; do sleep 1; done
-              }
-              flow_present() {
-                /opt/keycloak/bin/kcadm.sh get authentication/flows -r "$REALM" 2>/dev/null | json_objects_onelines | grep -q "\"alias\"[[:space:]]*:[[:space:]]*\"${FLOW_ALIAS//\//\\/}\""
-              }
-              ensure_flow_exists() {
-                if ! flow_present; then
-                  /opt/keycloak/bin/kcadm.sh create authentication/flows -r "$REALM" -s "alias=${FLOW_ALIAS}" -s 'description=Grant realm-admin to members of a GitHub team' -s providerId=basic-flow -s topLevel=true -s builtIn=false >/dev/null 2>&1 || true
-                fi
-                for i in $(seq 1 60); do flow_present && break || sleep 1; done
-              }
-              purge_flow_executions() {
-                for _ in $(seq 1 20); do
-                  EXECS="$(/opt/keycloak/bin/kcadm.sh get "authentication/flows/${FLOW_ALIAS}/executions" -r "$REALM" 2>/dev/null || true)"
-                  IDS="$(printf '%s' "$EXECS" | json_objects_onelines | sed -n 's/.*"id"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')"
-                  [ -z "${IDS:-}" ] && break
-                  while read -r EID; do [ -n "$EID" ] && /opt/keycloak/bin/kcadm.sh delete "authentication/executions/${EID}" -r "$REALM" >/dev/null 2>&1 || true; done <<< "$IDS"
-                  sleep 1
-                done
-              }
-              wait_script_feature() {
-                for i in $(seq 1 60); do
-                  /opt/keycloak/bin/kcadm.sh get authentication/authenticator-providers -r "$REALM" 2>/dev/null | json_objects_onelines | grep -q '"id"[[:space:]]*:[[:space:]]*"script"' && exit 0 || sleep 2
-                done
-                echo "FATAL: 'script' authenticator not registered."; exit 1
-              }
-              wait_script_available_for_flow() {
-                for i in $(seq 1 60); do
-                  /opt/keycloak/bin/kcadm.sh get "authentication/flows/${FLOW_ALIAS}/executions/available" -r "$REALM" 2>/dev/null | json_objects_onelines | grep -q '"providerId"[[:space:]]*:[[:space:]]*"script"' && exit 0 || sleep 1
-                done
-                echo "FATAL: script provider not listed for flow '${FLOW_ALIAS}'"; exit 1
-              }
-              create_mapper_file() {
-                local file="$1"; for _ in $(seq 1 12); do /opt/keycloak/bin/kcadm.sh create identity-provider/instances/github/mappers -r "$REALM" -f "$file" && return 0 || sleep 2; done; echo "FATAL: failed to create mapper $file"; exit 1
-              }
-              ensure_script_execution() {
-                /opt/keycloak/bin/kcadm.sh get "authentication/flows/${FLOW_ALIAS}/executions" -r "$REALM" 2>/dev/null | json_objects_onelines | grep -q '"providerId"[[:space:]]*:[[:space:]]*"script"' || \
-                  /opt/keycloak/bin/kcadm.sh create "authentication/flows/${FLOW_ALIAS}/executions/execution" -r "$REALM" -s provider=script >/dev/null 2>&1 || true
-                EXEC_ID=""
-                for i in $(seq 1 30); do
-                  EXEC_ID="$(
-                    /opt/keycloak/bin/kcadm.sh get "authentication/flows/${FLOW_ALIAS}/executions" -r "$REALM" 2>/dev/null \
-                    | json_objects_onelines | grep -E '"providerId"[[:space:]]*:[[:space:]]*"script"' \
-                    | sed -n 's/.*"id"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -n1
-                  )"; [ -n "${EXEC_ID:-}" ] && break || sleep 1
-                done
-                [ -n "${EXEC_ID:-}" ] || { echo "FATAL: could not find script execution id"; exit 1; }
+              json_objects_onelines(){ tr -d '\n' | sed 's/},[[:space:]]*{/}\n{/g'; }
+              wait_admin(){ until /opt/keycloak/bin/kcadm.sh config credentials --server "$SERVER" --realm "$REALM" --user "$KEYCLOAK_ADMIN" --password "$KEYCLOAK_ADMIN_PASSWORD" >/dev/null 2>&1; do sleep 3; done; }
+              wait_idp(){ until /opt/keycloak/bin/kcadm.sh get identity-provider/instances/github -r "$REALM" >/dev/null 2>&1; do sleep 1; done; }
+              flow_present(){ /opt/keycloak/bin/kcadm.sh get authentication/flows -r "$REALM" 2>/dev/null | json_objects_onelines | grep -q "\"alias\"[[:space:]]*:[[:space:]]*\"${FLOW_ALIAS//\//\\/}\""; }
+              ensure_flow_exists(){ if ! flow_present; then /opt/keycloak/bin/kcadm.sh create authentication/flows -r "$REALM" -s "alias=${FLOW_ALIAS}" -s 'description=Grant realm-admin to members of a GitHub team' -s providerId=basic-flow -s topLevel=true -s builtIn=false >/dev/null 2>&1 || true; fi; for i in $(seq 1 60); do flow_present && break || sleep 1; done; }
+              purge_flow_executions(){ for _ in $(seq 1 20); do EXECS="$(
+                  /opt/keycloak/bin/kcadm.sh get "authentication/flows/${FLOW_ALIAS}/executions" -r "$REALM" 2>/dev/null || true)"; IDS="$(printf '%s' "$EXECS" | json_objects_onelines | sed -n 's/.*"id"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')"; [ -z "$IDS" ] && break; echo "$IDS" | while read -r EID; do [ -n "$EID" ] && /opt/keycloak/bin/kcadm.sh delete "authentication/executions/${EID}" -r "$REALM" >/dev/null 2>&1 || true; done; sleep 1; done; }
+              ensure_script_execution(){ if ! /opt/keycloak/bin/kcadm.sh get "authentication/flows/${FLOW_ALIAS}/executions" -r "$REALM" 2>/dev/null | json_objects_onelines | grep -q '"providerId"[[:space:]]*:[[:space:]]*"script"'; then /opt/keycloak/bin/kcadm.sh create "authentication/flows/${FLOW_ALIAS}/executions/execution" -r "$REALM" -s provider=script >/dev/null 2>&1 || true; fi
+                for i in $(seq 1 30); do EXEC_ID="$(
+                  /opt/keycloak/bin/kcadm.sh get "authentication/flows/${FLOW_ALIAS}/executions" -r "$REALM" 2>/dev/null \
+                  | json_objects_onelines | grep -E '"providerId"[[:space:]]*:[[:space:]]*"script"' \
+                  | sed -n 's/.*"id"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -n1)"; [ -n "${EXEC_ID:-}" ] && break || sleep 1; done
+                [ -n "${EXEC_ID:-}" ] || { echo "FATAL: no script exec id"; exit 1; }
                 /opt/keycloak/bin/kcadm.sh update "authentication/executions/${EXEC_ID}" -r "$REALM" -s 'requirement=REQUIRED'
                 SCRIPT_ESCAPED="$(sed -e 's/\\/\\\\/g' -e 's/"/\\"/g' -e ':a;N;$!ba;s/\n/\\n/g' /opt/keycloak/scripts/github-team-admin.js)"
                 cat >/tmp/script-cfg.json <<EOF
-              { "alias": "GitHub Team Admin", "config": { "script": "${SCRIPT_ESCAPED}" } }
+              { "alias":"GitHub Team Admin","config":{"script":"${SCRIPT_ESCAPED}"}}
               EOF
                 /opt/keycloak/bin/kcadm.sh create "authentication/executions/${EXEC_ID}/config" -r "$REALM" -f /tmp/script-cfg.json >/dev/null 2>&1 || {
                   CFG_ID=$(/opt/keycloak/bin/kcadm.sh get "authentication/executions/${EXEC_ID}/config" -r "$REALM" | json_objects_onelines | sed -n 's/.*"id"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -n1)
                   [ -n "${CFG_ID:-}" ] && /opt/keycloak/bin/kcadm.sh update "authentication/executions/${EXEC_ID}/config/${CFG_ID}" -r "$REALM" -f /tmp/script-cfg.json
                 }
               }
-              ensure_named_flow_exists() {
-                local alias="$1" desc="$2"
-                /opt/keycloak/bin/kcadm.sh get authentication/flows -r "$REALM" 2>/dev/null | json_objects_onelines | grep -q "\"alias\"[[:space:]]*:[[:space:]]*\"${alias//\//\\/}\"" || \
-                  /opt/keycloak/bin/kcadm.sh create authentication/flows -r "$REALM" -s "alias=${alias}" -s "description=${desc}" -s providerId=basic-flow -s topLevel=true -s builtIn=false >/dev/null 2>&1 || true
-                for i in $(seq 1 60); do /opt/keycloak/bin/kcadm.sh get authentication/flows -r "$REALM" 2>/dev/null | json_objects_onelines | grep -q "\"alias\"[[:space:]]*:[[:space:]]*\"${alias//\//\\/}\"" && break || sleep 1; done
-              }
-              ensure_exec_req() { 
-                local alias="$1" provider="$2" req="$3"
-                /opt/keycloak/bin/kcadm.sh get "authentication/flows/${alias}/executions" -r "$REALM" 2>/dev/null | json_objects_onelines | grep -q "\"providerId\"[[:space:]]*:[[:space:]]*\"${provider}\"" || \
-                  /opt/keycloak/bin/kcadm.sh create "authentication/flows/${alias}/executions/execution" -r "$REALM" -s "provider=${provider}" >/dev/null 2>&1 || true
-                EID=""
-                for i in $(seq 1 30); do
-                  EID="$(
-                    /opt/keycloak/bin/kcadm.sh get "authentication/flows/${alias}/executions" -r "$REALM" \
-                      | json_objects_onelines \
-                      | awk -v p="\"providerId\"[[:space:]]*:[[:space:]]*\"${provider}\"" '$0 ~ p { if (match($0, /"id"[[:space:]]*:[[:space:]]*"([^"]*)"/, m)) { print m[1]; exit } }'
-                  )"; [ -n "${EID:-}" ] && break || sleep 1
-                done
-                [ -n "${EID:-}" ] || { echo "FATAL: couldn't find execution id for ${provider} in ${alias}"; exit 1; }
-                /opt/keycloak/bin/kcadm.sh update "authentication/executions/${EID}" -r "$REALM" -s "requirement=${req}"
-              }
-              ensure_first_broker_login_flow() {
-                ensure_named_flow_exists "${FIRST_LOGIN_FLOW_ALIAS}" "Auto-create user, no link prompt"
-                ensure_exec_req "${FIRST_LOGIN_FLOW_ALIAS}" "idp-create-user-if-unique" "REQUIRED"
-                ensure_exec_req "${FIRST_LOGIN_FLOW_ALIAS}" "idp-confirm-link" "DISABLED"
-                ensure_exec_req "${FIRST_LOGIN_FLOW_ALIAS}" "idp-review-profile" "OPTIONAL"
-                ensure_exec_req "${FIRST_LOGIN_FLOW_ALIAS}" "idp-verify-email" "DISABLED"
-              }
+              ensure_named_flow_exists(){ alias="$1"; desc="$2"; /opt/keycloak/bin/kcadm.sh get authentication/flows -r "$REALM" 2>/dev/null | json_objects_onelines | grep -q "\"alias\"[[:space:]]*:[[:space:]]*\"${alias//\//\\/}\"" || /opt/keycloak/bin/kcadm.sh create authentication/flows -r "$REALM" -s "alias=${alias}" -s "description=${desc}" -s providerId=basic-flow -s topLevel=true -s builtIn=false >/dev/null 2>&1 || true; for i in $(seq 1 60); do /opt/keycloak/bin/kcadm.sh get authentication/flows -r "$REALM" 2>/dev/null | json_objects_onelines | grep -q "\"alias\"[[:space:]]*:[[:space:]]*\"${alias//\//\\/}\"" && break || sleep 1; done; }
+              ensure_exec_req(){ alias="$1"; provider="$2"; req="$3"; /opt/keycloak/bin/kcadm.sh get "authentication/flows/${alias}/executions" -r "$REALM" 2>/dev/null | json_objects_onelines | grep -q "\"providerId\"[[:space:]]*:[[:space:]]*\"${provider}\"" || /opt/keycloak/bin/kcadm.sh create "authentication/flows/${alias}/executions/execution" -r "$REALM" -s "provider=${provider}" >/dev/null 2>&1 || true; for i in $(seq 1 30); do EID="$(
+                /opt/keycloak/bin/kcadm.sh get "authentication/flows/${alias}/executions" -r "$REALM" | json_objects_onelines \
+                | awk -v p="\"providerId\"[[:space:]]*:[[:space:]]*\"${provider}\"" '$0 ~ p { if (match($0, /"id"[[:space:]]*:[[:space:]]*"([^"]*)"/, m)) { print m[1]; exit } }')"; [ -n "${EID:-}" ] && break || sleep 1; done; [ -n "${EID:-}" ] || { echo "FATAL: no exec id for ${provider}"; exit 1; }; /opt/keycloak/bin/kcadm.sh update "authentication/executions/${EID}" -r "$REALM" -s "requirement=${req}"; }
+              ensure_first_broker_login_flow(){ ensure_named_flow_exists "${FIRST_LOGIN_FLOW_ALIAS}" "Auto-create user, no link prompt"; ensure_exec_req "${FIRST_LOGIN_FLOW_ALIAS}" "idp-create-user-if-unique" "REQUIRED"; ensure_exec_req "${FIRST_LOGIN_FLOW_ALIAS}" "idp-confirm-link" "DISABLED"; ensure_exec_req "${FIRST_LOGIN_FLOW_ALIAS}" "idp-review-profile" "OPTIONAL"; ensure_exec_req "${FIRST_LOGIN_FLOW_ALIAS}" "idp-verify-email" "DISABLED"; }
+
               wait_admin
               set -x
               /opt/keycloak/bin/kcadm.sh get identity-provider/instances/github -r "$REALM" >/dev/null 2>&1 && /opt/keycloak/bin/kcadm.sh delete identity-provider/instances/github -r "$REALM" || true
               /opt/keycloak/bin/kcadm.sh create identity-provider/instances -r "$REALM" \
                 -s enabled=true -s storeToken=true -s alias=github -s providerId=github \
                 -s "config.clientId=$CLIENT_ID" -s "config.clientSecret=$CLIENT_SECRET" \
-                -s 'config.defaultScope=read:user user:email read:org' -s 'config.guiOrder=1' \
-                -s 'config.hideOnLoginPage=false' -s 'config.syncMode=IMPORT' -s 'config.trustEmail=true'
+                -s 'config.defaultScope=read:user user:email read:org' \
+                -s 'config.guiOrder=1' -s 'config.hideOnLoginPage=false' \
+                -s 'config.syncMode=IMPORT' -s 'config.trustEmail=true'
               wait_idp
+
               cat >/tmp/mapper-email.json <<'JSON'
-              { "name":"email", "identityProviderAlias":"github",
-                "identityProviderMapper":"oidc-user-attribute-idp-mapper",
-                "config":{ "claim":"email", "user.attribute":"email", "syncMode":"INHERIT" } }
+              { "name":"email","identityProviderAlias":"github","identityProviderMapper":"oidc-user-attribute-idp-mapper","config":{"claim":"email","user.attribute":"email","syncMode":"INHERIT"}}
               JSON
               cat >/tmp/mapper-username.json <<'JSON'
-              { "name":"username", "identityProviderAlias":"github",
-                "identityProviderMapper":"oidc-user-attribute-idp-mapper",
-                "config":{ "claim":"login", "user.attribute":"username", "syncMode":"INHERIT" } }
+              { "name":"username","identityProviderAlias":"github","identityProviderMapper":"oidc-user-attribute-idp-mapper","config":{"claim":"login","user.attribute":"username","syncMode":"INHERIT"}}
               JSON
               cat >/tmp/mapper-name.json <<'JSON'
-              { "name":"name", "identityProviderAlias":"github",
-                "identityProviderMapper":"oidc-user-attribute-idp-mapper",
-                "config":{ "claim":"name", "user.attribute":"firstName", "syncMode":"INHERIT" } }
+              { "name":"name","identityProviderAlias":"github","identityProviderMapper":"oidc-user-attribute-idp-mapper","config":{"claim":"name","user.attribute":"firstName","syncMode":"INHERIT"}}
               JSON
               cat >/tmp/mapper-username-template.json <<'JSON'
-              { "name":"username-template", "identityProviderAlias":"github",
-                "identityProviderMapper":"username-template-importer",
-                "config":{ "template":"${ALIAS}.${CLAIM.sub}", "syncMode":"INHERIT" } }
+              { "name":"username-template","identityProviderAlias":"github","identityProviderMapper":"username-template-importer","config":{"template":"${ALIAS}.${CLAIM.sub}","syncMode":"INHERIT"}}
               JSON
-              create_mapper_file /tmp/mapper-email.json
-              create_mapper_file /tmp/mapper-username.json
-              create_mapper_file /tmp/mapper-name.json
-              create_mapper_file /tmp/mapper-username-template.json
-              ensure_flow_exists
-              purge_flow_executions
-              wait_script_feature
-              wait_script_available_for_flow
-              ensure_script_execution
+
+              for f in /tmp/mapper-*.json; do /opt/keycloak/bin/kcadm.sh create identity-provider/instances/github/mappers -r "$REALM" -f "$f" || true; done
+              ensure_flow_exists; purge_flow_executions; ensure_script_execution
               /opt/keycloak/bin/kcadm.sh update identity-provider/instances/github -r "$REALM" -s "postBrokerLoginFlowAlias=${FLOW_ALIAS}"
               ensure_first_broker_login_flow
               /opt/keycloak/bin/kcadm.sh update identity-provider/instances/github -r "$REALM" -s "firstBrokerLoginFlowAlias=${FIRST_LOGIN_FLOW_ALIAS}"
-              /opt/keycloak/bin/kcadm.sh update "realms/${REALM}" \
-                -s sslRequired=EXTERNAL -s loginWithEmailAllowed=true -s registrationAllowed=false \
-                -s rememberMe=true -s resetPasswordAllowed=true -s bruteForceProtected=true -s permanentLockout=false
+
+              /opt/keycloak/bin/kcadm.sh update "realms/${REALM}" -s sslRequired=EXTERNAL -s loginWithEmailAllowed=true -s registrationAllowed=false -s rememberMe=true -s resetPasswordAllowed=true -s bruteForceProtected=true -s permanentLockout=false
               set +x
-              echo "✔ Reset + reconfigure complete."
+              echo "✔ Keycloak post-config done."
               sleep 365d
           resources:
             requests: { cpu: "20m", memory: "64Mi" }
@@ -836,78 +475,46 @@ spec:
           image: quay.io/keycloak/keycloak:24.0.5
           imagePullPolicy: IfNotPresent
           ports:
-          - containerPort: 8080
-            name: http
+          - { containerPort: 8080, name: http }
           env:
-          - name: KC_DB
-            value: "postgres"
-          - name: KC_DB_URL
-            value: "jdbc:postgresql://yb-tserver-service.yugabyte.svc.cluster.local:5433/keycloak"
-          - name: KC_DB_SCHEMA
-            value: "keycloak"
-          - name: KC_HOSTNAME_URL
-            value: "https://keycloak.app.suncoast.systems"
-          - name: KC_HOSTNAME_ADMIN_URL
-            value: "https://keycloak.app.suncoast.systems"
-          - name: KC_HEALTH_ENABLED
-            value: "true"
-          - name: KC_HOSTNAME_STRICT
-            value: "false"
-          - name: KC_HTTP_ENABLED
-            value: "true"
-          - name: KC_TRANSACTION_XA_ENABLED
-            value: "false"
-          - name: KC_HOSTNAME_STRICT_HTTPS
-            value: "true"
-          - name: KC_HTTP_RELATIVE_PATH
-            value: "/"
-          - name: KC_HTTP_COOKIE_SAME_SITE
-            value: "LAX"
-          - name: KC_FEATURES
-            value: "scripts"
-          - name: KC_PROFILE
-            value: "preview"
-          - name: KC_LOG_LEVEL
-            value: DEBUG
-          - name: QUARKUS_LOG_CATEGORY__LIQUIBASE__LEVEL
-            value: DEBUG
-          - name: QUARKUS_LOG_CATEGORY__org.keycloak.quarkus.runtime.storage.legacy.liquibase__LEVEL
-            value: DEBUG
+          - { name: KC_DB, value: "postgres" }
+          - { name: KC_DB_URL, value: "jdbc:postgresql://yb-tserver-service.yugabyte.svc.cluster.local:5433/keycloak" }
+          - { name: KC_DB_SCHEMA, value: "keycloak" }
+          - { name: KC_HOSTNAME_URL, value: "https://keycloak.app.suncoast.systems" }
+          - { name: KC_HOSTNAME_ADMIN_URL, value: "https://keycloak.app.suncoast.systems" }
+          - { name: KC_HEALTH_ENABLED, value: "true" }
+          - { name: KC_HOSTNAME_STRICT, value: "false" }
+          - { name: KC_HTTP_ENABLED, value: "true" }
+          - { name: KC_TRANSACTION_XA_ENABLED, value: "false" }
+          - { name: KC_HOSTNAME_STRICT_HTTPS, value: "true" }
+          - { name: KC_HTTP_RELATIVE_PATH, value: "/" }
+          - { name: KC_HTTP_COOKIE_SAME_SITE, value: "LAX" }
+          - { name: KC_FEATURES, value: "scripts" }
+          - { name: KC_PROFILE, value: "preview" }
+          - { name: KC_LOG_LEVEL, value: "DEBUG" }
+          - { name: QUARKUS_LOG_CATEGORY__LIQUIBASE__LEVEL, value: "DEBUG" }
+          - { name: QUARKUS_LOG_CATEGORY__org.keycloak.quarkus.runtime.storage.legacy.liquibase__LEVEL, value: "DEBUG" }
           command: ["/bin/sh","-lc"]
           args:
             - >
-              source /vault/secrets/keycloak-admin &&
               export KC_DB_USERNAME="$(cat /vault/secrets/db-username)" &&
               export KC_DB_PASSWORD="$(cat /vault/secrets/db-password)" &&
               /opt/keycloak/bin/kc.sh start --features=scripts
           startupProbe:
-            tcpSocket:
-              port: http
+            tcpSocket: { port: http }
             periodSeconds: 5
             failureThreshold: 120
             timeoutSeconds: 2
           readinessProbe:
-            httpGet:
-              path: /health/ready
-              port: http
+            httpGet: { path: /health/ready, port: http }
             periodSeconds: 10
             failureThreshold: 6
             timeoutSeconds: 5
           livenessProbe:
-            httpGet:
-              path: /health/live
-              port: http
+            httpGet: { path: /health/live, port: http }
             periodSeconds: 10
             failureThreshold: 6
             timeoutSeconds: 5
           resources:
-            requests:
-              cpu: "500m"
-              memory: "1Gi"
-            limits:
-              cpu: "2"
-              memory: "3Gi"
-          volumeMounts:
-            - name: kc-scripts
-              mountPath: /opt/keycloak/scripts
-              readOnly: true
+            requests: { cpu: "500m", memory: "1Gi" }
+            limits:   { cpu: "2", memory: "3Gi" }
