@@ -404,11 +404,11 @@ spec:
       initContainers:
         # Wait for PreSync config job to complete
         - name: wait-for-config-job
-          image: bitnami/kubectl:1.31
+          image: alpine:3.20
           command: ["/bin/sh","-lc"]
           args:
             - |
-              
+              apk add --no-cache postgresql15-client kubectl >/dev/null
               # ---- settings ----
               JOB_NS="vault"
               JOB_NAME="keycloak-yugabyte-config"
