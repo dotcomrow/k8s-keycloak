@@ -88,6 +88,7 @@ roleRef:
 # ============================================================================
 # PreSync (-40): Copy 'vault-root-token' into keycloak (idempotent; no jq needed)
 # ============================================================================
+# PreSync (-40): Copy 'vault-root-token' into keycloak (idempotent; kubectl-only)
 apiVersion: batch/v1
 kind: Job
 metadata:
@@ -112,22 +113,43 @@ spec:
           command: ["/bin/sh","-c"]
           args:
             - |
-              set -eu
-              echo "Ensuring 'vault-root-token' exists in keycloak namespace…"
-              # delete first to avoid immutability/ownerReference issues (ok if missing)
-              kubectl -n keycloak delete secret vault-root-token --ignore-not-found || true
+              set -euo pipefail
+              SRC_NS="vault"
+              DST_NS="keycloak"
+              NAME="vault-root-token"
 
-              # copy and scrub server-managed metadata using pure sed
-              kubectl -n vault get secret vault-root-token -o yaml \
-              | sed -E \
-                  -e 's/^metadata:\s*$/metadata:\n  name: vault-root-token\n  namespace: keycloak/' \
-                  -e '/^\s*resourceVersion:/d' \
-                  -e '/^\s*uid:/d' \
-                  -e '/^\s*creationTimestamp:/d' \
-                  -e '/^\s*managedFields:/,/^  [^ ]/d' \
-                  -e '/^\s*annotations:/,/^  [^ ]/d' \
-              | kubectl apply -f -
-              echo "✅ Secret synced to keycloak."
+              echo "🔎 Waiting for source secret ${SRC_NS}/${NAME} to exist..."
+              for i in $(seq 1 60); do
+                if kubectl -n "${SRC_NS}" get secret "${NAME}" >/dev/null 2>&1; then break; fi
+                sleep 2
+              done
+
+              echo "♻️  Recreating ${DST_NS}/${NAME}..."
+              kubectl -n "${DST_NS}" delete secret "${NAME}" --ignore-not-found
+
+              # Read type and data (assumes key 'VAULT_TOKEN'; preserve type)
+              TYPE="$(kubectl -n "${SRC_NS}" get secret "${NAME}" -o jsonpath='{.type}')"
+              [ -z "${TYPE}" ] && TYPE="Opaque"
+              VAL="$(kubectl -n "${SRC_NS}" get secret "${NAME}" -o jsonpath='{.data.VAULT_TOKEN}')"
+              if [ -z "${VAL}" ]; then
+                echo "❌ Could not read .data.VAULT_TOKEN from ${SRC_NS}/${NAME}"
+                kubectl -n "${SRC_NS}" get secret "${NAME}" -o yaml || true
+                exit 1
+              fi
+
+              # Recreate in target namespace (no double-encoding; we inject base64 directly)
+              cat <<EOF | kubectl -n "${DST_NS}" apply -f -
+              apiVersion: v1
+              kind: Secret
+              metadata:
+                name: ${NAME}
+              type: ${TYPE}
+              data:
+                VAULT_TOKEN: ${VAL}
+              EOF
+
+              echo "✅ Secret ${DST_NS}/${NAME} in place:"
+              kubectl -n "${DST_NS}" get secret "${NAME}" -o go-template='type={{.type}}{{"\n"}}'
 ---
 # ============================================================================
 # PreSync (-30): Nuke schema hard (drop keycloak schema + stray public changelog)
