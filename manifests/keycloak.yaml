@@ -113,7 +113,6 @@ spec:
           command: ["/bin/sh","-c"]
           args:
             - |
-              set -euo pipefail
               SRC_NS="vault"
               DST_NS="keycloak"
               NAME="vault-root-token"
