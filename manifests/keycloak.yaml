@@ -72,8 +72,8 @@ spec:
               PGHOST=yb-tserver-service.yugabyte.svc.cluster.local
               PGPORT=5433
               DB=keycloak
-              ROLE_GROUP=keycloak
-              ROLE_OWNER=keycloak_app
+              ROLE_GROUP=keycloak          # NOLOGIN group
+              ROLE_OWNER=keycloak_app      # LOGIN stable owner
               VAULTADMIN_USER=vaultadmin
 
               apk add --no-cache postgresql15-client jq netcat-openbsd curl
@@ -154,7 +154,6 @@ spec:
               CREATE SCHEMA IF NOT EXISTS keycloak AUTHORIZATION ${ROLE_OWNER};
               ALTER SCHEMA keycloak OWNER TO ${ROLE_OWNER};
               ALTER ROLE ${ROLE_OWNER} SET search_path = keycloak;
-              -- ensure app user can connect to the database
               GRANT CONNECT ON DATABASE ${DB} TO ${ROLE_OWNER};
               EOSQL
 
@@ -340,7 +339,7 @@ spec:
           export KEYCLOAK_ADMIN_PASSWORD={{ .Data.data.password }}
           {{- end -}}
 
-        # NEW: vaultadmin password for privileged preflight
+        # vaultadmin password for privileged preflight (no Sprig funcs)
         vault.hashicorp.com/agent-inject-secret-vaultadmin: "secret/data/vaultadmin"
         vault.hashicorp.com/agent-inject-template-vaultadmin: |
           {{- with secret "secret/data/vaultadmin" -}}
@@ -405,8 +404,10 @@ spec:
               value: "keycloak"
             - name: PGSCHEMA
               value: "keycloak"
+            - name: PGSCHEMA_OWNER
+              value: "keycloak_app"
             - name: KC_FORCE_RESET_SCHEMA_ON_CONFLICT
-              value: "true"   # drop schema if legacy tables exist but no changelog
+              value: "true"   # drop schema if legacy tables exist
             - name: KC_CLEAR_CHANGELOG_CHECKSUMS
               value: "true"   # set md5sum=NULL to force recalculation
             - name: PGADMIN_USER
@@ -427,45 +428,58 @@ spec:
               done
               echo "✅ DB reachable"
 
-              # Ensure schema exists
+              # Ensure schema exists (safe no-op if we later drop)
               psql -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDATABASE" -v ON_ERROR_STOP=1 -c "CREATE SCHEMA IF NOT EXISTS ${PGSCHEMA};"
 
               # Unlock Liquibase if needed
-              HAS_LOCK_TABLE="$(psql -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDATABASE" -Atc "select 1 from information_schema.tables where table_schema='${PGSCHEMA}' and table_name='databasechangeloglock'")" || true
+              HAS_LOCK_TABLE="$(psql -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDATABASE" -Atc \
+                "select 1 from information_schema.tables where table_schema='${PGSCHEMA}' and table_name='databasechangeloglock'")" || true
               if [ "${HAS_LOCK_TABLE:-}" = "1" ]; then
-                LOCKED="$(psql -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDATABASE" -Atc "select locked from ${PGSCHEMA}.databasechangeloglock where id=1" 2>/dev/null || echo "f")"
+                LOCKED="$(psql -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDATABASE" -Atc \
+                  "select locked from ${PGSCHEMA}.databasechangeloglock where id=1" 2>/dev/null || echo "f")"
                 if [ "$LOCKED" = "t" ]; then
                   echo "🔓 Liquibase lock detected → unlocking…"
-                  psql -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDATABASE" -v ON_ERROR_STOP=1 -c "update ${PGSCHEMA}.databasechangeloglock set locked=false, lockgranted=null, lockedby=null where id=1;"
+                  psql -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDATABASE" -v ON_ERROR_STOP=1 \
+                    -c "update ${PGSCHEMA}.databasechangeloglock set locked=false, lockgranted=null, lockedby=null where id=1;"
                 fi
               fi
 
-              # Legacy/conflict detection
-              HAS_CHANGELOG="$(psql -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDATABASE" -Atc "select 1 from information_schema.tables where table_schema='${PGSCHEMA}' and table_name='databasechangelog'")" || true
-              HAS_LEGACY_TABLE="$(psql -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDATABASE" -Atc "select 1 from information_schema.tables where table_schema='${PGSCHEMA}' and table_name ilike 'application_default_roles'")" || true
+              # Detect ANY known KC legacy/object tables -> drop schema if allowed
+              HAS_CONFLICT_TABLE="$(psql -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDATABASE" -Atc "
+                select 1
+                from information_schema.tables
+                where table_schema='${PGSCHEMA}'
+                  and table_name ilike any (array[
+                    'application_default_roles','application_role','realm','client',
+                    'event_entity','migration_model','user_entity','keycloak_role',
+                    'composite_role','federated_user','federated_identity',
+                    'component','credential','client_session','authentication_flow'
+                  ])
+                limit 1
+              " 2>/dev/null || true)"
 
-              if [ "${HAS_LEGACY_TABLE:-}" = "1" ] && [ "${HAS_CHANGELOG:-}" != "1" ]; then
-                echo "⚠️  Legacy tables present without changelog (e.g., APPLICATION_DEFAULT_ROLES)."
-                if [ "${KC_FORCE_RESET_SCHEMA_ON_CONFLICT:-false}" = "true" ]; then
-                  echo "🧨 Dropping schema ${PGSCHEMA} CASCADE for clean migration…"
-                  psql -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDATABASE" -v ON_ERROR_STOP=1 -c "DROP SCHEMA IF EXISTS ${PGSCHEMA} CASCADE; CREATE SCHEMA ${PGSCHEMA};"
-                else
-                  echo "❌ KC_FORCE_RESET_SCHEMA_ON_CONFLICT=false → refusing to drop schema. Migration may fail."
-                fi
+              if [ "${KC_FORCE_RESET_SCHEMA_ON_CONFLICT:-false}" = "true" ] && [ "${HAS_CONFLICT_TABLE:-}" = "1" ]; then
+                echo "🧨 Conflict tables found in ${PGSCHEMA} → dropping schema CASCADE for a clean migration…"
+                psql -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDATABASE" -v ON_ERROR_STOP=1 <<EOSQL
+              DROP SCHEMA IF EXISTS ${PGSCHEMA} CASCADE;
+              CREATE SCHEMA ${PGSCHEMA} AUTHORIZATION ${PGSCHEMA_OWNER};
+              ALTER ROLE ${PGSCHEMA_OWNER} SET search_path = ${PGSCHEMA};
+              GRANT USAGE, CREATE ON SCHEMA ${PGSCHEMA} TO ${PGSCHEMA_OWNER};
+              EOSQL
+              else
+                echo "ℹ️  No destructive reset (KC_FORCE_RESET_SCHEMA_ON_CONFLICT=false or no conflict tables found)."
               fi
 
               # Clear checksums if changelog exists
+              HAS_CHANGELOG="$(psql -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDATABASE" -Atc \
+                "select 1 from information_schema.tables where table_schema='${PGSCHEMA}' and table_name='databasechangelog'")" || true
               if [ "${KC_CLEAR_CHANGELOG_CHECKSUMS:-false}" = "true" ] && [ "${HAS_CHANGELOG:-}" = "1" ]; then
                 echo "🧹 Clearing Liquibase checksums (md5sum=NULL)…"
-                psql -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDATABASE" -v ON_ERROR_STOP=0 -c "UPDATE ${PGSCHEMA}.databasechangelog SET md5sum=NULL;"
+                psql -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDATABASE" -v ON_ERROR_STOP=0 \
+                  -c "UPDATE ${PGSCHEMA}.databasechangelog SET md5sum=NULL;"
               fi
 
               echo "✅ Preflight complete."
-          volumeMounts:
-            - name: kc-scripts
-              mountPath: /opt/keycloak/scripts
-              readOnly: true
-
       containers:
         - name: keycloak-configurator
           image: quay.io/keycloak/keycloak:24.0.5
@@ -481,20 +495,192 @@ spec:
           args:
             - |
               set -euo pipefail
+
               REALM="master"
               SERVER="http://127.0.0.1:8080"
               FLOW_ALIAS="GitHub-PostLogin"
 
+              # --- Admin creds & GitHub secrets (Vault-injected env file) ---
               source /vault/secrets/keycloak-admin
               CLIENT_ID="<path:secret/data/keycloak-oauth-client-id#value>"
               CLIENT_SECRET="<path:secret/data/keycloak-oauth-client-secret#value>"
 
               json_objects_onelines() { tr -d '\n' | sed 's/},[[:space:]]*{/}\n{/g'; }
-              wait_admin() { echo "Waiting for Keycloak admin API..."; until /opt/keycloak/bin/kcadm.sh config credentials --server "$SERVER" --realm "$REALM" --user "$KEYCLOAK_ADMIN" --password "$KEYCLOAK_ADMIN_PASSWORD" >/dev/null 2>&1; do sleep 3; done; }
-              wait_idp()   { until /opt/keycloak/bin/kcadm.sh get identity-provider/instances/github -r "$REALM" >/dev/null 2>&1; do sleep 1; done; }
-              flow_exists(){ /opt/keycloak/bin/kcadm.sh get "authentication/flows/${FLOW_ALIAS}" -r "$REALM" >/dev/null 2>&1; }
 
-              # ... unchanged configurator body ...
+              wait_admin() {
+                echo "Waiting for Keycloak admin API..."
+                until /opt/keycloak/bin/kcadm.sh config credentials \
+                        --server "$SERVER" --realm "$REALM" \
+                        --user "$KEYCLOAK_ADMIN" --password "$KEYCLOAK_ADMIN_PASSWORD" >/dev/null 2>&1; do
+                  sleep 3
+                done
+              }
+
+              wait_idp() {
+                until /opt/keycloak/bin/kcadm.sh get identity-provider/instances/github -r "$REALM" >/dev/null 2>&1; do
+                  sleep 1
+                done
+              }
+
+              # -------- helpers --------
+              flow_exists() {
+                /opt/keycloak/bin/kcadm.sh get "authentication/flows/${FLOW_ALIAS}" -r "$REALM" >/dev/null 2>&1
+              }
+
+              wait_script_feature() {
+                local tries=0 max=60
+                while :; do
+                  if /opt/keycloak/bin/kcadm.sh get authentication/authenticator-providers -r "$REALM" 2>/dev/null \
+                      | tr -d '\n' | sed 's/},[[:space:]]*{/}\n{/g' \
+                      | grep -q '"id"[[:space:]]*:[[:space:]]*"script"'; then
+                    return 0
+                  fi
+                  tries=$((tries+1))
+                  [ "$tries" -ge "$max" ] && {
+                    echo "FATAL: 'script' authenticator not registered. Start Keycloak with --features=scripts (KC_FEATURES=scripts)."
+                    exit 1
+                  }
+                  sleep 2
+                done
+              }
+
+              purge_flow_executions() {
+                # Delete ALL executions beneath FLOW_ALIAS (idempotent)
+                echo "Purging executions under flow '${FLOW_ALIAS}'..."
+                local loop_guard=0
+                while :; do
+                  loop_guard=$((loop_guard+1)); [ "$loop_guard" -gt 20 ] && break
+                  local EXECS IDS
+                  EXECS="$(/opt/keycloak/bin/kcadm.sh get "authentication/flows/${FLOW_ALIAS}/executions" -r "$REALM" 2>/dev/null || true)"
+                  IDS="$(printf '%s' "$EXECS" | json_objects_onelines | sed -n 's/.*"id"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')"
+                  [ -z "${IDS:-}" ] && { echo "Flow '${FLOW_ALIAS}' now has no executions."; return 0; }
+                  # Delete each execution
+                  while read -r EID; do
+                    [ -z "${EID:-}" ] && continue
+                    /opt/keycloak/bin/kcadm.sh delete "authentication/executions/${EID}" -r "$REALM" >/dev/null 2>&1 || true
+                  done <<< "$IDS"
+                  # small wait to let server settle
+                  sleep 1
+                done
+                echo "WARN: executions may still remain (loop guard tripped); continuing."
+              }
+
+              ensure_flow_exists() {
+                if flow_exists; then
+                  echo "Flow '${FLOW_ALIAS}' exists; will reset it."
+                else
+                  echo "Creating flow '${FLOW_ALIAS}'..."
+                  /opt/keycloak/bin/kcadm.sh create authentication/flows -r "$REALM" \
+                    -s "alias=${FLOW_ALIAS}" \
+                    -s 'description=Grant realm-admin to members of a GitHub team' \
+                    -s providerId=basic-flow -s topLevel=true -s builtIn=false
+                fi
+              }
+
+              create_mapper_file() {
+                local file="$1" tries=0
+                while :; do
+                  if /opt/keycloak/bin/kcadm.sh create identity-provider/instances/github/mappers -r "$REALM" -f "$file"; then
+                    return 0
+                  fi
+                  tries=$((tries+1)); [ "$tries" -ge 12 ] && { echo "FATAL: failed to create mapper from $file"; exit 1; }
+                  sleep 2
+                done
+              }
+
+              add_script_execution() {
+                # Try to add the script execution; then fetch its id with retries
+                /opt/keycloak/bin/kcadm.sh create "authentication/flows/${FLOW_ALIAS}/executions/execution" -r "$REALM" \
+                  -s provider=script >/dev/null 2>&1 || true
+
+                local EXEC_ID=""
+                for i in $(seq 1 20); do
+                  EXEC_ID="$(
+                    /opt/keycloak/bin/kcadm.sh get "authentication/flows/${FLOW_ALIAS}/executions" -r "$REALM" 2>/dev/null \
+                    | json_objects_onelines \
+                    | grep -E '"providerId"[[:space:]]*:[[:space:]]*"script"' \
+                    | sed -n 's/.*"id"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' \
+                    | head -n1
+                  )" || true
+                  [ -n "${EXEC_ID:-}" ] && break
+                  sleep 1
+                done
+                [ -z "${EXEC_ID:-}" ] && { echo "FATAL: could not find script execution id"; exit 1; }
+
+                /opt/keycloak/bin/kcadm.sh update "authentication/executions/${EXEC_ID}" -r "$REALM" -s 'requirement=REQUIRED'
+
+                # Attach JS from ConfigMap (create or update)
+                local SCRIPT_ESCAPED
+                SCRIPT_ESCAPED="$(sed -e 's/\\/\\\\/g' -e 's/"/\\"/g' -e ':a;N;$!ba;s/\n/\\n/g' /opt/keycloak/scripts/github-team-admin.js)"
+                cat >/tmp/script-cfg.json <<EOF
+              { "alias": "GitHub Team Admin", "config": { "script": "${SCRIPT_ESCAPED}" } }
+              EOF
+                /opt/keycloak/bin/kcadm.sh create "authentication/executions/${EXEC_ID}/config" -r "$REALM" -f /tmp/script-cfg.json >/dev/null 2>&1 || {
+                  CFG_ID=$(/opt/keycloak/bin/kcadm.sh get "authentication/executions/${EXEC_ID}/config" -r "$REALM" \
+                              | json_objects_onelines \
+                              | sed -n 's/.*"id"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -n1)
+                  [ -n "${CFG_ID:-}" ] && /opt/keycloak/bin/kcadm.sh update "authentication/executions/${EXEC_ID}/config/${CFG_ID}" -r "$REALM" -f /tmp/script-cfg.json
+                }
+              }
+
+              wait_admin
+              set -x
+
+              # ===== RESET IDP (always) =====
+              /opt/keycloak/bin/kcadm.sh get identity-provider/instances/github -r "$REALM" >/dev/null 2>&1 && \
+                /opt/keycloak/bin/kcadm.sh delete identity-provider/instances/github -r "$REALM" || true
+
+              /opt/keycloak/bin/kcadm.sh create identity-provider/instances -r "$REALM" \
+                -s enabled=true -s storeToken=true -s alias=github -s providerId=github \
+                -s "config.clientId=$CLIENT_ID" \
+                -s "config.clientSecret=$CLIENT_SECRET" \
+                -s 'config.defaultScope=read:user user:email read:org' \
+                -s 'config.guiOrder=1' -s 'config.hideOnLoginPage=false'
+              wait_idp
+
+              # Mappers
+              cat >/tmp/mapper-email.json <<'JSON'
+              { "name":"email", "identityProviderAlias":"github",
+                "identityProviderMapper":"oidc-user-attribute-idp-mapper",
+                "config":{ "claim":"email", "user.attribute":"email", "syncMode":"INHERIT" } }
+              JSON
+              cat >/tmp/mapper-username.json <<'JSON'
+              { "name":"username", "identityProviderAlias":"github",
+                "identityProviderMapper":"oidc-user-attribute-idp-mapper",
+                "config":{ "claim":"login", "user.attribute":"username", "syncMode":"INHERIT" } }
+              JSON
+              cat >/tmp/mapper-name.json <<'JSON'
+              { "name":"name", "identityProviderAlias":"github",
+                "identityProviderMapper":"oidc-user-attribute-idp-mapper",
+                "config":{ "claim":"name", "user.attribute":"firstName", "syncMode":"INHERIT" } }
+              JSON
+              create_mapper_file /tmp/mapper-email.json
+              create_mapper_file /tmp/mapper-username.json
+              create_mapper_file /tmp/mapper-name.json
+
+              # ===== FLOW: ensure exists, then clean & rebuild =====
+              ensure_flow_exists
+              purge_flow_executions
+
+              # scripts feature must be enabled
+              wait_script_feature
+              add_script_execution
+
+              # Wire IdP to use the post-broker flow
+              /opt/keycloak/bin/kcadm.sh update identity-provider/instances/github -r "$REALM" \
+                -s "postBrokerLoginFlowAlias=${FLOW_ALIAS}"
+
+              # Realm defaults (optional)
+              /opt/keycloak/bin/kcadm.sh update "realms/${REALM}" \
+                -s sslRequired=EXTERNAL \
+                -s loginWithEmailAllowed=true \
+                -s registrationAllowed=false \
+                -s rememberMe=true \
+                -s resetPasswordAllowed=true \
+                -s bruteForceProtected=true \
+                -s permanentLockout=false
+
+              set +x
               echo "✔ Reset + reconfigure complete."
               sleep 365d
 
@@ -517,7 +703,7 @@ spec:
             # === Migration: FORCE UPDATE ===
             - name: KC_SPI_CONNECTIONS_JPA__QUARKUS__MIGRATION_STRATEGY
               value: "update"
-            # Fail fast on lock while iterating
+            # Fail fast on DB locks
             - name: KC_SPI_DBLOCK__JPA__LOCK_WAIT_TIMEOUT
               value: "60"
             # === Logging: max visibility ===
