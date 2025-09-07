@@ -344,7 +344,11 @@ spec:
         vault.hashicorp.com/agent-inject-secret-vaultadmin: "secret/data/vaultadmin"
         vault.hashicorp.com/agent-inject-template-vaultadmin: |
           {{- with secret "secret/data/vaultadmin" -}}
-          {{ .Data.data.password | default .Data.data.value }}
+          {{- if .Data.data.password -}}
+          {{ .Data.data.password }}
+          {{- else -}}
+          {{ .Data.data.value }}
+          {{- end -}}
           {{- end -}}
 
         # Linkerd: skip Vault + Postgres ports
