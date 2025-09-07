@@ -307,6 +307,7 @@ spec:
         vault.hashicorp.com/role: "keycloak"
         vault.hashicorp.com/agent-init-first: "true"
         vault.hashicorp.com/agent-pre-populate: "true"
+
         # Static creds (Vault static role)
         vault.hashicorp.com/agent-inject-secret-db-username: "yugabyte-db/static-creds/keycloak-app"
         vault.hashicorp.com/agent-inject-template-db-username: |
@@ -314,6 +315,7 @@ spec:
         vault.hashicorp.com/agent-inject-secret-db-password: "yugabyte-db/static-creds/keycloak-app"
         vault.hashicorp.com/agent-inject-template-db-password: |
           {{- with secret "yugabyte-db/static-creds/keycloak-app" -}}{{ .Data.password }}{{- end -}}
+
         # Admin creds – KV v2 explicit path
         vault.hashicorp.com/agent-inject-secret-keycloak-admin: "secret/data/keycloak/admin"
         vault.hashicorp.com/agent-inject-template-keycloak-admin: |
@@ -321,6 +323,7 @@ spec:
           export KEYCLOAK_ADMIN={{ .Data.data.username }}
           export KEYCLOAK_ADMIN_PASSWORD={{ .Data.data.password }}
           {{- end -}}
+
         # Linkerd: skip Vault + Postgres ports
         config.linkerd.io/skip-outbound-ports: "8200,5433"
     spec:
@@ -332,6 +335,8 @@ spec:
         - name: kc-scripts
           configMap:
             name: kc-script-github-admin
+
+      # --- DB preflight to "push" migrations or clean schema if needed ---
       initContainers:
         - name: wait-for-config-job
           image: alpine/k8s:1.31.4
@@ -360,6 +365,79 @@ spec:
                 echo "  └─ still waiting... succeeded=${SUCC} failed=${FAIL} active=${ACTV}"
                 sleep 5
               done
+
+        - name: kc-db-preflight
+          image: alpine:3.20
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: PGHOST
+              value: "yb-tserver-service.yugabyte.svc.cluster.local"
+            - name: PGPORT
+              value: "5433"
+            - name: PGDATABASE
+              value: "keycloak"
+            - name: PGSCHEMA
+              value: "keycloak"
+            - name: KC_FORCE_RESET_SCHEMA_ON_CONFLICT
+              value: "true"   # drop schema if legacy tables exist but no changelog
+            - name: KC_CLEAR_CHANGELOG_CHECKSUMS
+              value: "true"   # set md5sum=NULL to force recalculation
+          command: ["/bin/sh","-lc"]
+          args:
+            - |
+              set -euo pipefail
+              apk add --no-cache postgresql15-client jq
+
+              export PGUSER="$(cat /vault/secrets/db-username)"
+              export PGPASSWORD="$(cat /vault/secrets/db-password)"
+
+              echo "🔎 Preflight: connecting to ${PGHOST}:${PGPORT}/${PGDATABASE} as ${PGUSER}..."
+              until psql -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDATABASE" -tAc "select 1" >/dev/null 2>&1; do
+                echo "  ⏳ waiting for DB..."
+                sleep 2
+              done
+              echo "✅ DB reachable"
+
+              # Ensure schema exists
+              psql -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDATABASE" -v ON_ERROR_STOP=1 -c "CREATE SCHEMA IF NOT EXISTS ${PGSCHEMA};"
+
+              # Unlock Liquibase if needed
+              HAS_LOCK_TABLE="$(psql -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDATABASE" -Atc "select 1 from information_schema.tables where table_schema='${PGSCHEMA}' and table_name='databasechangeloglock'")" || true
+              if [ "${HAS_LOCK_TABLE:-}" = "1" ]; then
+                LOCKED="$(psql -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDATABASE" -Atc "select locked from ${PGSCHEMA}.databasechangeloglock where id=1" 2>/dev/null || echo "f")"
+                if [ "$LOCKED" = "t" ]; then
+                  echo "🔓 Liquibase lock detected → unlocking…"
+                  psql -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDATABASE" -v ON_ERROR_STOP=1 -c "update ${PGSCHEMA}.databasechangeloglock set locked=false, lockgranted=null, lockedby=null where id=1;"
+                fi
+              fi
+
+              # Detect legacy/conflicting tables (e.g., APPLICATION_DEFAULT_ROLES) without changelog history
+              HAS_CHANGELOG="$(psql -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDATABASE" -Atc "select 1 from information_schema.tables where table_schema='${PGSCHEMA}' and table_name='databasechangelog'")" || true
+              HAS_LEGACY_TABLE="$(psql -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDATABASE" -Atc "select 1 from information_schema.tables where table_schema='${PGSCHEMA}' and table_name ilike 'application_default_roles'")" || true
+
+              if [ "${HAS_LEGACY_TABLE:-}" = "1" ] && [ "${HAS_CHANGELOG:-}" != "1" ]; then
+                echo "⚠️  Legacy tables found (e.g., APPLICATION_DEFAULT_ROLES) but Liquibase changelog is absent."
+                if [ "${KC_FORCE_RESET_SCHEMA_ON_CONFLICT:-false}" = "true" ]; then
+                  echo "🧨 Dropping schema ${PGSCHEMA} CASCADE to allow a clean migration…"
+                  psql -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDATABASE" -v ON_ERROR_STOP=1 -c "DROP SCHEMA IF EXISTS ${PGSCHEMA} CASCADE; CREATE SCHEMA ${PGSCHEMA};"
+                else
+                  echo "❌ KC_FORCE_RESET_SCHEMA_ON_CONFLICT=false → refusing to drop schema. Migration will likely fail."
+                fi
+              fi
+
+              # Optionally clear checksums to recover from edited/renamed changesets
+              if [ "${KC_CLEAR_CHANGELOG_CHECKSUMS:-false}" = "true" ] && [ "${HAS_CHANGELOG:-}" = "1" ]; then
+                echo "🧹 Clearing Liquibase checksums (md5sum=NULL) to force recalculation…"
+                psql -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDATABASE" -v ON_ERROR_STOP=0 -c "UPDATE ${PGSCHEMA}.databasechangelog SET md5sum=NULL;"
+              fi
+
+              echo "✅ Preflight complete."
+          volumeMounts:
+            - name: kc-scripts
+              mountPath: /opt/keycloak/scripts
+              readOnly: true
+          # Vault injector will place secrets at /vault/secrets for initContainers too
+          # (no extra mounts required)
       containers:
         - name: keycloak-configurator
           image: quay.io/keycloak/keycloak:24.0.5
@@ -523,6 +601,7 @@ spec:
             - containerPort: 8080
               name: http
           env:
+            # === DB connection ===
             - name: KC_DB
               value: "postgres"
             - name: KC_DB_URL
@@ -531,6 +610,24 @@ spec:
               value: "keycloak"
             - name: KC_DB_URL_PROPERTIES
               value: "currentSchema=keycloak"
+            # === Migration: FORCE UPDATE ===
+            - name: KC_SPI_CONNECTIONS_JPA__QUARKUS__MIGRATION_STRATEGY
+              value: "update"
+            # Fail fast on lock while iterating (optional)
+            - name: KC_SPI_DBLOCK__JPA__LOCK_WAIT_TIMEOUT
+              value: "60"
+            # === Logging: max visibility ===
+            - name: KC_LOG
+              value: "console,file"
+            - name: KC_LOG_FILE
+              value: "/opt/keycloak/data/log/keycloak.log"
+            - name: KC_LOG_LEVEL
+              value: "DEBUG,liquibase:DEBUG,org.keycloak.storage.jpa:DEBUG,org.hibernate.SQL:DEBUG,org.hibernate.orm.jdbc.bind:TRACE"
+            - name: KC_DB_DEBUG_JPQL
+              value: "true"
+            - name: KC_DB_LOG_SLOW_QUERIES_THRESHOLD
+              value: "1"
+            # === Hostname & feature flags (as before) ===
             - name: KC_HOSTNAME_URL
               value: "https://keycloak.app.suncoast.systems"
             - name: KC_HOSTNAME_ADMIN_URL
@@ -557,21 +654,23 @@ spec:
           args:
             - |
               set -euo pipefail
+              mkdir -p /opt/keycloak/data/log
               source /vault/secrets/keycloak-admin
               export KC_DB_USERNAME="$(cat /vault/secrets/db-username)"
               export KC_DB_PASSWORD="$(cat /vault/secrets/db-password)"
 
-              # Run Keycloak; on failure, DO NOT EXIT (hold pod to prevent restart)
+              echo "▶️  Starting Keycloak with --verbose and forced migration (update)…"
               set +e
-              /opt/keycloak/bin/kc.sh start --features=scripts
+              /opt/keycloak/bin/kc.sh start --features=scripts --verbose
               rc="$?"
               set -e
               if [ "$rc" -ne 0 ]; then
                 echo "❌ Keycloak exited (code $rc) — holding pod to prevent Kubernetes restarts."
-                echo "   Check logs: kubectl -n keycloak logs deploy/keycloak -c keycloak --tail=-1"
+                echo "   📜 Console log above; file log at /opt/keycloak/data/log/keycloak.log"
+                echo "   🔍 Try: kubectl -n keycloak logs deploy/keycloak -c keycloak --tail=-1"
                 tail -f /dev/null
               fi
-          # Probes: keep readiness only; remove startup/liveness to avoid restart loops
+          # Readiness only; no startup/liveness → no restart loops
           readinessProbe:
             httpGet:
               path: /health/ready
