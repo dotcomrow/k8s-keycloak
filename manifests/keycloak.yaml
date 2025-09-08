@@ -72,8 +72,8 @@ spec:
               PGHOST=yb-tserver-service.yugabyte.svc.cluster.local
               PGPORT=5433
               DB=keycloak
-              ROLE_GROUP=keycloak
-              ROLE_OWNER=keycloak_app
+              ROLE_GROUP=keycloak          # NOLOGIN group
+              ROLE_OWNER=keycloak_app      # LOGIN stable owner
               VAULTADMIN_USER=vaultadmin
 
               apk add --no-cache postgresql15-client jq netcat-openbsd curl
@@ -373,7 +373,7 @@ spec:
           export KEYCLOAK_ADMIN_PASSWORD={{ .Data.data.password }}
           {{- end -}}
 
-        # vaultadmin password
+        # vaultadmin password for privileged preflight (no Sprig funcs)
         vault.hashicorp.com/agent-inject-secret-vaultadmin: "secret/data/vaultadmin"
         vault.hashicorp.com/agent-inject-template-vaultadmin: |
           {{- with secret "secret/data/vaultadmin" -}}
@@ -384,7 +384,7 @@ spec:
           {{- end -}}
           {{- end -}}
 
-        # GitHub OAuth app creds + org + admin team (no fallbacks)
+        # GitHub OAuth app creds + org + admin team (Vault only; no fallbacks)
         vault.hashicorp.com/agent-inject-secret-github-client-id: "secret/data/keycloak-oauth-client-id"
         vault.hashicorp.com/agent-inject-template-github-client-id: |
           {{- with secret "secret/data/keycloak-oauth-client-id" -}}{{ .Data.data.value }}{{- end -}}
@@ -476,8 +476,10 @@ spec:
               done
               echo "✅ DB reachable"
 
+              # Ensure schema exists (safe no-op if we later drop)
               psql -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDATABASE" -v ON_ERROR_STOP=1 -c "CREATE SCHEMA IF NOT EXISTS ${PGSCHEMA};"
 
+              # Unlock Liquibase if needed
               HAS_LOCK_TABLE="$(psql -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDATABASE" -Atc \
                 "select 1 from information_schema.tables where table_schema='${PGSCHEMA}' and table_name='databasechangeloglock'")" || true
               if [ "${HAS_LOCK_TABLE:-}" = "1" ]; then
@@ -490,6 +492,7 @@ spec:
                 fi
               fi
 
+              # Detect ANY known KC legacy/object tables -> drop schema if allowed
               HAS_CONFLICT_TABLE="$(psql -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDATABASE" -Atc "
                 select 1
                 from information_schema.tables
@@ -515,6 +518,7 @@ spec:
                 echo "ℹ️  No destructive reset (KC_FORCE_RESET_SCHEMA_ON_CONFLICT=false or no conflict tables found)."
               fi
 
+              # Clear checksums if changelog exists
               HAS_CHANGELOG="$(psql -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDATABASE" -Atc \
                 "select 1 from information_schema.tables where table_schema='${PGSCHEMA}' and table_name='databasechangelog'")" || true
               if [ "${KC_CLEAR_CHANGELOG_CHECKSUMS:-false}" = "true" ] && [ "${HAS_CHANGELOG:-}" = "1" ]; then
@@ -560,7 +564,7 @@ spec:
               }
               trap on_err ERR
 
-              # --- Admin creds & GitHub secrets (Vault files; no fallbacks) ---
+              # --- Admin creds & GitHub secrets from Vault files (no fallbacks) ---
               source /vault/secrets/keycloak-admin
               CLIENT_ID="$(cat /vault/secrets/github-client-id)"
               CLIENT_SECRET="$(cat /vault/secrets/github-client-secret)"
@@ -574,6 +578,7 @@ spec:
 
               json_objects_onelines() { tr -d '\n' | sed 's/},[[:space:]]*{/}\n{/g'; }
 
+              # --- Bounded wait for admin API; on timeout -> hold (no restart) ---
               echo "Waiting for Keycloak admin API..."
               MAX_WAIT=600
               STEP=5
@@ -583,13 +588,15 @@ spec:
                       --user "$KEYCLOAK_ADMIN" --password "$KEYCLOAK_ADMIN_PASSWORD" >/dev/null 2>&1
               do
                 if [ "$waited" -ge "$MAX_WAIT" ]; then
-                  echo "FATAL: Admin API not ready after ${MAX_WAIT}s."; hold
+                  echo "FATAL: Admin API not ready after ${MAX_WAIT}s."
+                  hold
                 fi
                 sleep "$STEP"
                 waited=$((waited+STEP))
               done
               echo "✅ Admin API ready."
 
+              # -------- helpers --------
               flow_exists() {
                 /opt/keycloak/bin/kcadm.sh get authentication/flows -r "$REALM" 2>/dev/null \
                   | json_objects_onelines \
@@ -607,11 +614,31 @@ spec:
                 done <<< "$IDS"
               }
 
+              list_provider_ids() {
+                /opt/keycloak/bin/kcadm.sh get authentication/authenticator-providers -r "$REALM" 2>/dev/null \
+                  | tr -d '\n' | sed 's/},[[:space:]]*{/}\n{/g' \
+                  | sed -n 's/.*"id"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p'
+              }
+
               add_script_execution() {
-                # On 21.1.x the 'script' authenticator is available when KC_FEATURES includes 'scripts'
-                if ! /opt/keycloak/bin/kcadm.sh create "authentication/flows/${FLOW_ALIAS}/executions/execution" -r "$REALM" -s provider=script >/dev/null 2>&1; then
-                  echo "FATAL: 'script' authenticator not available (unexpected on 21.1.x with KC_FEATURES=scripts)."
-                  hold
+                # First try provider=script; if Keycloak returns error, list providers and bail if none contain 'script'
+                if /opt/keycloak/bin/kcadm.sh create "authentication/flows/${FLOW_ALIAS}/executions/execution" -r "$REALM" -s provider=script >/dev/null 2>&1; then
+                  :
+                else
+                  # Check whether any script-like provider ids exist at all
+                  PIDS="$(list_provider_ids | grep -i script || true)"
+                  if [ -z "$PIDS" ]; then
+                    echo "FATAL: No usable 'script' authenticator provider was found."
+                    echo "       Providers present:"
+                    list_provider_ids
+                    echo "       Ensure Keycloak is built & started with 'scripts' and KC_PROFILE=preview."
+                    hold
+                  else
+                    # If a script-like provider exists under a different id, try the first one
+                    CHOSEN="$(printf '%s\n' "$PIDS" | head -n1)"
+                    echo "ℹ️  Using provider id '${CHOSEN}'"
+                    /opt/keycloak/bin/kcadm.sh create "authentication/flows/${FLOW_ALIAS}/executions/execution" -r "$REALM" -s provider="${CHOSEN}"
+                  fi
                 fi
 
                 # Find the new execution id
@@ -620,7 +647,7 @@ spec:
                   EXEC_ID="$(
                     /opt/keycloak/bin/kcadm.sh get "authentication/flows/${FLOW_ALIAS}/executions" -r "$REALM" 2>/dev/null \
                     | json_objects_onelines \
-                    | grep -E '"providerId"[[:space:]]*:[[:space:]]*"script"' \
+                    | grep -E '"providerId"[[:space:]]*:[[:space:]]*"(script|.*script.*)"' \
                     | sed -n 's/.*"id"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' \
                     | head -n1
                   )" || true
@@ -649,9 +676,8 @@ spec:
                 }
               }
 
+              # ===== Configure IdP + flow =====
               set -x
-
-              # ===== RESET IDP (always) =====
               /opt/keycloak/bin/kcadm.sh get identity-provider/instances/github -r "$REALM" >/dev/null 2>&1 && \
                 /opt/keycloak/bin/kcadm.sh delete identity-provider/instances/github -r "$REALM" || true
 
@@ -682,7 +708,6 @@ spec:
               /opt/keycloak/bin/kcadm.sh create identity-provider/instances/github/mappers -r "$REALM" -f /tmp/mapper-username.json || true
               /opt/keycloak/bin/kcadm.sh create identity-provider/instances/github/mappers -r "$REALM" -f /tmp/mapper-name.json || true
 
-              # ===== FLOW: ensure exists, then clean & rebuild =====
               if flow_exists; then
                 echo "Flow '${FLOW_ALIAS}' exists; will reset it."
               else
@@ -696,11 +721,10 @@ spec:
               purge_flow_executions
               add_script_execution
 
-              # Wire IdP to use the post-broker flow
               /opt/keycloak/bin/kcadm.sh update identity-provider/instances/github -r "$REALM" \
                 -s "postBrokerLoginFlowAlias=${FLOW_ALIAS}" || true
 
-              # Realm defaults (optional)
+              # Realm defaults
               /opt/keycloak/bin/kcadm.sh update "realms/${REALM}" \
                 -s sslRequired=EXTERNAL \
                 -s loginWithEmailAllowed=true \
@@ -721,6 +745,7 @@ spec:
             - containerPort: 8080
               name: http
           env:
+            # === DB connection ===
             - name: KC_DB
               value: "postgres"
             - name: KC_DB_URL
@@ -729,10 +754,12 @@ spec:
               value: "keycloak"
             - name: KC_DB_URL_PROPERTIES
               value: "currentSchema=keycloak"
-            - name: KC_SPI_CONNECTIONS_JPA__QUARKUS__MIGRATION_STRATEGY
-              value: "update"
-            - name: KC_SPI_DBLOCK__JPA__LOCK_WAIT_TIMEOUT
-              value: "60"
+            # === Enable scripts feature & preview profile ===
+            - name: KC_FEATURES
+              value: "scripts"
+            - name: KC_PROFILE
+              value: "preview"
+            # === Logging ===
             - name: KC_LOG
               value: "console,file"
             - name: KC_LOG_FILE
@@ -743,6 +770,7 @@ spec:
               value: "true"
             - name: KC_DB_LOG_SLOW_QUERIES_THRESHOLD
               value: "1"
+            # === Hostname & features ===
             - name: KC_HOSTNAME_URL
               value: "https://keycloak.app.suncoast.systems"
             - name: KC_HOSTNAME_ADMIN_URL
@@ -761,11 +789,6 @@ spec:
               value: "/"
             - name: KC_HTTP_COOKIE_SAME_SITE
               value: "LAX"
-            # IMPORTANT: scripts provider lives behind preview in 21.1.x
-            - name: KC_FEATURES
-              value: "scripts"
-            - name: KC_PROFILE
-              value: "preview"
           command: ["/bin/bash","-lc"]
           args:
             - |
@@ -775,13 +798,17 @@ spec:
               export KC_DB_USERNAME="$(cat /vault/secrets/db-username)"
               export KC_DB_PASSWORD="$(cat /vault/secrets/db-password)"
 
-              echo "▶️  Starting Keycloak (21.1.x with 'scripts')…"
+              echo "🔧 Building Keycloak with 'scripts' feature (21.1.2)…"
+              /opt/keycloak/bin/kc.sh build --features=scripts
+
+              echo "▶️  Starting Keycloak…"
               set +e
-              /opt/keycloak/bin/kc.sh start --features=scripts
+              /opt/keycloak/bin/kc.sh start
               rc="$?"
               set -e
               if [ "$rc" -ne 0 ]; then
                 echo "❌ Keycloak exited (code $rc) — holding pod to prevent Kubernetes restarts."
+                echo "   🔍 Logs: kubectl -n keycloak logs deploy/keycloak -c keycloak --tail=-1"
                 tail -f /dev/null
               fi
           readinessProbe:
@@ -792,8 +819,12 @@ spec:
             failureThreshold: 6
             timeoutSeconds: 5
           resources:
-            requests: { cpu: "500m", memory: "1Gi" }
-            limits:   { cpu: "2",    memory: "3Gi" }
+            requests:
+              cpu: "500m"
+              memory: "1Gi"
+            limits:
+              cpu: "2"
+              memory: "3Gi"
           volumeMounts:
             - name: kc-scripts
               mountPath: /opt/keycloak/scripts
