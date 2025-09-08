@@ -534,13 +534,23 @@ spec:
           args:
             - |
               set -euo pipefail
-              echo "🔧 Copying Keycloak dist to writable volume and building with 'scripts' feature..."
-              cp -a /opt/keycloak/. /work/
+              echo "🔧 Copying Keycloak dist to writable volume (no metadata preservation)…"
+              mkdir -p /work
+              # include dotfiles, avoid preserving times/owners
+              shopt -s dotglob
+              rm -rf /work/*
+              if ! cp -R /opt/keycloak/* /work/; then
+                echo "cp failed; retrying via tar stream…"
+                (cd /opt/keycloak && tar -cf - .) | (cd /work && tar -xf -)
+              fi
+              chmod -R u+rwX /work
+              echo "🔧 Building Keycloak with 'scripts' feature…"
               /work/bin/kc.sh build --features=scripts
               echo "✅ Build complete."
           volumeMounts:
             - name: kc-home
               mountPath: /work
+
       containers:
         - name: keycloak-configurator
           image: quay.io/keycloak/keycloak:24.0.5
