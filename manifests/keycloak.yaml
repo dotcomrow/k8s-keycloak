@@ -464,67 +464,66 @@ spec:
               value: "vaultadmin"
           command: ["/bin/sh","-lc"]
           args:
-            - |
-              set -euo pipefail
-              apk add --no-cache postgresql15-client jq
+              - |
+                set -euo pipefail
+                apk add --no-cache postgresql15-client jq bind-tools busybox-extras
 
-              export PGUSER="${PGADMIN_USER}"
-              PASS_FILE="/vault/secrets/vaultadmin"
-              if [ ! -s "$PASS_FILE" ]; then
-                echo "❌ Vault password file missing or empty: $PASS_FILE"
-                ls -l /vault/secrets || true
-                exit 1
-              fi
+                export PGUSER="${PGADMIN_USER}"
+                export PGPASSWORD="$(tr -d '\r\n' < /vault/secrets/vaultadmin)"
 
-              # Show if the password likely has a trailing newline
-              BYTES="$(wc -c < "$PASS_FILE" | tr -d ' ')"
-              export PGPASSWORD="$(tr -d '\r' < "$PASS_FILE")"   # strip CR; keep LF for the test below
-              echo "🔐 vaultadmin password bytes (raw file): $BYTES"
+                echo "🔎 DNS for ${PGHOST}"; getent hosts "${PGHOST}" || true
+                echo "🔎 TCP ${PGHOST}:${PGPORT}"; nc -vz -w 3 "${PGHOST}" "${PGPORT}" || true
 
-              echo "🔎 DNS: $(getent hosts "${PGHOST}" || echo 'failed')"
-              echo "🔎 TCP:"
-              nc -vz -w 3 "${PGHOST}" "${PGPORT}" || true
+                echo "🔎 Preflight (admin): connecting to ${PGHOST}:${PGPORT}/${PGDATABASE} as ${PGUSER}…"
+                until psql -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDATABASE" -tAc "select 1" >/dev/null 2>&1; do
+                  echo "  ⏳ waiting for DB…"
+                  sleep 2
+                done
+                echo "✅ DB reachable"
 
-              export PGCONNECT_TIMEOUT=3
-              echo "🔎 Trying psql (sslmode=prefer) to ${PGHOST}:${PGPORT}/${PGDATABASE}…"
-              if ! psql -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDATABASE" -v ON_ERROR_STOP=1 -c "select 1;"; then
-                echo "⚠️  prefer failed; showing a verbose attempt:"
-                psql -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDATABASE" --echo-all -v client_min_messages=DEBUG1 -c "select 1;" || true
+                # Ensure schema exists (safe if we later drop)
+                psql -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDATABASE" -v ON_ERROR_STOP=1 \
+                  -c "CREATE SCHEMA IF NOT EXISTS ${PGSCHEMA};"
 
-                echo "🔎 Retrying with sslmode=disable…"
-                if ! psql "host=$PGHOST port=$PGPORT dbname=$PGDATABASE user=$PGUSER password=$PGPASSWORD sslmode=disable" -v ON_ERROR_STOP=1 -c "select 1;"; then
-                  echo "❌ Still cannot connect. Dumping \conninfo with both modes:"
-                  psql -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDATABASE" -c '\conninfo' || true
-                  psql "host=$PGHOST port=$PGPORT dbname=$PGDATABASE user=$PGUSER password=$PGPASSWORD sslmode=disable" -c '\conninfo' || true
-                  exit 1
+                # ---- Robust conflict detection ----
+                HAS_ANY_TABLE="$(psql -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDATABASE" -Atc \
+                  "select count(*) from information_schema.tables where table_schema='${PGSCHEMA}'" || echo 0)"
+
+                if [ "${KC_FORCE_RESET_SCHEMA_ON_CONFLICT:-false}" = "true" ] && [ "${HAS_ANY_TABLE:-0}" -gt 0 ]; then
+                  echo "🧨 ${PGSCHEMA} contains ${HAS_ANY_TABLE} table(s) → dropping schema CASCADE for a clean migration…"
+                  psql -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDATABASE" -v ON_ERROR_STOP=1 <<EOSQL
+                DROP SCHEMA IF EXISTS ${PGSCHEMA} CASCADE;
+                CREATE SCHEMA ${PGSCHEMA} AUTHORIZATION ${PGSCHEMA_OWNER};
+                ALTER ROLE ${PGSCHEMA_OWNER} SET search_path = ${PGSCHEMA};
+                GRANT USAGE, CREATE ON SCHEMA ${PGSCHEMA} TO ${PGSCHEMA_OWNER};
+            EOSQL
+                else
+                  echo "ℹ️  No destructive reset (KC_FORCE_RESET_SCHEMA_ON_CONFLICT=false or schema empty)."
                 fi
-              fi
-              echo "✅ DB reachable"
 
-              # --- keep your existing schema/lock/checksum logic below ---
-              psql -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDATABASE" -v ON_ERROR_STOP=1 -c "CREATE SCHEMA IF NOT EXISTS ${PGSCHEMA};"
-
-              HAS_LOCK_TABLE="$(psql -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDATABASE" -Atc \
-                "select 1 from information_schema.tables where table_schema='${PGSCHEMA}' and table_name='databasechangeloglock'")" || true
-              if [ "${HAS_LOCK_TABLE:-}" = "1" ]; then
-                LOCKED="$(psql -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDATABASE" -Atc \
-                  "select locked from ${PGSCHEMA}.databasechangeloglock where id=1" 2>/dev/null || echo "f")"
-                if [ "$LOCKED" = "t" ]; then
-                  echo "🔓 Liquibase lock detected → unlocking…"
-                  psql -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDATABASE" -v ON_ERROR_STOP=1 \
-                    -c "update ${PGSCHEMA}.databasechangeloglock set locked=false, lockgranted=null, lockedby=null where id=1;"
+                # Liquibase lock clean-up (safe no-op if not present)
+                HAS_LOCK_TABLE="$(psql -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDATABASE" -Atc \
+                  "select 1 from information_schema.tables where table_schema='${PGSCHEMA}' and table_name='databasechangeloglock'" || true)"
+                if [ "${HAS_LOCK_TABLE:-}" = "1" ]; then
+                  LOCKED="$(psql -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDATABASE" -Atc \
+                    "select locked from ${PGSCHEMA}.databasechangeloglock where id=1" 2>/dev/null || echo "f")"
+                  if [ "$LOCKED" = "t" ]; then
+                    echo "🔓 Liquibase lock detected → unlocking…"
+                    psql -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDATABASE" -v ON_ERROR_STOP=1 \
+                      -c "update ${PGSCHEMA}.databasechangeloglock set locked=false, lockgranted=null, lockedby=null where id=1;"
+                  fi
                 fi
-              fi
 
-              HAS_CHANGELOG="$(psql -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDATABASE" -Atc \
-                "select 1 from information_schema.tables where table_schema='${PGSCHEMA}' and table_name='databasechangelog'")" || true
-              if [ "${KC_CLEAR_CHANGELOG_CHECKSUMS:-false}" = "true" ] && [ "${HAS_CHANGELOG:-}" = "1" ]; then
-                echo "🧹 Clearing Liquibase checksums…"
-                psql -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDATABASE" -v ON_ERROR_STOP=0 \
-                  -c "UPDATE ${PGSCHEMA}.databasechangelog SET md5sum=NULL;"
-              fi
+                # Optional: clear checksums if the changelog exists and you requested it
+                HAS_CHANGELOG="$(psql -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDATABASE" -Atc \
+                  "select 1 from information_schema.tables where table_schema='${PGSCHEMA}' and table_name='databasechangelog'" || true)"
+                if [ "${KC_CLEAR_CHANGELOG_CHECKSUMS:-false}" = "true" ] && [ "${HAS_CHANGELOG:-}" = "1" ]; then
+                  echo "🧹 Clearing Liquibase checksums…"
+                  psql -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDATABASE" -v ON_ERROR_STOP=0 \
+                    -c "UPDATE ${PGSCHEMA}.databasechangelog SET md5sum=NULL;"
+                fi
 
-              echo "✅ Preflight complete."
+                echo "✅ Preflight complete."
 
       containers:
         - name: keycloak-configurator
