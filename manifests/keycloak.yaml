@@ -548,6 +548,22 @@ spec:
               SERVER="http://127.0.0.1:8080"
               FLOW_ALIAS="GitHub-PostLogin"
 
+              hold() {
+                echo ""
+                echo "────────────────────────────────────────────────────────"
+                echo "Configurator has stopped (not retrying). Pod will stay up."
+                echo "Fix the issue, then 'kubectl exec' to rerun steps manually if needed."
+                echo "────────────────────────────────────────────────────────"
+                tail -f /dev/null
+              }
+
+              on_err() {
+                code=$?
+                echo "FATAL: configurator encountered an error (exit $code)."
+                hold
+              }
+              trap on_err ERR
+
               # --- Admin creds & GitHub secrets from Vault files (no fallbacks) ---
               source /vault/secrets/keycloak-admin
               CLIENT_ID="$(cat /vault/secrets/github-client-id)"
@@ -555,24 +571,37 @@ spec:
               GITHUB_ORG="$(cat /vault/secrets/github-org)"
               GITHUB_TEAM="$(cat /vault/secrets/github-admin-team)"
 
-              if [ -z "$GITHUB_ORG" ] || [ -z "$GITHUB_TEAM" ]; then
-                echo "FATAL: missing GitHub org/team from Vault (github-org, github-admin-team)."; exit 1
+              if [ -z "${GITHUB_ORG:-}" ] || [ -z "${GITHUB_TEAM:-}" ]; then
+                echo "FATAL: missing GitHub org/team from Vault (github-org, github-admin-team)."
+                hold
               fi
 
               json_objects_onelines() { tr -d '\n' | sed 's/},[[:space:]]*{/}\n{/g'; }
 
-              wait_admin() {
-                echo "Waiting for Keycloak admin API..."
-                until /opt/keycloak/bin/kcadm.sh config credentials \
-                        --server "$SERVER" --realm "$REALM" \
-                        --user "$KEYCLOAK_ADMIN" --password "$KEYCLOAK_ADMIN_PASSWORD" >/dev/null 2>&1; do
-                  sleep 3
-                done
-              }
+              # --- Bounded wait for admin API; on timeout -> hold (no restart) ---
+              echo "Waiting for Keycloak admin API..."
+              MAX_WAIT=600   # seconds
+              STEP=5
+              waited=0
+              until /opt/keycloak/bin/kcadm.sh config credentials \
+                      --server "$SERVER" --realm "$REALM" \
+                      --user "$KEYCLOAK_ADMIN" --password "$KEYCLOAK_ADMIN_PASSWORD" >/dev/null 2>&1
+              do
+                if [ "$waited" -ge "$MAX_WAIT" ]; then
+                  echo "FATAL: Admin API not ready after ${MAX_WAIT}s."
+                  hold
+                fi
+                sleep "$STEP"
+                waited=$((waited+STEP))
+              done
+              echo "✅ Admin API ready."
 
               # -------- helpers --------
               flow_exists() {
-                /opt/keycloak/bin/kcadm.sh get "authentication/flows/${FLOW_ALIAS}" -r "$REALM" >/dev/null 2>&1
+                # Return 0 if a flow with alias == $FLOW_ALIAS exists
+                /opt/keycloak/bin/kcadm.sh get authentication/flows -r "$REALM" 2>/dev/null \
+                  | json_objects_onelines \
+                  | grep -q "\"alias\"[[:space:]]*:[[:space:]]*\"${FLOW_ALIAS}\""
               }
 
               purge_flow_executions() {
@@ -585,19 +614,17 @@ spec:
                   IDS="$(printf '%s' "$EXECS" | json_objects_onelines | sed -n 's/.*"id"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')"
                   [ -z "${IDS:-}" ] && { echo "Flow '${FLOW_ALIAS}' now has no executions."; return 0; }
                   while read -r EID; do
-                    [ -z "${EID:-}" ] && continue
-                    /opt/keycloak/bin/kcadm.sh delete "authentication/executions/${EID}" -r "$REALM" >/dev/null 2>&1 || true
+                    [ -n "${EID:-}" ] && /opt/keycloak/bin/kcadm.sh delete "authentication/executions/${EID}" -r "$REALM" >/dev/null 2>&1 || true
                   done <<< "$IDS"
                   sleep 1
                 done
-                echo "WARN: executions may still remain (loop guard tripped); continuing."
               }
 
               add_script_execution() {
-                # Attempt to create a script execution — if feature isn't enabled, this call fails → hard error.
+                # Create a script execution; if 'script' provider is unavailable, hold (don’t exit).
                 if ! /opt/keycloak/bin/kcadm.sh create "authentication/flows/${FLOW_ALIAS}/executions/execution" -r "$REALM" -s provider=script >/dev/null 2>&1; then
-                  echo "FATAL: 'script' authenticator not available. Ensure Keycloak starts with KC_PROFILE=preview and --features=scripts (KC_FEATURES=scripts)."
-                  exit 1
+                  echo "FATAL: 'script' authenticator not available. Start Keycloak with KC_PROFILE=preview and --features=scripts."
+                  hold
                 fi
 
                 # Find the new execution id
@@ -613,7 +640,7 @@ spec:
                   [ -n "${EXEC_ID:-}" ] && break
                   sleep 1
                 done
-                [ -z "${EXEC_ID:-}" ] && { echo "FATAL: could not find script execution id"; exit 1; }
+                [ -z "${EXEC_ID:-}" ] && { echo "FATAL: could not find script execution id"; hold; }
 
                 /opt/keycloak/bin/kcadm.sh update "authentication/executions/${EXEC_ID}" -r "$REALM" -s 'requirement=REQUIRED'
 
@@ -631,11 +658,10 @@ spec:
                   CFG_ID=$(/opt/keycloak/bin/kcadm.sh get "authentication/executions/${EXEC_ID}/config" -r "$REALM" \
                               | json_objects_onelines \
                               | sed -n 's/.*"id"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -n1)
-                  [ -n "${CFG_ID:-}" ] && /opt/keycloak/bin/kcadm.sh update "authentication/executions/${EXEC_ID}/config/${CFG_ID}" -r "$REALM" -f /tmp/script-cfg.json
+                  [ -n "${CFG_ID:-}" ] && /opt/keycloak/bin/kcadm.sh update "authentication/executions/${EXEC_ID}/config/${CFG_ID}" -r "$REALM" -f /tmp/script-cfg.json || true
                 }
               }
 
-              wait_admin
               set -x
 
               # ===== RESET IDP (always) =====
@@ -647,9 +673,9 @@ spec:
                 -s "config.clientId=$CLIENT_ID" \
                 -s "config.clientSecret=$CLIENT_SECRET" \
                 -s 'config.defaultScope=read:user user:email read:org' \
-                -s 'config.guiOrder=1' -s 'config.hideOnLoginPage=false'
+                -s 'config.guiOrder=1' -s 'config.hideOnLoginPage=false' || true
 
-              # Mappers
+              # Mappers (create won’t fail the script if they already exist)
               cat >/tmp/mapper-email.json <<'JSON'
               { "name":"email", "identityProviderAlias":"github",
                 "identityProviderMapper":"oidc-user-attribute-idp-mapper",
@@ -665,9 +691,9 @@ spec:
                 "identityProviderMapper":"oidc-user-attribute-idp-mapper",
                 "config":{ "claim":"name", "user.attribute":"firstName", "syncMode":"INHERIT" } }
               JSON
-              /opt/keycloak/bin/kcadm.sh create identity-provider/instances/github/mappers -r "$REALM" -f /tmp/mapper-email.json
-              /opt/keycloak/bin/kcadm.sh create identity-provider/instances/github/mappers -r "$REALM" -f /tmp/mapper-username.json
-              /opt/keycloak/bin/kcadm.sh create identity-provider/instances/github/mappers -r "$REALM" -f /tmp/mapper-name.json
+              /opt/keycloak/bin/kcadm.sh create identity-provider/instances/github/mappers -r "$REALM" -f /tmp/mapper-email.json || true
+              /opt/keycloak/bin/kcadm.sh create identity-provider/instances/github/mappers -r "$REALM" -f /tmp/mapper-username.json || true
+              /opt/keycloak/bin/kcadm.sh create identity-provider/instances/github/mappers -r "$REALM" -f /tmp/mapper-name.json || true
 
               # ===== FLOW: ensure exists, then clean & rebuild =====
               if flow_exists; then
@@ -677,7 +703,7 @@ spec:
                 /opt/keycloak/bin/kcadm.sh create authentication/flows -r "$REALM" \
                   -s "alias=${FLOW_ALIAS}" \
                   -s 'description=Grant realm-admin to members of a GitHub team' \
-                  -s providerId=basic-flow -s topLevel=true -s builtIn=false
+                  -s providerId=basic-flow -s topLevel=true -s builtIn=false || true
               fi
 
               purge_flow_executions
@@ -685,7 +711,7 @@ spec:
 
               # Wire IdP to use the post-broker flow
               /opt/keycloak/bin/kcadm.sh update identity-provider/instances/github -r "$REALM" \
-                -s "postBrokerLoginFlowAlias=${FLOW_ALIAS}"
+                -s "postBrokerLoginFlowAlias=${FLOW_ALIAS}" || true
 
               # Realm defaults (optional)
               /opt/keycloak/bin/kcadm.sh update "realms/${REALM}" \
@@ -695,11 +721,12 @@ spec:
                 -s rememberMe=true \
                 -s resetPasswordAllowed=true \
                 -s bruteForceProtected=true \
-                -s permanentLockout=false
+                -s permanentLockout=false || true
 
               set +x
               echo "✔ Reset + reconfigure complete."
-              sleep 365d
+              # Keep the container up, but do not retry.
+              tail -f /dev/null
 
         - name: keycloak
           image: quay.io/keycloak/keycloak:24.0.5
