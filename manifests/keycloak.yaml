@@ -113,15 +113,21 @@ spec:
               until nc -z -w1 "$PGHOST" "$PGPORT"; do echo "⏳ Waiting for DB $PGHOST:$PGPORT..."; sleep 3; done
               echo "✅ Yugabyte reachable"
 
-              # --- Fetch vaultadmin password from Vault ---
-              echo "🔐 Fetching $VAULTADMIN_USER password from Vault..."
+              # --- Fetch vaultadmin password from Vault (loop forever until present) ---
+              echo "🔐 Waiting for secret/${VAULTADMIN_USER} to exist in Vault..."
               VAULTADMIN_PASS=""
-              if OUT="$(vault kv get -format=json "secret/$VAULTADMIN_USER" 2>/dev/null)"; then
-                VAULTADMIN_PASS="$(printf '%s' "$OUT" | jq -r '.data.data.value // .data.data.password // empty')"
-              fi
-              [ -z "$VAULTADMIN_PASS" ] && VAULTADMIN_PASS="$(vault kv get -field=value "secret/$VAULTADMIN_USER" 2>/dev/null || true)"
-              [ -z "$VAULTADMIN_PASS" ] && VAULTADMIN_PASS="$(vault kv get -field=password "secret/$VAULTADMIN_USER" 2>/dev/null || true)"
-              [ -z "$VAULTADMIN_PASS" ] && { echo "❌ missing secret/$VAULTADMIN_USER"; exit 1; }
+              while :; do
+                OUT="$(vault kv get -format=json "secret/${VAULTADMIN_USER}" 2>/dev/null || true)"
+                if [ -n "${OUT}" ]; then
+                  VAULTADMIN_PASS="$(printf '%s' "$OUT" | jq -r '.data.data.password // .data.data.value // empty')"
+                  if [ -n "${VAULTADMIN_PASS}" ] && [ "${VAULTADMIN_PASS}" != "null" ]; then
+                    echo "✅ Found secret/${VAULTADMIN_USER}"
+                    break
+                  fi
+                fi
+                echo "⏳ secret/${VAULTADMIN_USER} not ready yet; retrying in 5s..."
+                sleep 5
+              done
               export PGPASSWORD="$VAULTADMIN_PASS"
 
               # --- Ensure database exists ---
