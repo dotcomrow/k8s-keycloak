@@ -433,6 +433,13 @@ spec:
 
         - name: kc-db-preflight
           image: alpine:3.20
+          securityContext:
+            runAsUser: 0
+            runAsGroup: 0
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: false
+            capabilities:
+              drop: ["ALL"]
           env:
             - name: PGHOST
               value: "yb-tserver-service.yugabyte.svc.cluster.local"
@@ -567,7 +574,6 @@ spec:
               done
               echo "✅ Admin API ready."
 
-              # Sanity: print profile/features the server sees
               echo "🔍 Server features snapshot:"
               /opt/keycloak/bin/kcadm.sh get serverinfo -r "$REALM" | grep -E '"profile"|"features"' -A2 || true
 
@@ -709,7 +715,6 @@ spec:
             - containerPort: 8080
               name: http
           env:
-            # DB
             - name: KC_DB
               value: "postgres"
             - name: KC_DB_URL
@@ -719,7 +724,6 @@ spec:
             - name: KC_DB_URL_PROPERTIES
               value: "currentSchema=keycloak"
 
-            # Preview + scripts (env + JVM)
             - name: KC_PROFILE
               value: "preview"
             - name: KC_FEATURES
@@ -727,7 +731,6 @@ spec:
             - name: JAVA_OPTS_APPEND
               value: "-Dkeycloak.profile=preview -Dkeycloak.profile.feature.scripts=enabled"
 
-            # Logging
             - name: KC_LOG
               value: "console,file"
             - name: KC_LOG_FILE
@@ -739,7 +742,6 @@ spec:
             - name: KC_DB_LOG_SLOW_QUERIES_THRESHOLD
               value: "1"
 
-            # Hostname & HTTP
             - name: KC_HOSTNAME_URL
               value: "https://keycloak.app.suncoast.systems"
             - name: KC_HOSTNAME_ADMIN_URL
