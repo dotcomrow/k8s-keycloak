@@ -40,9 +40,9 @@ spec:
           args:
             - |
               echo "🔁 Copying 'vault-root-token' from vault → keycloak..."
-              kubectl get secret vault-root-token -n vault -o yaml | \
-                sed 's/namespace: vault/namespace: keycloak/' | \
-                kubectl apply -f -
+              kubectl get secret vault-root-token -n vault -o yaml \
+                | sed 's/namespace: vault/namespace: keycloak/' \
+                | kubectl apply -f -
               echo "✅ Secret copied successfully."
 ---
 apiVersion: batch/v1
@@ -96,7 +96,8 @@ spec:
               echo "🧩 Ensuring KV v2 at 'secret/'..."
               if ! vault secrets list -format=json | jq -e '."secret/".type=="kv" and ."secret/".options.version=="2"' >/dev/null 2>&1; then
                 if vault secrets list -format=json | jq -e 'has("secret/")' >/dev/null 2>&1; then
-                  echo "❌ 'secret/' exists but is not KVv2; please migrate manually."; exit 1
+                  echo "❌ 'secret/' exists but is not KVv2; please migrate manually."
+                  exit 1
                 else
                   vault secrets enable -path=secret -version=2 kv
                 fi
@@ -111,8 +112,14 @@ spec:
                 echo "✅ Admin secret already present"
               fi
 
-              until getent hosts "$PGHOST" >/dev/null 2>&1; do echo "🔄 Waiting for DNS for $PGHOST..."; sleep 3; done
-              until nc -z -w1 "$PGHOST" "$PGPORT"; do echo "⏳ Waiting for DB $PGHOST:$PGPORT..."; sleep 3; done
+              until getent hosts "$PGHOST" >/dev/null 2>&1; do
+                echo "🔄 Waiting for DNS for $PGHOST..."
+                sleep 3
+              done
+              until nc -z -w1 "$PGHOST" "$PGPORT"; do
+                echo "⏳ Waiting for DB $PGHOST:$PGPORT..."
+                sleep 3
+              done
               echo "✅ Yugabyte reachable"
 
               echo "🔐 Waiting for secret/${VAULTADMIN_USER} to exist in Vault..."
@@ -132,11 +139,12 @@ spec:
               export PGPASSWORD="$VAULTADMIN_PASS"
 
               while :; do
-                DB_EXISTS="$(psql -h "$PGHOST" -p "$PGPORT" -U "$VAULTADMIN_USER" -d yugabyte -tAc "SELECT 1 FROM pg_database WHERE datname='$DB'" 2>/dev/null || true)"
-                [ "$DB_EXISTS" = "1" ] && { echo "✅ DB '$DB' exists"; break; }
-                echo "📦 Creating DB '$DB' owned by $VAULTADMIN_USER..."
+                DB_EXISTS="$(psql -h "$PGHOST" -p "$PGPORT" -U "$VAULTADMIN_USER" -d yugabyte -tAc "SELECT 1 FROM pg_database WHERE datname='${DB}'" 2>/dev/null || true)"
+                [ "$DB_EXISTS" = "1" ] && { echo "✅ DB '${DB}' exists"; break; }
+                echo "📦 Creating DB '${DB}' owned by ${VAULTADMIN_USER}..."
                 createdb -h "$PGHOST" -p "$PGPORT" -U "$VAULTADMIN_USER" -O "$VAULTADMIN_USER" "$DB" 2>/dev/null && { echo "✅ DB created"; break; }
-                echo "🔁 Retry create DB in 3s..."; sleep 3
+                echo "🔁 Retry create DB in 3s..."
+                sleep 3
               done
 
               psql -h "$PGHOST" -p "$PGPORT" -U "$VAULTADMIN_USER" -d yugabyte <<EOSQL
@@ -387,8 +395,8 @@ spec:
         vault.hashicorp.com/agent-inject-template-github-admin-team: |
           {{- with secret "secret/data/k8s-teleport-teleport-github-admin-team" -}}{{ .Data.data.value }}{{- end -}}
 
-        # Linkerd: skip Vault + Postgres
-        config.linkerd.io/skip-outbound-ports: "53,8200,5433,443"
+        # Linkerd: skip DNS, Vault, Postgres
+        config.linkerd.io/skip-outbound-ports: "53,8200,5433"
     spec:
       serviceAccountName: keycloak
 
@@ -464,67 +472,62 @@ spec:
               value: "vaultadmin"
           command: ["/bin/sh","-lc"]
           args:
-              - |
-                set -euo pipefail
-                apk add --no-cache postgresql15-client jq bind-tools busybox-extras
+            - |
+              set -euo pipefail
+              apk add --no-cache postgresql15-client jq bind-tools busybox-extras
 
-                export PGUSER="${PGADMIN_USER}"
-                export PGPASSWORD="$(tr -d '\r\n' < /vault/secrets/vaultadmin)"
+              export PGUSER="${PGADMIN_USER}"
+              export PGPASSWORD="$(tr -d '\r\n' < /vault/secrets/vaultadmin)"
 
-                echo "🔎 DNS for ${PGHOST}"; getent hosts "${PGHOST}" || true
-                echo "🔎 TCP ${PGHOST}:${PGPORT}"; nc -vz -w 3 "${PGHOST}" "${PGPORT}" || true
+              echo "🔎 DNS for ${PGHOST}"; getent hosts "${PGHOST}" || true
+              echo "🔎 TCP ${PGHOST}:${PGPORT}"; nc -vz -w 3 "${PGHOST}" "${PGPORT}" || true
 
-                echo "🔎 Preflight (admin): connecting to ${PGHOST}:${PGPORT}/${PGDATABASE} as ${PGUSER}…"
-                until psql -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDATABASE" -tAc "select 1" >/dev/null 2>&1; do
-                  echo "  ⏳ waiting for DB…"
-                  sleep 2
-                done
-                echo "✅ DB reachable"
+              echo "🔎 Preflight (admin): connecting to ${PGHOST}:${PGPORT}/${PGDATABASE} as ${PGUSER}…"
+              until psql -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDATABASE" -tAc "select 1" >/dev/null 2>&1; do
+                echo "  ⏳ waiting for DB…"
+                sleep 2
+              done
+              echo "✅ DB reachable"
 
-                # Ensure schema exists (safe if we later drop)
-                psql -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDATABASE" -v ON_ERROR_STOP=1 \
-                  -c "CREATE SCHEMA IF NOT EXISTS ${PGSCHEMA};"
+              psql -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDATABASE" -v ON_ERROR_STOP=1 \
+                -c "CREATE SCHEMA IF NOT EXISTS ${PGSCHEMA};"
 
-                # ---- Robust conflict detection ----
-                HAS_ANY_TABLE="$(psql -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDATABASE" -Atc \
-                  "select count(*) from information_schema.tables where table_schema='${PGSCHEMA}'" || echo 0)"
+              HAS_ANY_TABLE="$(psql -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDATABASE" -Atc \
+                "select count(*) from information_schema.tables where table_schema='${PGSCHEMA}'" || echo 0)"
 
-                if [ "${KC_FORCE_RESET_SCHEMA_ON_CONFLICT:-false}" = "true" ] && [ "${HAS_ANY_TABLE:-0}" -gt 0 ]; then
-                  echo "🧨 ${PGSCHEMA} contains ${HAS_ANY_TABLE} table(s) → dropping schema CASCADE for a clean migration…"
-                  psql -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDATABASE" -v ON_ERROR_STOP=1 <<EOSQL
+              if [ "${KC_FORCE_RESET_SCHEMA_ON_CONFLICT:-false}" = "true" ] && [ "${HAS_ANY_TABLE:-0}" -gt 0 ]; then
+                echo "🧨 ${PGSCHEMA} contains ${HAS_ANY_TABLE} table(s) → dropping schema CASCADE for a clean migration…"
+                psql -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDATABASE" -v ON_ERROR_STOP=1 <<EOSQL
                 DROP SCHEMA IF EXISTS ${PGSCHEMA} CASCADE;
                 CREATE SCHEMA ${PGSCHEMA} AUTHORIZATION ${PGSCHEMA_OWNER};
                 ALTER ROLE ${PGSCHEMA_OWNER} SET search_path = ${PGSCHEMA};
                 GRANT USAGE, CREATE ON SCHEMA ${PGSCHEMA} TO ${PGSCHEMA_OWNER};
-            EOSQL
-                else
-                  echo "ℹ️  No destructive reset (KC_FORCE_RESET_SCHEMA_ON_CONFLICT=false or schema empty)."
+              EOSQL
+              else
+                echo "ℹ️  No destructive reset (KC_FORCE_RESET_SCHEMA_ON_CONFLICT=false or schema empty)."
+              fi
+
+              HAS_LOCK_TABLE="$(psql -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDATABASE" -Atc \
+                "select 1 from information_schema.tables where table_schema='${PGSCHEMA}' and table_name='databasechangeloglock'" || true)"
+              if [ "${HAS_LOCK_TABLE:-}" = "1" ]; then
+                LOCKED="$(psql -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDATABASE" -Atc \
+                  "select locked from ${PGSCHEMA}.databasechangeloglock where id=1" 2>/dev/null || echo "f")"
+                if [ "$LOCKED" = "t" ]; then
+                  echo "🔓 Liquibase lock detected → unlocking…"
+                  psql -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDATABASE" -v ON_ERROR_STOP=1 \
+                    -c "update ${PGSCHEMA}.databasechangeloglock set locked=false, lockgranted=null, lockedby=null where id=1;"
                 fi
+              fi
 
-                # Liquibase lock clean-up (safe no-op if not present)
-                HAS_LOCK_TABLE="$(psql -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDATABASE" -Atc \
-                  "select 1 from information_schema.tables where table_schema='${PGSCHEMA}' and table_name='databasechangeloglock'" || true)"
-                if [ "${HAS_LOCK_TABLE:-}" = "1" ]; then
-                  LOCKED="$(psql -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDATABASE" -Atc \
-                    "select locked from ${PGSCHEMA}.databasechangeloglock where id=1" 2>/dev/null || echo "f")"
-                  if [ "$LOCKED" = "t" ]; then
-                    echo "🔓 Liquibase lock detected → unlocking…"
-                    psql -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDATABASE" -v ON_ERROR_STOP=1 \
-                      -c "update ${PGSCHEMA}.databasechangeloglock set locked=false, lockgranted=null, lockedby=null where id=1;"
-                  fi
-                fi
+              HAS_CHANGELOG="$(psql -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDATABASE" -Atc \
+                "select 1 from information_schema.tables where table_schema='${PGSCHEMA}' and table_name='databasechangelog'" || true)"
+              if [ "${KC_CLEAR_CHANGELOG_CHECKSUMS:-false}" = "true" ] && [ "${HAS_CHANGELOG:-}" = "1" ]; then
+                echo "🧹 Clearing Liquibase checksums…"
+                psql -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDATABASE" -v ON_ERROR_STOP=0 \
+                  -c "UPDATE ${PGSCHEMA}.databasechangelog SET md5sum=NULL;"
+              fi
 
-                # Optional: clear checksums if the changelog exists and you requested it
-                HAS_CHANGELOG="$(psql -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDATABASE" -Atc \
-                  "select 1 from information_schema.tables where table_schema='${PGSCHEMA}' and table_name='databasechangelog'" || true)"
-                if [ "${KC_CLEAR_CHANGELOG_CHECKSUMS:-false}" = "true" ] && [ "${HAS_CHANGELOG:-}" = "1" ]; then
-                  echo "🧹 Clearing Liquibase checksums…"
-                  psql -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDATABASE" -v ON_ERROR_STOP=0 \
-                    -c "UPDATE ${PGSCHEMA}.databasechangelog SET md5sum=NULL;"
-                fi
-
-                echo "✅ Preflight complete."
-
+              echo "✅ Preflight complete."
       containers:
         - name: keycloak-configurator
           image: quay.io/keycloak/keycloak:21.0.2
@@ -641,7 +644,6 @@ spec:
                     -e "s|__WANT_TEAM__|${GITHUB_TEAM}|g" \
                     /opt/keycloak/scripts/github-team-admin.js > /tmp/github-team-admin.resolved.js
 
-                local SCRIPT_ESCAPED
                 SCRIPT_ESCAPED="$(sed -e 's/\\/\\\\/g' -e 's/"/\\"/g' -e ':a;N;$!ba;s/\n/\\n/g' /tmp/github-team-admin.resolved.js)"
                 cat >/tmp/script-cfg.json <<EOF
               { "alias": "GitHub Team Admin", "config": { "script": "${SCRIPT_ESCAPED}" } }
@@ -720,7 +722,6 @@ spec:
             - containerPort: 8080
               name: http
           env:
-            # === DB connection ===
             - name: KC_DB
               value: "postgres"
             - name: KC_DB_URL
@@ -730,13 +731,11 @@ spec:
             - name: KC_DB_URL_PROPERTIES
               value: "currentSchema=keycloak&reWriteBatchedInserts=true&options=-c%20default_transaction_isolation%3Dread%20committed"
 
-            # === Pool to calm first-boot migrations ===
             - name: KC_DB_POOL_INITIAL_SIZE
               value: "1"
             - name: KC_DB_POOL_MAX_SIZE
               value: "10"
 
-            # === Enable preview & scripts ===
             - name: KC_PROFILE
               value: "preview"
             - name: KC_FEATURES
@@ -744,7 +743,6 @@ spec:
             - name: JAVA_OPTS_APPEND
               value: "-Dkeycloak.profile=preview -Dkeycloak.profile.feature.scripts=enabled"
 
-            # === Logging ===
             - name: KC_LOG
               value: "console,file"
             - name: KC_LOG_FILE
@@ -756,7 +754,6 @@ spec:
             - name: KC_DB_LOG_SLOW_QUERIES_THRESHOLD
               value: "1"
 
-            # === Hostname & HTTP ===
             - name: KC_HOSTNAME_URL
               value: "https://keycloak.app.suncoast.systems"
             - name: KC_HOSTNAME_ADMIN_URL
@@ -784,7 +781,6 @@ spec:
               export KC_DB_USERNAME="$(cat /vault/secrets/db-username)"
               export KC_DB_PASSWORD="$(cat /vault/secrets/db-password)"
 
-              # Ensure writable data dir (auto-build target)
               chown -R 1000:1000 /opt/keycloak/data || true
 
               echo "▶️  Starting Keycloak 21.0.2 with --auto-build, profile=preview, features=scripts…"
