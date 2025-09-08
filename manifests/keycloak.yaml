@@ -603,17 +603,10 @@ spec:
                   | grep -q "\"alias\"[[:space:]]*:[[:space:]]*\"${FLOW_ALIAS}\""
               }
 
-              get_script_provider_id() {
-                # Discover the exact id of the script authenticator provider
-                local PID
-                PID="$(
-                  /opt/keycloak/bin/kcadm.sh get authentication/authenticator-providers -r "$REALM" 2>/dev/null \
-                  | json_objects_onelines \
-                  | awk -F'"' '/"id"[[:space:]]*:[[:space:]]*"/{print $4}' \
-                  | grep -E '^(script|script-.*|.*script.*)$' \
-                  | head -n1
-                )" || true
-                echo -n "${PID:-}"
+              list_provider_ids() {
+                /opt/keycloak/bin/kcadm.sh get authentication/authenticator-providers -r "$REALM" 2>/dev/null \
+                  | tr -d '\n' | sed 's/},[[:space:]]*{/}\n{/g' \
+                  | sed -n 's/.*"id"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p'
               }
 
               purge_flow_executions() {
@@ -633,31 +626,40 @@ spec:
               }
 
               add_script_execution() {
-                local SCRIPT_PROVIDER_ID
-                SCRIPT_PROVIDER_ID="$(get_script_provider_id)"
+                # 1) Try the canonical provider id first
+                local CHOSEN=""; local TRY="script"
+                if /opt/keycloak/bin/kcadm.sh create "authentication/flows/${FLOW_ALIAS}/executions/execution" \
+                     -r "$REALM" -s "provider=${TRY}" >/dev/null 2>&1; then
+                  CHOSEN="${TRY}"
+                else
+                  # 2) Discover any provider id that contains 'script' and try them in order
+                  local PID
+                  for PID in $(list_provider_ids | grep -i script || true); do
+                    if /opt/keycloak/bin/kcadm.sh create "authentication/flows/${FLOW_ALIAS}/executions/execution" \
+                         -r "$REALM" -s "provider=${PID}" >/dev/null 2>&1; then
+                      CHOSEN="${PID}"
+                      break
+                    fi
+                  done
+                fi
 
-                if [ -z "${SCRIPT_PROVIDER_ID:-}" ]; then
-                  echo "FATAL: No script authenticator provider is registered."
-                  echo "       Ensure the Keycloak server is built **and started** with the 'scripts' feature and KC_PROFILE=preview."
-                  echo "       You can verify with: kcadm.sh get authentication/authenticator-providers -r ${REALM}"
+                if [ -z "${CHOSEN:-}" ]; then
+                  echo "FATAL: No usable 'script' authenticator provider was found."
+                  echo "       Providers present:"
+                  list_provider_ids || true
+                  echo "       Ensure Keycloak is built & started with 'scripts' and KC_PROFILE=preview."
                   hold
                 else
-                  echo "ℹ️  Using script provider id: ${SCRIPT_PROVIDER_ID}"
+                  echo "ℹ️  Using script provider id: ${CHOSEN}"
                 fi
 
-                if ! /opt/keycloak/bin/kcadm.sh create "authentication/flows/${FLOW_ALIAS}/executions/execution" \
-                     -r "$REALM" -s "provider=${SCRIPT_PROVIDER_ID}" >/dev/null 2>&1; then
-                  echo "FATAL: Unable to create execution using provider='${SCRIPT_PROVIDER_ID}'."
-                  hold
-                fi
-
-                # Find the new execution id
+                # locate the execution id for the chosen provider
                 local EXEC_ID=""
                 for i in $(seq 1 20); do
                   EXEC_ID="$(
                     /opt/keycloak/bin/kcadm.sh get "authentication/flows/${FLOW_ALIAS}/executions" -r "$REALM" 2>/dev/null \
                     | json_objects_onelines \
-                    | grep -E "\"providerId\"[[:space:]]*:[[:space:]]*\"${SCRIPT_PROVIDER_ID}\"" \
+                    | grep -E "\"providerId\"[[:space:]]*:[[:space:]]*\"${CHOSEN}\"" \
                     | sed -n 's/.*"id"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' \
                     | head -n1
                   )" || true
@@ -817,7 +819,7 @@ spec:
               export KC_DB_USERNAME="$(cat /vault/secrets/db-username)"
               export KC_DB_PASSWORD="$(cat /vault/secrets/db-password)"
 
-              # Build once with scripts + postgres driver
+              # Build once with scripts + postgres driver (no --http-enabled here)
               if [ ! -f /opt/keycloak/data/.kc_built_with_scripts ]; then
                 echo "🔧 Building Keycloak with 'scripts' feature..."
                 /opt/keycloak/bin/kc.sh build --features=scripts --db=postgres
