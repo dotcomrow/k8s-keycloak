@@ -777,7 +777,7 @@ spec:
 
               echo "▶️  Starting Keycloak (21.1.x with 'scripts')…"
               set +e
-              /opt/keycloak/bin/kc.sh start --features=scripts --verbose
+              /opt/keycloak/bin/kc.sh start --features=scripts
               rc="$?"
               set -e
               if [ "$rc" -ne 0 ]; then
