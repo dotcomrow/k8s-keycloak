@@ -703,7 +703,7 @@ spec:
             - name: KC_DB_POOL_MAX_SIZE
               value: "10"
 
-            # === Enable preview & scripts (both build-time and runtime) ===
+            # === Enable preview & scripts ===
             - name: KC_PROFILE
               value: "preview"
             - name: KC_FEATURES
@@ -746,18 +746,16 @@ spec:
           args:
             - |
               set -euo pipefail
-              # ensure clean auto-build each start
+              # Start from a clean auto-build cache each boot
               rm -rf /opt/keycloak/data/* || true
               mkdir -p /opt/keycloak/data/log
+
+              # Admin + DB creds from Vault sidecar
               source /vault/secrets/keycloak-admin
               export KC_DB_USERNAME="$(cat /vault/secrets/db-username)"
               export KC_DB_PASSWORD="$(cat /vault/secrets/db-password)"
 
-              # Ensure writable data dir (auto-build target)
-              chown -R 1000:1000 /opt/keycloak/data || true
-
-              echo "▶️  Starting Keycloak 21.0.2 with --auto-build, profile=preview, features=scripts…"
-              /opt/keycloak/bin/kc.sh show-config --all | egrep -i '(^profile=|features=)' || true
+              echo "▶️  Starting Keycloak 21.0.2 with --auto-build and 'scripts'…"
 
               set +e
               /opt/keycloak/bin/kc.sh start \
