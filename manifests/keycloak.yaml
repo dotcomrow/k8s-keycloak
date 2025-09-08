@@ -18,15 +18,12 @@ kind: Job
 metadata:
   name: copy-keycloak-vault-root-token
   namespace: vault
-  annotations:
-    linkerd.io/inject: "disabled"
-    argocd.argoproj.io/sync-options: Replace=true
-    argocd.argoproj.io/sync-wave: "-2"
 spec:
   backoffLimit: 0
-  ttlSecondsAfterFinished: 300
   template:
-    metadata: {}
+    metadata:
+      annotations:
+        linkerd.io/inject: disabled
     spec:
       serviceAccountName: default
       restartPolicy: Never
@@ -40,9 +37,9 @@ spec:
           args:
             - |
               echo "🔁 Copying 'vault-root-token' from vault → keycloak..."
-              kubectl get secret vault-root-token -n vault -o yaml \
-                | sed 's/namespace: vault/namespace: keycloak/' \
-                | kubectl apply -f -
+              kubectl get secret vault-root-token -n vault -o yaml | \
+                sed 's/namespace: vault/namespace: keycloak/' | \
+                kubectl apply -f -
               echo "✅ Secret copied successfully."
 ---
 apiVersion: batch/v1
@@ -50,15 +47,12 @@ kind: Job
 metadata:
   name: keycloak-yugabyte-config
   namespace: vault
-  annotations:
-    linkerd.io/inject: "disabled"
-    argocd.argoproj.io/sync-options: Replace=true
-    argocd.argoproj.io/sync-wave: "-1"
 spec:
   backoffLimit: 0
-  ttlSecondsAfterFinished: 300
   template:
-    metadata: {}
+    metadata:
+      annotations:
+        linkerd.io/inject: "disabled"
     spec:
       restartPolicy: Never
       serviceAccountName: default
@@ -96,8 +90,7 @@ spec:
               echo "🧩 Ensuring KV v2 at 'secret/'..."
               if ! vault secrets list -format=json | jq -e '."secret/".type=="kv" and ."secret/".options.version=="2"' >/dev/null 2>&1; then
                 if vault secrets list -format=json | jq -e 'has("secret/")' >/dev/null 2>&1; then
-                  echo "❌ 'secret/' exists but is not KVv2; please migrate manually."
-                  exit 1
+                  echo "❌ 'secret/' exists but is not KVv2; please migrate manually."; exit 1
                 else
                   vault secrets enable -path=secret -version=2 kv
                 fi
@@ -112,14 +105,8 @@ spec:
                 echo "✅ Admin secret already present"
               fi
 
-              until getent hosts "$PGHOST" >/dev/null 2>&1; do
-                echo "🔄 Waiting for DNS for $PGHOST..."
-                sleep 3
-              done
-              until nc -z -w1 "$PGHOST" "$PGPORT"; do
-                echo "⏳ Waiting for DB $PGHOST:$PGPORT..."
-                sleep 3
-              done
+              until getent hosts "$PGHOST" >/dev/null 2>&1; do echo "🔄 Waiting for DNS for $PGHOST..."; sleep 3; done
+              until nc -z -w1 "$PGHOST" "$PGPORT"; do echo "⏳ Waiting for DB $PGHOST:$PGPORT..."; sleep 3; done
               echo "✅ Yugabyte reachable"
 
               echo "🔐 Waiting for secret/${VAULTADMIN_USER} to exist in Vault..."
@@ -138,17 +125,23 @@ spec:
               done
               export PGPASSWORD="$VAULTADMIN_PASS"
 
+              # === One-time bootstrap marker to prevent future DDL during app rollouts ===
+              if psql -h "$PGHOST" -p "$PGPORT" -U "$VAULTADMIN_USER" -d yugabyte -Atqc \
+                   "SELECT 1 FROM pg_catalog.pg_tables WHERE schemaname='public' AND tablename='kc_bootstrap_marker'" >/dev/null 2>&1; then
+                echo "ℹ️  Bootstrap marker present; skipping DB bootstrap DDL."
+                exit 0
+              fi
+
               while :; do
-                DB_EXISTS="$(psql -h "$PGHOST" -p "$PGPORT" -U "$VAULTADMIN_USER" -d yugabyte -tAc "SELECT 1 FROM pg_database WHERE datname='${DB}'" 2>/dev/null || true)"
-                [ "$DB_EXISTS" = "1" ] && { echo "✅ DB '${DB}' exists"; break; }
-                echo "📦 Creating DB '${DB}' owned by ${VAULTADMIN_USER}..."
+                DB_EXISTS="$(psql -h "$PGHOST" -p "$PGPORT" -U "$VAULTADMIN_USER" -d yugabyte -tAc "SELECT 1 FROM pg_database WHERE datname='$DB'" 2>/dev/null || true)"
+                [ "$DB_EXISTS" = "1" ] && { echo "✅ DB '$DB' exists"; break; }
+                echo "📦 Creating DB '$DB' owned by $VAULTADMIN_USER..."
                 createdb -h "$PGHOST" -p "$PGPORT" -U "$VAULTADMIN_USER" -O "$VAULTADMIN_USER" "$DB" 2>/dev/null && { echo "✅ DB created"; break; }
-                echo "🔁 Retry create DB in 3s..."
-                sleep 3
+                echo "🔁 Retry create DB in 3s..."; sleep 3
               done
 
               psql -h "$PGHOST" -p "$PGPORT" -U "$VAULTADMIN_USER" -d yugabyte <<EOSQL
-              DO $$
+              DO \$\$
               BEGIN
                 IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = '${ROLE_GROUP}') THEN
                   CREATE ROLE ${ROLE_GROUP} NOLOGIN;
@@ -157,7 +150,7 @@ spec:
                   CREATE ROLE ${ROLE_OWNER} LOGIN INHERIT;
                 END IF;
               END
-              $$;
+              \$\$;
               GRANT ${ROLE_GROUP} TO ${ROLE_OWNER};
               GRANT ${ROLE_OWNER} TO ${VAULTADMIN_USER};
               EOSQL
@@ -226,7 +219,15 @@ spec:
               echo "🔎 Sanity check as \$DB_USER=$DB_USER"
               psql -h "$PGHOST" -p "$PGPORT" -U "$DB_USER" -d "$DB" -c "SELECT current_user, current_schema();"
 
-              echo "🎉 Keycloak DB prepared; Vault static role + policy + K8s binding ready."
+              # Write bootstrap marker so future runs are a no-op.
+              psql -h "$PGHOST" -p "$PGPORT" -U "$VAULTADMIN_USER" -d yugabyte -v ON_ERROR_STOP=1 <<'EOSQL'
+              CREATE TABLE IF NOT EXISTS public.kc_bootstrap_marker(
+                id int primary key,
+                done_at timestamptz default now()
+              );
+              INSERT INTO public.kc_bootstrap_marker(id) VALUES (1) ON CONFLICT (id) DO NOTHING;
+              EOSQL
+              echo "🎉 Keycloak DB prepared; marker written."
           volumeMounts:
             - name: root-token
               mountPath: /vault-token
@@ -348,7 +349,7 @@ spec:
       labels:
         app: keycloak
       annotations:
-        # Vault agent
+        # Vault agent for secret files
         vault.hashicorp.com/agent-inject: "true"
         vault.hashicorp.com/role: "keycloak"
         vault.hashicorp.com/agent-init-first: "true"
@@ -370,7 +371,7 @@ spec:
           export KEYCLOAK_ADMIN_PASSWORD={{ .Data.data.password }}
           {{- end -}}
 
-        # vaultadmin (preflight)
+        # vaultadmin for preflight
         vault.hashicorp.com/agent-inject-secret-vaultadmin: "secret/data/vaultadmin"
         vault.hashicorp.com/agent-inject-template-vaultadmin: |
           {{- with secret "secret/data/vaultadmin" -}}
@@ -395,16 +396,10 @@ spec:
         vault.hashicorp.com/agent-inject-template-github-admin-team: |
           {{- with secret "secret/data/k8s-teleport-teleport-github-admin-team" -}}{{ .Data.data.value }}{{- end -}}
 
-        # Linkerd: skip DNS, Vault, Postgres
-        config.linkerd.io/skip-outbound-ports: "53,8200,5433"
+        # Linkerd: allow direct Postgres/Vault egress from this pod
+        config.linkerd.io/skip-outbound-ports: "8200,5433"
     spec:
       serviceAccountName: keycloak
-
-      securityContext:
-        runAsUser: 1000
-        runAsGroup: 1000
-        fsGroup: 1000
-        fsGroupChangePolicy: "OnRootMismatch"
 
       volumes:
         - name: realm-import
@@ -413,8 +408,6 @@ spec:
         - name: kc-scripts
           configMap:
             name: kc-script-github-admin
-        - name: keycloak-data
-          emptyDir: {}
 
       initContainers:
         - name: wait-for-config-job
@@ -446,13 +439,6 @@ spec:
 
         - name: kc-db-preflight
           image: alpine:3.20
-          securityContext:
-            runAsUser: 0
-            runAsGroup: 0
-            allowPrivilegeEscalation: false
-            readOnlyRootFilesystem: false
-            capabilities:
-              drop: ["ALL"]
           env:
             - name: PGHOST
               value: "yb-tserver-service.yugabyte.svc.cluster.local"
@@ -474,41 +460,22 @@ spec:
           args:
             - |
               set -euo pipefail
-              apk add --no-cache postgresql15-client jq bind-tools busybox-extras
+              apk add --no-cache postgresql15-client jq
 
               export PGUSER="${PGADMIN_USER}"
-              export PGPASSWORD="$(tr -d '\r\n' < /vault/secrets/vaultadmin)"
+              export PGPASSWORD="$(cat /vault/secrets/vaultadmin)"
 
-              echo "🔎 DNS for ${PGHOST}"; getent hosts "${PGHOST}" || true
-              echo "🔎 TCP ${PGHOST}:${PGPORT}"; nc -vz -w 3 "${PGHOST}" "${PGPORT}" || true
-
-              echo "🔎 Preflight (admin): connecting to ${PGHOST}:${PGPORT}/${PGDATABASE} as ${PGUSER}…"
+              echo "🔎 Preflight (admin): connecting to ${PGHOST}:${PGPORT}/${PGDATABASE} as ${PGUSER}..."
               until psql -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDATABASE" -tAc "select 1" >/dev/null 2>&1; do
-                echo "  ⏳ waiting for DB…"
+                echo "  ⏳ waiting for DB..."
                 sleep 2
               done
               echo "✅ DB reachable"
 
-              psql -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDATABASE" -v ON_ERROR_STOP=1 \
-                -c "CREATE SCHEMA IF NOT EXISTS ${PGSCHEMA};"
-
-              HAS_ANY_TABLE="$(psql -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDATABASE" -Atc \
-                "select count(*) from information_schema.tables where table_schema='${PGSCHEMA}'" || echo 0)"
-
-              if [ "${KC_FORCE_RESET_SCHEMA_ON_CONFLICT:-false}" = "true" ] && [ "${HAS_ANY_TABLE:-0}" -gt 0 ]; then
-                echo "🧨 ${PGSCHEMA} contains ${HAS_ANY_TABLE} table(s) → dropping schema CASCADE for a clean migration…"
-                psql -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDATABASE" -v ON_ERROR_STOP=1 <<EOSQL
-                DROP SCHEMA IF EXISTS ${PGSCHEMA} CASCADE;
-                CREATE SCHEMA ${PGSCHEMA} AUTHORIZATION ${PGSCHEMA_OWNER};
-                ALTER ROLE ${PGSCHEMA_OWNER} SET search_path = ${PGSCHEMA};
-                GRANT USAGE, CREATE ON SCHEMA ${PGSCHEMA} TO ${PGSCHEMA_OWNER};
-              EOSQL
-              else
-                echo "ℹ️  No destructive reset (KC_FORCE_RESET_SCHEMA_ON_CONFLICT=false or schema empty)."
-              fi
+              psql -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDATABASE" -v ON_ERROR_STOP=1 -c "CREATE SCHEMA IF NOT EXISTS ${PGSCHEMA};"
 
               HAS_LOCK_TABLE="$(psql -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDATABASE" -Atc \
-                "select 1 from information_schema.tables where table_schema='${PGSCHEMA}' and table_name='databasechangeloglock'" || true)"
+                "select 1 from information_schema.tables where table_schema='${PGSCHEMA}' and table_name='databasechangeloglock'")" || true
               if [ "${HAS_LOCK_TABLE:-}" = "1" ]; then
                 LOCKED="$(psql -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDATABASE" -Atc \
                   "select locked from ${PGSCHEMA}.databasechangeloglock where id=1" 2>/dev/null || echo "f")"
@@ -519,15 +486,41 @@ spec:
                 fi
               fi
 
+              HAS_CONFLICT_TABLE="$(psql -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDATABASE" -Atc "
+                select 1
+                from information_schema.tables
+                where table_schema='${PGSCHEMA}'
+                  and table_name ilike any (array[
+                    'application_default_roles','application_role','realm','client',
+                    'event_entity','migration_model','user_entity','keycloak_role',
+                    'composite_role','federated_user','federated_identity',
+                    'component','credential','client_session','authentication_flow'
+                  ])
+                limit 1
+              " 2>/dev/null || true)"
+
+              if [ "${KC_FORCE_RESET_SCHEMA_ON_CONFLICT:-false}" = "true" ] && [ "${HAS_CONFLICT_TABLE:-}" = "1" ]; then
+                echo "🧨 Conflict tables found in ${PGSCHEMA} → dropping schema CASCADE for a clean migration…"
+                psql -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDATABASE" -v ON_ERROR_STOP=1 <<EOSQL
+              DROP SCHEMA IF EXISTS ${PGSCHEMA} CASCADE;
+              CREATE SCHEMA ${PGSCHEMA} AUTHORIZATION ${PGSCHEMA_OWNER};
+              ALTER ROLE ${PGSCHEMA_OWNER} SET search_path = ${PGSCHEMA};
+              GRANT USAGE, CREATE ON SCHEMA ${PGSCHEMA} TO ${PGSCHEMA_OWNER};
+              EOSQL
+              else
+                echo "ℹ️  No destructive reset (KC_FORCE_RESET_SCHEMA_ON_CONFLICT=false or no conflict tables found)."
+              fi
+
               HAS_CHANGELOG="$(psql -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDATABASE" -Atc \
-                "select 1 from information_schema.tables where table_schema='${PGSCHEMA}' and table_name='databasechangelog'" || true)"
+                "select 1 from information_schema.tables where table_schema='${PGSCHEMA}' and table_name='databasechangelog'")" || true
               if [ "${KC_CLEAR_CHANGELOG_CHECKSUMS:-false}" = "true" ] && [ "${HAS_CHANGELOG:-}" = "1" ]; then
-                echo "🧹 Clearing Liquibase checksums…"
+                echo "🧹 Clearing Liquibase checksums (md5sum=NULL)…"
                 psql -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDATABASE" -v ON_ERROR_STOP=0 \
                   -c "UPDATE ${PGSCHEMA}.databasechangelog SET md5sum=NULL;"
               fi
 
               echo "✅ Preflight complete."
+
       containers:
         - name: keycloak-configurator
           image: quay.io/keycloak/keycloak:21.0.2
@@ -580,10 +573,6 @@ spec:
                 sleep "$STEP"; waited=$((waited+STEP))
               done
               echo "✅ Admin API ready."
-              echo "⏳ Letting features settle for a moment…"; sleep 5
-
-              echo "🔍 Server features snapshot:"
-              /opt/keycloak/bin/kcadm.sh get serverinfo -r "$REALM" | grep -E '"profile"|"features"' -A2 || true
 
               flow_exists() {
                 /opt/keycloak/bin/kcadm.sh get authentication/flows -r "$REALM" 2>/dev/null \
@@ -615,7 +604,7 @@ spec:
                   if [ -z "$PIDS" ]; then
                     echo "FATAL: No usable 'script' authenticator provider was found."
                     echo "       Providers present:"; list_provider_ids
-                    echo "       Ensure runtime is started with --auto-build and KC_FEATURES=scripts; KC_PROFILE=preview."
+                    echo "       Ensure Keycloak is built & started with 'scripts' and KC_PROFILE=preview."
                     hold
                   else
                     CHOSEN="$(printf '%s\n' "$PIDS" | head -n1)"
@@ -644,6 +633,7 @@ spec:
                     -e "s|__WANT_TEAM__|${GITHUB_TEAM}|g" \
                     /opt/keycloak/scripts/github-team-admin.js > /tmp/github-team-admin.resolved.js
 
+                local SCRIPT_ESCAPED
                 SCRIPT_ESCAPED="$(sed -e 's/\\/\\\\/g' -e 's/"/\\"/g' -e ':a;N;$!ba;s/\n/\\n/g' /tmp/github-team-admin.resolved.js)"
                 cat >/tmp/script-cfg.json <<EOF
               { "alias": "GitHub Team Admin", "config": { "script": "${SCRIPT_ESCAPED}" } }
@@ -730,19 +720,7 @@ spec:
             - name: KC_DB_SCHEMA
               value: "keycloak"
             - name: KC_DB_URL_PROPERTIES
-              value: >-
-                currentSchema=keycloak
-                &reWriteBatchedInserts=true
-                &preferQueryMode=simple
-                &autosave=always
-                &ApplicationName=keycloak
-                &options=-c%20default_transaction_isolation%3Dread%20committed%20-c%20yb_enable_read_committed_isolation%3Don
-
-            # === Pool (keep small during migrations) ===
-            - name: KC_DB_POOL_INITIAL_SIZE
-              value: "1"
-            - name: KC_DB_POOL_MAX_SIZE
-              value: "10"
+              value: "currentSchema=keycloak"
 
             # === Enable preview & scripts ===
             - name: KC_PROFILE
@@ -792,9 +770,7 @@ spec:
               export KC_DB_USERNAME="$(cat /vault/secrets/db-username)"
               export KC_DB_PASSWORD="$(cat /vault/secrets/db-password)"
 
-              chown -R 1000:1000 /opt/keycloak/data || true
-
-              echo "▶️  Starting Keycloak 21.0.2 with --auto-build, profile=preview, features=scripts…"
+              echo "▶️  Starting Keycloak 21.0.2 with --auto-build and 'scripts'…"
               /opt/keycloak/bin/kc.sh show-config --all | egrep -i '(^profile=|features=)' || true
 
               set +e
@@ -822,5 +798,3 @@ spec:
             - name: kc-scripts
               mountPath: /opt/keycloak/scripts
               readOnly: true
-            - name: keycloak-data
-              mountPath: /opt/keycloak/data
