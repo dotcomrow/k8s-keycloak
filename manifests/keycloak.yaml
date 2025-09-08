@@ -388,7 +388,7 @@ spec:
           {{- with secret "secret/data/k8s-teleport-teleport-github-admin-team" -}}{{ .Data.data.value }}{{- end -}}
 
         # Linkerd: skip Vault + Postgres
-        config.linkerd.io/skip-outbound-ports: "8200,5433"
+        config.linkerd.io/skip-outbound-ports: "53,8200,5433,443"
     spec:
       serviceAccountName: keycloak
 
@@ -463,19 +463,36 @@ spec:
             - name: PGADMIN_USER
               value: "vaultadmin"
           command: ["/bin/sh","-lc"]
-          args:
+          args: 
             - |
               set -euo pipefail
-              apk add --no-cache postgresql15-client jq
+              apk add --no-cache postgresql15-client jq bind-tools busybox-extras
 
               export PGUSER="${PGADMIN_USER}"
               export PGPASSWORD="$(cat /vault/secrets/vaultadmin)"
               export PGOPTIONS="-c default_transaction_isolation=read committed"
 
+              echo "🔎 DNS check for ${PGHOST}…"
+              if ! getent hosts "${PGHOST}"; then
+                echo "❌ DNS failed for ${PGHOST}"
+              fi
+
+              echo "🔎 TCP check to ${PGHOST}:${PGPORT}…"
+              if ! nc -vz -w 3 "${PGHOST}" "${PGPORT}" 2>&1 || true; then
+                echo "ℹ️  nc probe may fail if DNS is slow; continuing to psql loop…"
+              fi
+
               echo "🔎 Preflight (admin): connecting to ${PGHOST}:${PGPORT}/${PGDATABASE} as ${PGUSER}..."
-              until psql -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDATABASE" -tAc "select 1" >/dev/null 2>&1; do
+              i=0; until psql -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDATABASE" -tAc "select 1" >/dev/null 2>&1; do
+                i=$((i+1))
+                if [ $i -eq 1 ]; then
+                  echo "   first failure; printing resolver + route info"
+                  cat /etc/resolv.conf || true
+                  ip route || true
+                fi
                 echo "  ⏳ waiting for DB..."
                 sleep 2
+                [ $i -gt 120 ] && { echo "❌ DB not reachable after 4 minutes"; exit 1; }
               done
               echo "✅ DB reachable"
 
