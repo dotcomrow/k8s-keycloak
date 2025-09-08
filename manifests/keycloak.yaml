@@ -72,8 +72,8 @@ spec:
               PGHOST=yb-tserver-service.yugabyte.svc.cluster.local
               PGPORT=5433
               DB=keycloak
-              ROLE_GROUP=keycloak          # NOLOGIN group
-              ROLE_OWNER=keycloak_app      # LOGIN stable owner
+              ROLE_GROUP=keycloak
+              ROLE_OWNER=keycloak_app
               VAULTADMIN_USER=vaultadmin
 
               apk add --no-cache postgresql15-client jq netcat-openbsd curl
@@ -580,7 +580,7 @@ spec:
 
               # --- Bounded wait for admin API; on timeout -> hold (no restart) ---
               echo "Waiting for Keycloak admin API..."
-              MAX_WAIT=600   # seconds
+              MAX_WAIT=600
               STEP=5
               waited=0
               until /opt/keycloak/bin/kcadm.sh config credentials \
@@ -730,6 +730,7 @@ spec:
             - containerPort: 8080
               name: http
           env:
+            # === DB connection ===
             - name: KC_DB
               value: "postgres"
             - name: KC_DB_URL
@@ -738,10 +739,12 @@ spec:
               value: "keycloak"
             - name: KC_DB_URL_PROPERTIES
               value: "currentSchema=keycloak"
+            # Migration
             - name: KC_SPI_CONNECTIONS_JPA__QUARKUS__MIGRATION_STRATEGY
               value: "update"
             - name: KC_SPI_DBLOCK__JPA__LOCK_WAIT_TIMEOUT
               value: "60"
+            # Logging
             - name: KC_LOG
               value: "console,file"
             - name: KC_LOG_FILE
@@ -752,6 +755,7 @@ spec:
               value: "true"
             - name: KC_DB_LOG_SLOW_QUERIES_THRESHOLD
               value: "1"
+            # Hostname & features profile
             - name: KC_HOSTNAME_URL
               value: "https://keycloak.app.suncoast.systems"
             - name: KC_HOSTNAME_ADMIN_URL
@@ -781,14 +785,12 @@ spec:
               export KC_DB_USERNAME="$(cat /vault/secrets/db-username)"
               export KC_DB_PASSWORD="$(cat /vault/secrets/db-password)"
 
-              # Build once with scripts feature baked-in
+              # Build once with 'scripts' feature baked-in (no runtime-only flags here)
               if [ ! -f /opt/keycloak/data/.kc_built_with_scripts ]; then
                 echo "🔧 Building Keycloak with 'scripts' feature..."
                 /opt/keycloak/bin/kc.sh build \
                   --features=scripts \
-                  --db=postgres \
-                  --health-enabled=true \
-                  --http-enabled=true
+                  --db=postgres
                 touch /opt/keycloak/data/.kc_built_with_scripts
                 echo "✅ Build completed."
               else
