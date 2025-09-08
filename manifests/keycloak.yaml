@@ -72,8 +72,8 @@ spec:
               PGHOST=yb-tserver-service.yugabyte.svc.cluster.local
               PGPORT=5433
               DB=keycloak
-              ROLE_GROUP=keycloak          # NOLOGIN group
-              ROLE_OWNER=keycloak_app      # LOGIN stable owner
+              ROLE_GROUP=keycloak
+              ROLE_OWNER=keycloak_app
               VAULTADMIN_USER=vaultadmin
 
               apk add --no-cache postgresql15-client jq netcat-openbsd curl
@@ -113,7 +113,7 @@ spec:
               until nc -z -w1 "$PGHOST" "$PGPORT"; do echo "⏳ Waiting for DB $PGHOST:$PGPORT..."; sleep 3; done
               echo "✅ Yugabyte reachable"
 
-              # --- Fetch vaultadmin password from Vault (loop forever until present) ---
+              # --- Wait for vaultadmin password in Vault ---
               echo "🔐 Waiting for secret/${VAULTADMIN_USER} to exist in Vault..."
               VAULTADMIN_PASS=""
               while :; do
@@ -476,10 +476,8 @@ spec:
               done
               echo "✅ DB reachable"
 
-              # Ensure schema exists (safe no-op if we later drop)
               psql -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDATABASE" -v ON_ERROR_STOP=1 -c "CREATE SCHEMA IF NOT EXISTS ${PGSCHEMA};"
 
-              # Unlock Liquibase if needed
               HAS_LOCK_TABLE="$(psql -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDATABASE" -Atc \
                 "select 1 from information_schema.tables where table_schema='${PGSCHEMA}' and table_name='databasechangeloglock'")" || true
               if [ "${HAS_LOCK_TABLE:-}" = "1" ]; then
@@ -492,7 +490,6 @@ spec:
                 fi
               fi
 
-              # Detect ANY known KC legacy/object tables -> drop schema if allowed
               HAS_CONFLICT_TABLE="$(psql -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDATABASE" -Atc "
                 select 1
                 from information_schema.tables
@@ -518,7 +515,6 @@ spec:
                 echo "ℹ️  No destructive reset (KC_FORCE_RESET_SCHEMA_ON_CONFLICT=false or no conflict tables found)."
               fi
 
-              # Clear checksums if changelog exists
               HAS_CHANGELOG="$(psql -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDATABASE" -Atc \
                 "select 1 from information_schema.tables where table_schema='${PGSCHEMA}' and table_name='databasechangelog'")" || true
               if [ "${KC_CLEAR_CHANGELOG_CHECKSUMS:-false}" = "true" ] && [ "${HAS_CHANGELOG:-}" = "1" ]; then
@@ -621,11 +617,10 @@ spec:
               }
 
               add_script_execution() {
-                # First try provider=script; if Keycloak returns error, list providers and bail if none contain 'script'
+                # Try canonical provider id first, else inspect the catalog
                 if /opt/keycloak/bin/kcadm.sh create "authentication/flows/${FLOW_ALIAS}/executions/execution" -r "$REALM" -s provider=script >/dev/null 2>&1; then
                   :
                 else
-                  # Check whether any script-like provider ids exist at all
                   PIDS="$(list_provider_ids | grep -i script || true)"
                   if [ -z "$PIDS" ]; then
                     echo "FATAL: No usable 'script' authenticator provider was found."
@@ -634,7 +629,6 @@ spec:
                     echo "       Ensure Keycloak is built & started with 'scripts' and KC_PROFILE=preview."
                     hold
                   else
-                    # If a script-like provider exists under a different id, try the first one
                     CHOSEN="$(printf '%s\n' "$PIDS" | head -n1)"
                     echo "ℹ️  Using provider id '${CHOSEN}'"
                     /opt/keycloak/bin/kcadm.sh create "authentication/flows/${FLOW_ALIAS}/executions/execution" -r "$REALM" -s provider="${CHOSEN}"
@@ -754,11 +748,13 @@ spec:
               value: "keycloak"
             - name: KC_DB_URL_PROPERTIES
               value: "currentSchema=keycloak"
+
             # === Enable scripts feature & preview profile ===
-            - name: KC_FEATURES
-              value: "scripts"
             - name: KC_PROFILE
               value: "preview"
+            - name: KC_FEATURES
+              value: "scripts"
+
             # === Logging ===
             - name: KC_LOG
               value: "console,file"
@@ -770,7 +766,8 @@ spec:
               value: "true"
             - name: KC_DB_LOG_SLOW_QUERIES_THRESHOLD
               value: "1"
-            # === Hostname & features ===
+
+            # === Hostname & HTTP ===
             - name: KC_HOSTNAME_URL
               value: "https://keycloak.app.suncoast.systems"
             - name: KC_HOSTNAME_ADMIN_URL
@@ -801,9 +798,9 @@ spec:
               echo "🔧 Building Keycloak with 'scripts' feature (21.1.2)…"
               /opt/keycloak/bin/kc.sh build --features=scripts
 
-              echo "▶️  Starting Keycloak…"
+              echo "▶️  Starting Keycloak with scripts enabled at runtime…"
               set +e
-              /opt/keycloak/bin/kc.sh start
+              /opt/keycloak/bin/kc.sh start --features=scripts
               rc="$?"
               set -e
               if [ "$rc" -ne 0 ]; then
