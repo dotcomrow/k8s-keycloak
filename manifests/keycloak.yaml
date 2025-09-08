@@ -261,62 +261,6 @@ roleRef:
   kind: Role
   name: job-status-reader
 ---
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: kc-script-github-admin
-  namespace: keycloak
-data:
-  github-team-admin.js: |
-    var SimpleHttp = Java.type("org.keycloak.broker.provider.util.SimpleHttp");
-    var Logger = Java.type("org.jboss.logging.Logger");
-    var LOG = Logger.getLogger("github-team-admin");
-
-    var WANT_ORG  = "__WANT_ORG__";
-    var WANT_TEAM = "__WANT_TEAM__";
-    var IDP_ALIAS = "github";
-
-    function authenticate(context) {
-      var session = context.getSession();
-      var realm   = context.getRealm();
-      var user    = context.getUser();
-
-      var fed = session.users().getFederatedIdentity(realm, user, IDP_ALIAS);
-      if (fed == null || fed.getToken() == null) {
-        LOG.info("No federated token; skipping role grant");
-        context.success();
-        return;
-      }
-
-      var token = fed.getToken();
-
-      var resp = SimpleHttp.doGet("https://api.github.com/user/teams", session)
-          .header("Authorization", "Bearer " + token)
-          .asJson();
-
-      var it = resp.iterator();
-      var isMember = false;
-      while (it.hasNext()) {
-        var t = it.next();
-        var slug = t.get("slug").asText();
-        var org  = t.get("organization").get("login").asText();
-        LOG.info("Team seen: " + org + "/" + slug);
-        if (slug.equals(WANT_TEAM) && org.equalsIgnoreCase(WANT_ORG)) { isMember = true; break; }
-      }
-
-      var client = session.clients().getClientByClientId(realm, "realm-management");
-      var adminRole = client.getRole("realm-admin");
-      if (isMember) {
-        LOG.info("Granting realm-admin to " + user.getUsername());
-        user.grantRole(adminRole);
-      } else {
-        LOG.info("User not in " + WANT_ORG + "/" + WANT_TEAM + "; ensuring no realm-admin");
-        user.deleteRoleMapping(adminRole);
-      }
-
-      context.success();
-    }
----
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -340,7 +284,7 @@ spec:
         vault.hashicorp.com/agent-init-first: "true"
         vault.hashicorp.com/agent-pre-populate: "true"
 
-        # DB creds (static)
+        # DB creds (static role)
         vault.hashicorp.com/agent-inject-secret-db-username: "yugabyte-db/static-creds/keycloak-app"
         vault.hashicorp.com/agent-inject-template-db-username: |
           {{- with secret "yugabyte-db/static-creds/keycloak-app" -}}{{ .Data.username }}{{- end -}}
@@ -356,18 +300,7 @@ spec:
           export KEYCLOAK_ADMIN_PASSWORD={{ .Data.data.password }}
           {{- end -}}
 
-        # vaultadmin for preflight
-        vault.hashicorp.com/agent-inject-secret-vaultadmin: "secret/data/vaultadmin"
-        vault.hashicorp.com/agent-inject-template-vaultadmin: |
-          {{- with secret "secret/data/vaultadmin" -}}
-          {{- if .Data.data.password -}}
-          {{ .Data.data.password }}
-          {{- else -}}
-          {{ .Data.data.value }}
-          {{- end -}}
-          {{- end -}}
-
-        # GitHub OAuth + org/team
+        # GitHub OAuth + org/team for provider
         vault.hashicorp.com/agent-inject-secret-github-client-id: "secret/data/keycloak-oauth-client-id"
         vault.hashicorp.com/agent-inject-template-github-client-id: |
           {{- with secret "secret/data/keycloak-oauth-client-id" -}}{{ .Data.data.value }}{{- end -}}
@@ -393,12 +326,6 @@ spec:
         fsGroupChangePolicy: "OnRootMismatch"
 
       volumes:
-        - name: realm-import
-          configMap:
-            name: keycloak-realm-github
-        - name: kc-scripts
-          configMap:
-            name: kc-script-github-admin
         - name: keycloak-data
           emptyDir: {}
 
@@ -451,7 +378,7 @@ spec:
               value: "keycloak_app"
             - name: PGADMIN_USER
               value: "vaultadmin"
-            # === Always drop schema before Keycloak boots ===
+            # Always drop schema before Keycloak boots
             - name: KC_FORCE_DROP_SCHEMA
               value: "true"
             - name: KC_FORCE_RESET_SCHEMA_ON_CONFLICT
@@ -481,7 +408,7 @@ spec:
               psql -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDATABASE" -v ON_ERROR_STOP=1 \
                 -c "CREATE SCHEMA IF NOT EXISTS ${PGSCHEMA};"
 
-              # Enumerate existing tables for log visibility
+              # Log what exists
               TABLES=$(
                 psql -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDATABASE" -Atc \
                   "select table_schema||'.'||table_name
@@ -510,34 +437,25 @@ spec:
               echo "✅ Preflight complete."
 
       containers:
+        # --- One-time configuration sidecar (GitHub IdP + flow + attach provider) ---
         - name: keycloak-configurator
-          image: quay.io/keycloak/keycloak:21.0.2
+          image: ghcr.io/dotcomrow/keycloak-image:24.0.5
           imagePullPolicy: IfNotPresent
           command: ["/bin/bash","-lc"]
           resources:
             requests: { cpu: "100m", memory: "128Mi" }
             limits:   { cpu: "500m", memory: "512Mi" }
-          volumeMounts:
-            - name: kc-scripts
-              mountPath: /opt/keycloak/scripts
-              readOnly: true
           args:
             - |
               set -euo pipefail
 
               REALM="master"
               SERVER="http://127.0.0.1:8080"
-              FLOW_ALIAS="GitHub-PostLogin"
+              FLOW="GitHub-PostLogin"
+              PROVIDER_ID="github-team-admin"
 
-              hold() {
-                echo ""
-                echo "────────────────────────────────────────────────────────"
-                echo "Configurator has stopped (not retrying). Pod will stay up."
-                echo "Fix the issue, then 'kubectl exec' to rerun steps manually if needed."
-                echo "────────────────────────────────────────────────────────"
-                tail -f /dev/null
-              }
-              on_err() { code=$?; echo "FATAL: configurator encountered an error (exit $code)."; hold; }
+              hold(){ echo "Configurator will stay running for logs…"; tail -f /dev/null; }
+              on_err(){ code=$?; echo "Configurator error (exit $code)"; hold; }
               trap on_err ERR
 
               source /vault/secrets/keycloak-admin
@@ -545,97 +463,17 @@ spec:
               CLIENT_SECRET="$(cat /vault/secrets/github-client-secret)"
               GITHUB_ORG="$(cat /vault/secrets/github-org)"
               GITHUB_TEAM="$(cat /vault/secrets/github-admin-team)"
-              [ -n "${GITHUB_ORG:-}" ] && [ -n "${GITHUB_TEAM:-}" ] || { echo "FATAL: GitHub org/team secrets missing"; hold; }
-
-              json_objects_onelines() { tr -d '\n' | sed 's/},[[:space:]]*{/}\n{/g'; }
 
               echo "Waiting for Keycloak admin API..."
-              MAX_WAIT=600; STEP=5; waited=0
-              until /opt/keycloak/bin/kcadm.sh config credentials \
-                      --server "$SERVER" --realm "$REALM" \
-                      --user "$KEYCLOAK_ADMIN" --password "$KEYCLOAK_ADMIN_PASSWORD" >/dev/null 2>&1
-              do
-                if [ "$waited" -ge "$MAX_WAIT" ]; then
-                  echo "FATAL: Admin API not ready after ${MAX_WAIT}s."; hold
+              for i in {1..120}; do
+                if /opt/keycloak/bin/kcadm.sh config credentials --server "$SERVER" --realm "$REALM" --user "$KEYCLOAK_ADMIN" --password "$KEYCLOAK_ADMIN_PASSWORD" >/dev/null 2>&1; then
+                  break
                 fi
-                sleep "$STEP"; waited=$((waited+STEP))
+                sleep 2
               done
               echo "✅ Admin API ready."
-              echo "⏳ Letting features settle for a moment…"; sleep 5
 
-              flow_exists() {
-                /opt/keycloak/bin/kcadm.sh get authentication/flows -r "$REALM" 2>/dev/null \
-                  | json_objects_onelines | grep -q "\"alias\"[[:space:]]*:[[:space:]]*\"${FLOW_ALIAS}\""
-              }
-
-              purge_flow_executions() {
-                echo "Purging executions under flow '${FLOW_ALIAS}'..."
-                local EXECS IDS
-                EXECS="$(/opt/keycloak/bin/kcadm.sh get "authentication/flows/${FLOW_ALIAS}/executions" -r "$REALM" 2>/dev/null || true)"
-                IDS="$(printf '%s' "$EXECS" | json_objects_onelines | sed -n 's/.*\"id\"[[:space:]]*:[[:space:]]*\"\([^\"]*\)\".*/\1/p')"
-                [ -z "${IDS:-}" ] && { echo "Flow '${FLOW_ALIAS}' now has no executions."; return 0; }
-                while read -r EID; do
-                  [ -n "${EID:-}" ] && /opt/keycloak/bin/kcadm.sh delete "authentication/executions/${EID}" -r "$REALM" >/dev/null 2>&1 || true
-                done <<< "$IDS"
-              }
-
-              list_provider_ids() {
-                /opt/keycloak/bin/kcadm.sh get authentication/authenticator-providers -r "$REALM" 2>/dev/null \
-                  | tr -d '\n' | sed 's/},[[:space:]]*{/}\n{/g' \
-                  | sed -n 's/.*\"id\"[[:space:]]*:[[:space:]]*\"\([^\"]*\)\".*/\1/p'
-              }
-
-              add_script_execution() {
-                if /opt/keycloak/bin/kcadm.sh create "authentication/flows/${FLOW_ALIAS}/executions/execution" -r "$REALM" -s provider=script >/dev/null 2>&1; then
-                  :
-                else
-                  PIDS="$(list_provider_ids | grep -i script || true)"
-                  if [ -z "$PIDS" ]; then
-                    echo "FATAL: No usable 'script' authenticator provider was found."
-                    echo "       Providers present:"; list_provider_ids
-                    echo "       Ensure runtime is built with KC_PROFILE=preview and --features=scripts."
-                    hold
-                  else
-                    CHOSEN="$(printf '%s\n' "$PIDS" | head -n1)"
-                    echo "ℹ️  Using provider id '${CHOSEN}'"
-                    /opt/keycloak/bin/kcadm.sh create "authentication/flows/${FLOW_ALIAS}/executions/execution" -r "$REALM" -s provider="${CHOSEN}"
-                  fi
-                fi
-
-                local EXEC_ID=""
-                for i in $(seq 1 20); do
-                  EXEC_ID="$(
-                    /opt/keycloak/bin/kcadm.sh get "authentication/flows/${FLOW_ALIAS}/executions" -r "$REALM" 2>/dev/null \
-                    | json_objects_onelines \
-                    | grep -E '"providerId"[[:space:]]*:[[:space:]]*"(script|.*script.*)"' \
-                    | sed -n 's/.*\"id\"[[:space:]]*:[[:space:]]*\"\([^\"]*\)\".*/\1/p' \
-                    | head -n1
-                  )" || true
-                  [ -n "${EXEC_ID:-}" ] && break
-                  sleep 1
-                done
-                [ -z "${EXEC_ID:-}" ] && { echo "FATAL: could not find script execution id"; hold; }
-
-                /opt/keycloak/bin/kcadm.sh update "authentication/executions/${EXEC_ID}" -r "$REALM" -s 'requirement=REQUIRED'
-
-                sed -e "s|__WANT_ORG__|${GITHUB_ORG}|g" \
-                    -e "s|__WANT_TEAM__|${GITHUB_TEAM}|g" \
-                    /opt/keycloak/scripts/github-team-admin.js > /tmp/github-team-admin.resolved.js
-
-                local SCRIPT_ESCAPED
-                SCRIPT_ESCAPED="$(sed -e 's/\\/\\\\/g' -e 's/"/\\"/g' -e ':a;N;$!ba;s/\n/\\n/g' /tmp/github-team-admin.resolved.js)"
-                cat >/tmp/script-cfg.json <<EOF
-              { "alias": "GitHub Team Admin", "config": { "script": "${SCRIPT_ESCAPED}" } }
-              EOF
-                /opt/keycloak/bin/kcadm.sh create "authentication/executions/${EXEC_ID}/config" -r "$REALM" -f /tmp/script-cfg.json >/dev/null 2>&1 || {
-                  CFG_ID=$(/opt/keycloak/bin/kcadm.sh get "authentication/executions/${EXEC_ID}/config" -r "$REALM" \
-                              | json_objects_onelines \
-                              | sed -n 's/.*\"id\"[[:space:]]*:[[:space:]]*\"\([^\"]*\)\".*/\1/p' | head -n1)
-                  [ -n "${CFG_ID:-}" ] && /opt/keycloak/bin/kcadm.sh update "authentication/executions/${EXEC_ID}/config/${CFG_ID}" -r "$REALM" -f /tmp/script-cfg.json || true
-                }
-              }
-
-              set -x
+              # GitHub IdP (OIDC)
               /opt/keycloak/bin/kcadm.sh get identity-provider/instances/github -r "$REALM" >/dev/null 2>&1 && \
                 /opt/keycloak/bin/kcadm.sh delete identity-provider/instances/github -r "$REALM" || true
 
@@ -646,62 +484,70 @@ spec:
                 -s 'config.defaultScope=read:user user:email read:org' \
                 -s 'config.guiOrder=1' -s 'config.hideOnLoginPage=false' || true
 
-              cat >/tmp/mapper-email.json <<'JSON'
-              { "name":"email", "identityProviderAlias":"github",
-                "identityProviderMapper":"oidc-user-attribute-idp-mapper",
-                "config":{ "claim":"email", "user.attribute":"email", "syncMode":"INHERIT" } }
-              JSON
-              cat >/tmp/mapper-username.json <<'JSON'
-              { "name":"username", "identityProviderAlias":"github",
-                "identityProviderMapper":"oidc-user-attribute-idp-mapper",
-                "config":{ "claim":"login", "user.attribute":"username", "syncMode":"INHERIT" } }
-              JSON
-              cat >/tmp/mapper-name.json <<'JSON'
-              { "name":"name", "identityProviderAlias":"github",
-                "identityProviderMapper":"oidc-user-attribute-idp-mapper",
-                "config":{ "claim":"name", "user.attribute":"firstName", "syncMode":"INHERIT" } }
-              JSON
-              /opt/keycloak/bin/kcadm.sh create identity-provider/instances/github/mappers -r "$REALM" -f /tmp/mapper-email.json || true
-              /opt/keycloak/bin/kcadm.sh create identity-provider/instances/github/mappers -r "$REALM" -f /tmp/mapper-username.json || true
-              /opt/keycloak/bin/kcadm.sh create identity-provider/instances/github/mappers -r "$REALM" -f /tmp/mapper-name.json || true
-
-              if flow_exists; then
-                echo "Flow '${FLOW_ALIAS}' exists; will reset it."
-              else
-                echo "Creating flow '${FLOW_ALIAS}'..."
+              # Flow create/reset
+              if ! /opt/keycloak/bin/kcadm.sh get authentication/flows -r "$REALM" | grep -q "\"alias\"[[:space:]]*:[[:space:]]*\"$FLOW\""; then
                 /opt/keycloak/bin/kcadm.sh create authentication/flows -r "$REALM" \
-                  -s "alias=${FLOW_ALIAS}" \
-                  -s 'description=Grant realm-admin to members of a GitHub team' \
-                  -s providerId=basic-flow -s topLevel=true -s builtIn=false || true
+                  -s "alias=$FLOW" -s providerId=basic-flow -s topLevel=true -s builtIn=false \
+                  -s 'description=Grant realm-admin to members of a GitHub team'
               fi
 
-              purge_flow_executions
-              add_script_execution
+              # Purge executions
+              EXECS=$(/opt/keycloak/bin/kcadm.sh get "authentication/flows/$FLOW/executions" -r "$REALM" || echo "[]")
+              IDS=$(echo "$EXECS" | tr -d '\n' | sed 's/},[[:space:]]*{/}\n{/g' | sed -n 's/.*"id"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')
+              if [ -n "$IDS" ]; then
+                while read -r EID; do
+                  [ -n "$EID" ] && /opt/keycloak/bin/kcadm.sh delete "authentication/executions/$EID" -r "$REALM" || true
+                done <<<"$IDS"
+              fi
+
+              # Add our provider and set REQUIRED (with fallback path)
+              /opt/keycloak/bin/kcadm.sh create "authentication/flows/$FLOW/executions/execution" -r "$REALM" -s provider="$PROVIDER_ID"
+
+              EID=""
+              for i in {1..40}; do
+                EXECS=$(/opt/keycloak/bin/kcadm.sh get "authentication/flows/$FLOW/executions" -r "$REALM" || echo "[]")
+                EID=$(echo "$EXECS" | tr -d '\n' | sed 's/},[[:space:]]*{/}\n{/g' \
+                  | awk -v id="$PROVIDER_ID" '
+                      /"providerId"[[:space:]]*:[[:space:]]*"/ {p=$0}
+                      /"id"[[:space:]]*:/ && p ~ ("\"" id "\"") {match($0, /"id"[[:space:]]*:[[:space:]]*"([^"]+)"/, m); print m[1]; exit}
+                    ')
+                [ -n "$EID" ] && break || sleep 1
+              done
+              [ -n "${EID:-}" ] || { echo "❌ Could not discover execution id"; hold; }
+
+              ok=""
+              for i in {1..10}; do
+                if /opt/keycloak/bin/kcadm.sh update "authentication/executions/$EID" -r "$REALM" -s 'requirement=REQUIRED'; then
+                  ok="yes"; break
+                else
+                  sleep 1
+                fi
+              done
+              if [ -z "$ok" ]; then
+                echo "Falling back to flow-level update…"
+                printf '{ "id":"%s", "requirement":"REQUIRED" }\n' "$EID" >/tmp/r.json
+                /opt/keycloak/bin/kcadm.sh update "authentication/flows/$FLOW/executions" -r "$REALM" -f /tmp/r.json
+              fi
 
               /opt/keycloak/bin/kcadm.sh update identity-provider/instances/github -r "$REALM" \
-                -s "postBrokerLoginFlowAlias=${FLOW_ALIAS}" || true
+                -s "postBrokerLoginFlowAlias=$FLOW" || true
 
-              /opt/keycloak/bin/kcadm.sh update "realms/${REALM}" \
-                -s sslRequired=EXTERNAL \
-                -s loginWithEmailAllowed=true \
-                -s registrationAllowed=false \
-                -s rememberMe=true \
-                -s resetPasswordAllowed=true \
-                -s bruteForceProtected=true \
-                -s permanentLockout=false || true
+              /opt/keycloak/bin/kcadm.sh update "realms/$REALM" \
+                -s sslRequired=EXTERNAL -s loginWithEmailAllowed=true -s registrationAllowed=false \
+                -s rememberMe=true -s resetPasswordAllowed=true -s bruteForceProtected=true -s permanentLockout=false || true
 
-              set +x
-              echo "✔ Reset + reconfigure complete."
-              tail -f /dev/null
+              echo "✔ Configurator finished. Holding for logs."
+              hold
 
+        # --- Keycloak runtime ---
         - name: keycloak
-          image: quay.io/keycloak/keycloak:21.0.2
+          image: ghcr.io/dotcomrow/keycloak-image:24.0.5
           imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 8080
               name: http
           env:
-            # === DB connection ===
+            # DB
             - name: KC_DB
               value: "postgres"
             - name: KC_DB_URL
@@ -710,34 +556,20 @@ spec:
               value: "keycloak"
             - name: KC_DB_URL_PROPERTIES
               value: "currentSchema=keycloak"
-
-            # === Pool to calm first-boot migrations ===
             - name: KC_DB_POOL_INITIAL_SIZE
               value: "1"
             - name: KC_DB_POOL_MAX_SIZE
               value: "10"
 
-            # === Enable preview & scripts at build time ===
-            - name: KC_PROFILE
-              value: "preview"
-            - name: KC_FEATURES
-              value: "scripts"
-            - name: JAVA_OPTS_APPEND
-              value: "-Dkeycloak.profile=preview -Dkeycloak.profile.feature.scripts=enabled"
-
-            # === Logging ===
+            # Logging
             - name: KC_LOG
               value: "console,file"
             - name: KC_LOG_FILE
               value: "/opt/keycloak/data/log/keycloak.log"
             - name: KC_LOG_LEVEL
-              value: "DEBUG,liquibase:DEBUG,org.keycloak.storage.jpa:DEBUG,org.hibernate.SQL:DEBUG,org.hibernate.orm.jdbc.bind:TRACE"
-            - name: KC_DB_DEBUG_JPQL
-              value: "true"
-            - name: KC_DB_LOG_SLOW_QUERIES_THRESHOLD
-              value: "1"
+              value: "INFO,liquibase:INFO"
 
-            # === Hostname & HTTP ===
+            # Hostname & HTTP
             - name: KC_HOSTNAME_URL
               value: "https://keycloak.app.suncoast.systems"
             - name: KC_HOSTNAME_ADMIN_URL
@@ -767,19 +599,12 @@ spec:
               export KC_DB_USERNAME="$(cat /vault/secrets/db-username)"
               export KC_DB_PASSWORD="$(cat /vault/secrets/db-password)"
 
-              echo "🔧 Building server with 'scripts' feature…"
-              /opt/keycloak/bin/kc.sh build --features=scripts
+              # Export org/team for the custom provider
+              export GITHUB_ORG="$(cat /vault/secrets/github-org)"
+              export GITHUB_TEAM="$(cat /vault/secrets/github-admin-team)"
 
-              echo "▶️  Starting Keycloak (optimized)…"
-              set +e
-              /opt/keycloak/bin/kc.sh start --optimized
-              rc="$?"
-              set -e
-              if [ "$rc" -ne 0 ]; then
-                echo "❌ Keycloak exited (code $rc) — holding pod to prevent Kubernetes restarts."
-                echo "   🔍 Logs: kubectl -n keycloak logs deploy/keycloak -c keycloak --tail=-1"
-                tail -f /dev/null
-              fi
+              echo "▶️  Starting Keycloak (image already built with provider)…"
+              exec /opt/keycloak/bin/kc.sh start --optimized
           readinessProbe:
             httpGet:
               path: /health/ready
@@ -791,8 +616,5 @@ spec:
             requests: { cpu: "500m", memory: "1Gi" }
             limits:   { cpu: "2",    memory: "3Gi" }
           volumeMounts:
-            - name: kc-scripts
-              mountPath: /opt/keycloak/scripts
-              readOnly: true
             - name: keycloak-data
               mountPath: /opt/keycloak/data
