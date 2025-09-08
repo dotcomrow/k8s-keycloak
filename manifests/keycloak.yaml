@@ -140,7 +140,7 @@ spec:
               done
 
               psql -h "$PGHOST" -p "$PGPORT" -U "$VAULTADMIN_USER" -d yugabyte <<EOSQL
-              DO \$\$
+              DO $$
               BEGIN
                 IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = '${ROLE_GROUP}') THEN
                   CREATE ROLE ${ROLE_GROUP} NOLOGIN;
@@ -149,7 +149,7 @@ spec:
                   CREATE ROLE ${ROLE_OWNER} LOGIN INHERIT;
                 END IF;
               END
-              \$\$;
+              $$;
               GRANT ${ROLE_GROUP} TO ${ROLE_OWNER};
               GRANT ${ROLE_OWNER} TO ${VAULTADMIN_USER};
               EOSQL
@@ -340,11 +340,13 @@ spec:
       labels:
         app: keycloak
       annotations:
+        # Vault agent
         vault.hashicorp.com/agent-inject: "true"
         vault.hashicorp.com/role: "keycloak"
         vault.hashicorp.com/agent-init-first: "true"
         vault.hashicorp.com/agent-pre-populate: "true"
 
+        # DB creds (static)
         vault.hashicorp.com/agent-inject-secret-db-username: "yugabyte-db/static-creds/keycloak-app"
         vault.hashicorp.com/agent-inject-template-db-username: |
           {{- with secret "yugabyte-db/static-creds/keycloak-app" -}}{{ .Data.username }}{{- end -}}
@@ -352,6 +354,7 @@ spec:
         vault.hashicorp.com/agent-inject-template-db-password: |
           {{- with secret "yugabyte-db/static-creds/keycloak-app" -}}{{ .Data.password }}{{- end -}}
 
+        # Admin creds
         vault.hashicorp.com/agent-inject-secret-keycloak-admin: "secret/data/keycloak/admin"
         vault.hashicorp.com/agent-inject-template-keycloak-admin: |
           {{- with secret "secret/data/keycloak/admin" -}}
@@ -359,6 +362,7 @@ spec:
           export KEYCLOAK_ADMIN_PASSWORD={{ .Data.data.password }}
           {{- end -}}
 
+        # vaultadmin (preflight)
         vault.hashicorp.com/agent-inject-secret-vaultadmin: "secret/data/vaultadmin"
         vault.hashicorp.com/agent-inject-template-vaultadmin: |
           {{- with secret "secret/data/vaultadmin" -}}
@@ -369,6 +373,7 @@ spec:
           {{- end -}}
           {{- end -}}
 
+        # GitHub OAuth + org/team
         vault.hashicorp.com/agent-inject-secret-github-client-id: "secret/data/keycloak-oauth-client-id"
         vault.hashicorp.com/agent-inject-template-github-client-id: |
           {{- with secret "secret/data/keycloak-oauth-client-id" -}}{{ .Data.data.value }}{{- end -}}
@@ -382,6 +387,7 @@ spec:
         vault.hashicorp.com/agent-inject-template-github-admin-team: |
           {{- with secret "secret/data/k8s-teleport-teleport-github-admin-team" -}}{{ .Data.data.value }}{{- end -}}
 
+        # Linkerd: skip Vault + Postgres
         config.linkerd.io/skip-outbound-ports: "8200,5433"
     spec:
       serviceAccountName: keycloak
@@ -415,8 +421,7 @@ spec:
                   sleep 5
                   continue
                 fi
-                SUCC="$(kubectl -n vault get job keycloak-yugabyte-config -o jsonpath='{.status.succeeded}' 2>/dev/null || true)"
-                SUCC="${SUCC:-0}"
+                SUCC="$(kubectl -n vault get job keycloak-yugabyte-config -o jsonpath='{.status.succeeded}' 2>/dev/null || true)"; SUCC="${SUCC:-0}"
                 if [ "$SUCC" -ge 1 ] 2>/dev/null; then
                   echo "✅ DB bootstrap job is complete."
                   break
@@ -465,6 +470,7 @@ spec:
 
               export PGUSER="${PGADMIN_USER}"
               export PGPASSWORD="$(cat /vault/secrets/vaultadmin)"
+              export PGOPTIONS="-c default_transaction_isolation=read committed"
 
               echo "🔎 Preflight (admin): connecting to ${PGHOST}:${PGPORT}/${PGDATABASE} as ${PGUSER}..."
               until psql -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDATABASE" -tAc "select 1" >/dev/null 2>&1; do
@@ -573,6 +579,7 @@ spec:
                 sleep "$STEP"; waited=$((waited+STEP))
               done
               echo "✅ Admin API ready."
+              echo "⏳ Letting features settle for a moment…"; sleep 5
 
               echo "🔍 Server features snapshot:"
               /opt/keycloak/bin/kcadm.sh get serverinfo -r "$REALM" | grep -E '"profile"|"features"' -A2 || true
@@ -715,6 +722,7 @@ spec:
             - containerPort: 8080
               name: http
           env:
+            # === DB connection ===
             - name: KC_DB
               value: "postgres"
             - name: KC_DB_URL
@@ -722,8 +730,15 @@ spec:
             - name: KC_DB_SCHEMA
               value: "keycloak"
             - name: KC_DB_URL_PROPERTIES
-              value: "currentSchema=keycloak"
+              value: "currentSchema=keycloak&reWriteBatchedInserts=true&options=-c%20default_transaction_isolation%3Dread%20committed"
 
+            # === Pool to calm first-boot migrations ===
+            - name: KC_DB_POOL_INITIAL_SIZE
+              value: "1"
+            - name: KC_DB_POOL_MAX_SIZE
+              value: "10"
+
+            # === Enable preview & scripts ===
             - name: KC_PROFILE
               value: "preview"
             - name: KC_FEATURES
@@ -731,6 +746,7 @@ spec:
             - name: JAVA_OPTS_APPEND
               value: "-Dkeycloak.profile=preview -Dkeycloak.profile.feature.scripts=enabled"
 
+            # === Logging ===
             - name: KC_LOG
               value: "console,file"
             - name: KC_LOG_FILE
@@ -742,6 +758,7 @@ spec:
             - name: KC_DB_LOG_SLOW_QUERIES_THRESHOLD
               value: "1"
 
+            # === Hostname & HTTP ===
             - name: KC_HOSTNAME_URL
               value: "https://keycloak.app.suncoast.systems"
             - name: KC_HOSTNAME_ADMIN_URL
@@ -772,7 +789,7 @@ spec:
               # Ensure writable data dir (auto-build target)
               chown -R 1000:1000 /opt/keycloak/data || true
 
-              echo "▶️  Starting Keycloak 21.0.2 with --auto-build and 'scripts'…"
+              echo "▶️  Starting Keycloak 21.0.2 with --auto-build, profile=preview, features=scripts…"
               /opt/keycloak/bin/kc.sh show-config --all | egrep -i '(^profile=|features=)' || true
 
               set +e
