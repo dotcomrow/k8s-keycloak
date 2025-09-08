@@ -745,6 +745,8 @@ spec:
               value: "keycloak"
             - name: KC_DB_URL_PROPERTIES
               value: "currentSchema=keycloak"
+            - name: JAVA_OPTS_APPEND
+              value: "-Dkeycloak.profile=preview -Dkeycloak.profile.feature.scripts=enabled"
 
             # === Enable scripts feature & preview profile ===
             - name: KC_PROFILE
@@ -795,11 +797,15 @@ spec:
               echo "🔧 Building Keycloak with 'scripts' feature (21.0.2)…"
               /opt/keycloak/bin/kc.sh build --features=scripts
 
+              echo "🔎 Quarkus config (expect: profile=preview, features includes 'scripts')"
+              /opt/keycloak/bin/kc.sh show-config --all | grep -i -E 'profile|features' -A1 || true
+
               echo "▶️  Starting Keycloak with scripts enabled…"
               set +e
               /opt/keycloak/bin/kc.sh start --features=scripts
               rc="$?"
               set -e
+
               if [ "$rc" -ne 0 ]; then
                 echo "❌ Keycloak exited (code $rc) — holding pod to prevent Kubernetes restarts."
                 echo "   🔍 Logs: kubectl -n keycloak logs deploy/keycloak -c keycloak --tail=-1"
