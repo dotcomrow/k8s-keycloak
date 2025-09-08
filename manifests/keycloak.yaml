@@ -598,7 +598,6 @@ spec:
 
               # -------- helpers --------
               flow_exists() {
-                # Return 0 if a flow with alias == $FLOW_ALIAS exists
                 /opt/keycloak/bin/kcadm.sh get authentication/flows -r "$REALM" 2>/dev/null \
                   | json_objects_onelines \
                   | grep -q "\"alias\"[[:space:]]*:[[:space:]]*\"${FLOW_ALIAS}\""
@@ -621,13 +620,11 @@ spec:
               }
 
               add_script_execution() {
-                # Create a script execution; if 'script' provider is unavailable, hold (don’t exit).
                 if ! /opt/keycloak/bin/kcadm.sh create "authentication/flows/${FLOW_ALIAS}/executions/execution" -r "$REALM" -s provider=script >/dev/null 2>&1; then
-                  echo "FATAL: 'script' authenticator not available. Start Keycloak with KC_PROFILE=preview and --features=scripts."
+                  echo "FATAL: 'script' authenticator not available. Start Keycloak with KC_PROFILE=preview and include 'scripts' at build."
                   hold
                 fi
 
-                # Find the new execution id
                 local EXEC_ID=""
                 for i in $(seq 1 20); do
                   EXEC_ID="$(
@@ -644,7 +641,6 @@ spec:
 
                 /opt/keycloak/bin/kcadm.sh update "authentication/executions/${EXEC_ID}" -r "$REALM" -s 'requirement=REQUIRED'
 
-                # Substitute org/team into the JS and attach as config
                 sed -e "s|__WANT_ORG__|${GITHUB_ORG}|g" \
                     -e "s|__WANT_TEAM__|${GITHUB_TEAM}|g" \
                     /opt/keycloak/scripts/github-team-admin.js > /tmp/github-team-admin.resolved.js
@@ -675,7 +671,7 @@ spec:
                 -s 'config.defaultScope=read:user user:email read:org' \
                 -s 'config.guiOrder=1' -s 'config.hideOnLoginPage=false' || true
 
-              # Mappers (create won’t fail the script if they already exist)
+              # Mappers (idempotent)
               cat >/tmp/mapper-email.json <<'JSON'
               { "name":"email", "identityProviderAlias":"github",
                 "identityProviderMapper":"oidc-user-attribute-idp-mapper",
@@ -725,7 +721,6 @@ spec:
 
               set +x
               echo "✔ Reset + reconfigure complete."
-              # Keep the container up, but do not retry.
               tail -f /dev/null
 
         - name: keycloak
@@ -735,7 +730,6 @@ spec:
             - containerPort: 8080
               name: http
           env:
-            # === DB connection ===
             - name: KC_DB
               value: "postgres"
             - name: KC_DB_URL
@@ -744,13 +738,10 @@ spec:
               value: "keycloak"
             - name: KC_DB_URL_PROPERTIES
               value: "currentSchema=keycloak"
-            # === Migration: FORCE UPDATE ===
             - name: KC_SPI_CONNECTIONS_JPA__QUARKUS__MIGRATION_STRATEGY
               value: "update"
-            # Fail fast on DB locks
             - name: KC_SPI_DBLOCK__JPA__LOCK_WAIT_TIMEOUT
               value: "60"
-            # === Logging: max visibility ===
             - name: KC_LOG
               value: "console,file"
             - name: KC_LOG_FILE
@@ -761,7 +752,6 @@ spec:
               value: "true"
             - name: KC_DB_LOG_SLOW_QUERIES_THRESHOLD
               value: "1"
-            # === Hostname & features ===
             - name: KC_HOSTNAME_URL
               value: "https://keycloak.app.suncoast.systems"
             - name: KC_HOSTNAME_ADMIN_URL
@@ -780,8 +770,6 @@ spec:
               value: "/"
             - name: KC_HTTP_COOKIE_SAME_SITE
               value: "LAX"
-            - name: KC_FEATURES
-              value: "scripts"
             - name: KC_PROFILE
               value: "preview"
           command: ["/bin/bash","-lc"]
@@ -793,9 +781,23 @@ spec:
               export KC_DB_USERNAME="$(cat /vault/secrets/db-username)"
               export KC_DB_PASSWORD="$(cat /vault/secrets/db-password)"
 
-              echo "▶️  Starting Keycloak with --verbose and forced migration (update)…"
+              # Build once with scripts feature baked-in
+              if [ ! -f /opt/keycloak/data/.kc_built_with_scripts ]; then
+                echo "🔧 Building Keycloak with 'scripts' feature..."
+                /opt/keycloak/bin/kc.sh build \
+                  --features=scripts \
+                  --db=postgres \
+                  --health-enabled=true \
+                  --http-enabled=true
+                touch /opt/keycloak/data/.kc_built_with_scripts
+                echo "✅ Build completed."
+              else
+                echo "ℹ️  Already built with scripts; skipping build."
+              fi
+
+              echo "▶️  Starting Keycloak (verbose)…"
               set +e
-              /opt/keycloak/bin/kc.sh start --features=scripts --verbose
+              /opt/keycloak/bin/kc.sh start --verbose
               rc="$?"
               set -e
               if [ "$rc" -ne 0 ]; then
