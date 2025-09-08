@@ -202,12 +202,13 @@ spec:
 
               # --- Policy & K8s role for the Keycloak pod ---
               vault policy write "keycloak" - <<'EOF'
-              path "yugabyte-db/static-creds/keycloak-app" { capabilities = ["read"] }
-              path "secret/data/keycloak/admin"            { capabilities = ["read"] }
-              path "secret/data/vaultadmin"                { capabilities = ["read"] }
-              path "secret/data/keycloak-oauth-client-id"  { capabilities = ["read"] }
-              path "secret/data/keycloak-oauth-client-secret" { capabilities = ["read"] }
-              path "secret/data/k8s-teleport-teleport-github-org" { capabilities = ["read"] }
+              path "yugabyte-db/static-creds/keycloak-app"               { capabilities = ["read"] }
+              path "secret/data/keycloak/admin"                           { capabilities = ["read"] }
+              path "secret/data/vaultadmin"                               { capabilities = ["read"] }
+              path "secret/data/keycloak-oauth-client-id"                 { capabilities = ["read"] }
+              path "secret/data/keycloak-oauth-client-secret"             { capabilities = ["read"] }
+              path "secret/data/k8s-teleport-teleport-github-org"         { capabilities = ["read"] }
+              path "secret/data/k8s-teleport-teleport-github-admin-team"  { capabilities = ["read"] }
               EOF
 
               vault write auth/kubernetes/role/keycloak \
@@ -285,9 +286,11 @@ data:
     var Logger = Java.type("org.jboss.logging.Logger");
     var LOG = Logger.getLogger("github-team-admin");
 
-    // PLACEHOLDERS — configurator will substitute these before upload
-    var WANT_ORG  = "<path:secret/data/k8s-teleport-teleport-github-org#value>";
-    var WANT_TEAM = "<path:secret/data/k8s-teleport-teleport-github-admin-team#value>";
+    // These markers are substituted by the configurator before upload:
+    //   __WANT_ORG__  ← GitHub org login (e.g. "my-org")
+    //   __WANT_TEAM__ ← Team slug (e.g. "keycloak_admins")
+    var WANT_ORG  = "__WANT_ORG__";
+    var WANT_TEAM = "__WANT_TEAM__";
     var IDP_ALIAS = "github";
 
     function authenticate(context) {
@@ -381,7 +384,7 @@ spec:
           {{- end -}}
           {{- end -}}
 
-        # NEW: GitHub OAuth app creds + org (from Vault)
+        # GitHub OAuth app creds + org/team (from Vault)
         vault.hashicorp.com/agent-inject-secret-github-client-id: "secret/data/keycloak-oauth-client-id"
         vault.hashicorp.com/agent-inject-template-github-client-id: |
           {{- with secret "secret/data/keycloak-oauth-client-id" -}}{{ .Data.data.value }}{{- end -}}
@@ -391,6 +394,9 @@ spec:
         vault.hashicorp.com/agent-inject-secret-github-org: "secret/data/k8s-teleport-teleport-github-org"
         vault.hashicorp.com/agent-inject-template-github-org: |
           {{- with secret "secret/data/k8s-teleport-teleport-github-org" -}}{{ .Data.data.value }}{{- end -}}
+        vault.hashicorp.com/agent-inject-secret-github-admin-team: "secret/data/k8s-teleport-teleport-github-admin-team"
+        vault.hashicorp.com/agent-inject-template-github-admin-team: |
+          {{- with secret "secret/data/k8s-teleport-teleport-github-admin-team" -}}{{ .Data.data.value }}{{- end -}}
 
         # Linkerd: skip Vault + Postgres ports
         config.linkerd.io/skip-outbound-ports: "8200,5433"
@@ -449,9 +455,9 @@ spec:
             - name: PGSCHEMA_OWNER
               value: "keycloak_app"
             - name: KC_FORCE_RESET_SCHEMA_ON_CONFLICT
-              value: "true"   # drop schema if legacy tables exist
+              value: "true"
             - name: KC_CLEAR_CHANGELOG_CHECKSUMS
-              value: "true"   # set md5sum=NULL to force recalculation
+              value: "true"
             - name: PGADMIN_USER
               value: "vaultadmin"
           command: ["/bin/sh","-lc"]
@@ -526,9 +532,6 @@ spec:
         - name: keycloak-configurator
           image: quay.io/keycloak/keycloak:24.0.5
           imagePullPolicy: IfNotPresent
-          env:
-            - name: GITHUB_TEAM
-              value: "<path:secret/data/k8s-teleport-teleport-github-admin-team#value>"   # override if your team slug differs
           command: ["/bin/bash","-lc"]
           resources:
             requests: { cpu: "100m", memory: "128Mi" }
@@ -545,12 +548,16 @@ spec:
               SERVER="http://127.0.0.1:8080"
               FLOW_ALIAS="GitHub-PostLogin"
 
-              # --- Admin creds & GitHub secrets (Vault-injected files) ---
+              # --- Admin creds & GitHub secrets (Vault-injected files ONLY) ---
               source /vault/secrets/keycloak-admin
               CLIENT_ID="$(cat /vault/secrets/github-client-id)"
               CLIENT_SECRET="$(cat /vault/secrets/github-client-secret)"
               GITHUB_ORG="$(cat /vault/secrets/github-org)"
-              GITHUB_TEAM="${GITHUB_TEAM}"
+              GITHUB_TEAM="$(cat /vault/secrets/github-admin-team)"
+
+              if [ -z "${GITHUB_ORG}" ] || [ -z "${GITHUB_TEAM}" ]; then
+                echo "FATAL: Missing GitHub org/team from Vault-injected files"; exit 1
+              fi
 
               json_objects_onelines() { tr -d '\n' | sed 's/},[[:space:]]*{/}\n{/g'; }
 
@@ -633,9 +640,16 @@ spec:
               }
 
               add_script_execution() {
+                # 1) Ensure script execution node exists
                 /opt/keycloak/bin/kcadm.sh create "authentication/flows/${FLOW_ALIAS}/executions/execution" -r "$REALM" \
                   -s provider=script >/dev/null 2>&1 || true
 
+                # 2) Resolve placeholders and prepare config payload
+                sed -e "s|__WANT_ORG__|${GITHUB_ORG}|g" \
+                    -e "s|__WANT_TEAM__|${GITHUB_TEAM}|g" \
+                    /opt/keycloak/scripts/github-team-admin.js > /tmp/github-team-admin.resolved.js
+
+                # 3) Find execution id
                 local EXEC_ID=""
                 for i in $(seq 1 20); do
                   EXEC_ID="$(
@@ -650,13 +664,7 @@ spec:
                 done
                 [ -z "${EXEC_ID:-}" ] && { echo "FATAL: could not find script execution id"; exit 1; }
 
-                /opt/keycloak/bin/kcadm.sh update "authentication/executions/${EXEC_ID}" -r "$REALM" -s 'requirement=REQUIRED'
-
-                # Substitute org/team into the JS and attach as config
-                sed -e "s|__WANT_ORG__|${GITHUB_ORG}|g" \
-                    -e "s|__WANT_TEAM__|${GITHUB_TEAM}|g" \
-                    /opt/keycloak/scripts/github-team-admin.js > /tmp/github-team-admin.resolved.js
-
+                # 4) Attach/Update CONFIG FIRST
                 local SCRIPT_ESCAPED
                 SCRIPT_ESCAPED="$(sed -e 's/\\/\\\\/g' -e 's/"/\\"/g' -e ':a;N;$!ba;s/\n/\\n/g' /tmp/github-team-admin.resolved.js)"
                 cat >/tmp/script-cfg.json <<EOF
@@ -668,6 +676,9 @@ spec:
                               | sed -n 's/.*"id"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -n1)
                   [ -n "${CFG_ID:-}" ] && /opt/keycloak/bin/kcadm.sh update "authentication/executions/${EXEC_ID}/config/${CFG_ID}" -r "$REALM" -f /tmp/script-cfg.json
                 }
+
+                # 5) THEN set requirement to REQUIRED
+                /opt/keycloak/bin/kcadm.sh update "authentication/executions/${EXEC_ID}" -r "$REALM" -s 'requirement=REQUIRED'
               }
 
               wait_admin
@@ -807,7 +818,6 @@ spec:
                 echo "   🔍 Try: kubectl -n keycloak logs deploy/keycloak -c keycloak --tail=-1"
                 tail -f /dev/null
               fi
-          # Readiness only; no startup/liveness → no restart loops
           readinessProbe:
             httpGet:
               path: /health/ready
