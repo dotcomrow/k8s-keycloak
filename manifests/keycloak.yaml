@@ -72,8 +72,8 @@ spec:
               PGHOST=yb-tserver-service.yugabyte.svc.cluster.local
               PGPORT=5433
               DB=keycloak
-              ROLE_GROUP=keycloak
-              ROLE_OWNER=keycloak_app
+              ROLE_GROUP=keycloak          # NOLOGIN group
+              ROLE_OWNER=keycloak_app      # LOGIN stable owner
               VAULTADMIN_USER=vaultadmin
 
               apk add --no-cache postgresql15-client jq netcat-openbsd curl
@@ -373,7 +373,7 @@ spec:
           export KEYCLOAK_ADMIN_PASSWORD={{ .Data.data.password }}
           {{- end -}}
 
-        # vaultadmin password for privileged preflight (no Sprig funcs)
+        # vaultadmin password for privileged preflight
         vault.hashicorp.com/agent-inject-secret-vaultadmin: "secret/data/vaultadmin"
         vault.hashicorp.com/agent-inject-template-vaultadmin: |
           {{- with secret "secret/data/vaultadmin" -}}
@@ -580,7 +580,7 @@ spec:
 
               # --- Bounded wait for admin API; on timeout -> hold (no restart) ---
               echo "Waiting for Keycloak admin API..."
-              MAX_WAIT=600
+              MAX_WAIT=600   # seconds
               STEP=5
               waited=0
               until /opt/keycloak/bin/kcadm.sh config credentials \
@@ -603,6 +603,19 @@ spec:
                   | grep -q "\"alias\"[[:space:]]*:[[:space:]]*\"${FLOW_ALIAS}\""
               }
 
+              get_script_provider_id() {
+                # Discover the exact id of the script authenticator provider
+                local PID
+                PID="$(
+                  /opt/keycloak/bin/kcadm.sh get authentication/authenticator-providers -r "$REALM" 2>/dev/null \
+                  | json_objects_onelines \
+                  | awk -F'"' '/"id"[[:space:]]*:[[:space:]]*"/{print $4}' \
+                  | grep -E '^(script|script-.*|.*script.*)$' \
+                  | head -n1
+                )" || true
+                echo -n "${PID:-}"
+              }
+
               purge_flow_executions() {
                 echo "Purging executions under flow '${FLOW_ALIAS}'..."
                 local loop_guard=0
@@ -620,17 +633,31 @@ spec:
               }
 
               add_script_execution() {
-                if ! /opt/keycloak/bin/kcadm.sh create "authentication/flows/${FLOW_ALIAS}/executions/execution" -r "$REALM" -s provider=script >/dev/null 2>&1; then
-                  echo "FATAL: 'script' authenticator not available. Start Keycloak with KC_PROFILE=preview and include 'scripts' at build."
+                local SCRIPT_PROVIDER_ID
+                SCRIPT_PROVIDER_ID="$(get_script_provider_id)"
+
+                if [ -z "${SCRIPT_PROVIDER_ID:-}" ]; then
+                  echo "FATAL: No script authenticator provider is registered."
+                  echo "       Ensure the Keycloak server is built **and started** with the 'scripts' feature and KC_PROFILE=preview."
+                  echo "       You can verify with: kcadm.sh get authentication/authenticator-providers -r ${REALM}"
+                  hold
+                else
+                  echo "ℹ️  Using script provider id: ${SCRIPT_PROVIDER_ID}"
+                fi
+
+                if ! /opt/keycloak/bin/kcadm.sh create "authentication/flows/${FLOW_ALIAS}/executions/execution" \
+                     -r "$REALM" -s "provider=${SCRIPT_PROVIDER_ID}" >/dev/null 2>&1; then
+                  echo "FATAL: Unable to create execution using provider='${SCRIPT_PROVIDER_ID}'."
                   hold
                 fi
 
+                # Find the new execution id
                 local EXEC_ID=""
                 for i in $(seq 1 20); do
                   EXEC_ID="$(
                     /opt/keycloak/bin/kcadm.sh get "authentication/flows/${FLOW_ALIAS}/executions" -r "$REALM" 2>/dev/null \
                     | json_objects_onelines \
-                    | grep -E '"providerId"[[:space:]]*:[[:space:]]*"script"' \
+                    | grep -E "\"providerId\"[[:space:]]*:[[:space:]]*\"${SCRIPT_PROVIDER_ID}\"" \
                     | sed -n 's/.*"id"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' \
                     | head -n1
                   )" || true
@@ -641,6 +668,7 @@ spec:
 
                 /opt/keycloak/bin/kcadm.sh update "authentication/executions/${EXEC_ID}" -r "$REALM" -s 'requirement=REQUIRED'
 
+                # Substitute org/team into the JS and attach as config
                 sed -e "s|__WANT_ORG__|${GITHUB_ORG}|g" \
                     -e "s|__WANT_TEAM__|${GITHUB_TEAM}|g" \
                     /opt/keycloak/scripts/github-team-admin.js > /tmp/github-team-admin.resolved.js
@@ -671,7 +699,7 @@ spec:
                 -s 'config.defaultScope=read:user user:email read:org' \
                 -s 'config.guiOrder=1' -s 'config.hideOnLoginPage=false' || true
 
-              # Mappers (idempotent)
+              # Mappers (idempotent creates)
               cat >/tmp/mapper-email.json <<'JSON'
               { "name":"email", "identityProviderAlias":"github",
                 "identityProviderMapper":"oidc-user-attribute-idp-mapper",
@@ -721,6 +749,7 @@ spec:
 
               set +x
               echo "✔ Reset + reconfigure complete."
+              # Keep the container up, but do not retry.
               tail -f /dev/null
 
         - name: keycloak
@@ -739,12 +768,12 @@ spec:
               value: "keycloak"
             - name: KC_DB_URL_PROPERTIES
               value: "currentSchema=keycloak"
-            # Migration
+            # === Migration: FORCE UPDATE ===
             - name: KC_SPI_CONNECTIONS_JPA__QUARKUS__MIGRATION_STRATEGY
               value: "update"
             - name: KC_SPI_DBLOCK__JPA__LOCK_WAIT_TIMEOUT
               value: "60"
-            # Logging
+            # === Logging ===
             - name: KC_LOG
               value: "console,file"
             - name: KC_LOG_FILE
@@ -755,7 +784,7 @@ spec:
               value: "true"
             - name: KC_DB_LOG_SLOW_QUERIES_THRESHOLD
               value: "1"
-            # Hostname & features profile
+            # === Hostname & features ===
             - name: KC_HOSTNAME_URL
               value: "https://keycloak.app.suncoast.systems"
             - name: KC_HOSTNAME_ADMIN_URL
@@ -774,6 +803,7 @@ spec:
               value: "/"
             - name: KC_HTTP_COOKIE_SAME_SITE
               value: "LAX"
+            # Enable preview + scripts at runtime
             - name: KC_PROFILE
               value: "preview"
             - name: KC_FEATURES
@@ -787,21 +817,19 @@ spec:
               export KC_DB_USERNAME="$(cat /vault/secrets/db-username)"
               export KC_DB_PASSWORD="$(cat /vault/secrets/db-password)"
 
-              # Build once with 'scripts' feature baked-in (no runtime-only flags here)
+              # Build once with scripts + postgres driver
               if [ ! -f /opt/keycloak/data/.kc_built_with_scripts ]; then
                 echo "🔧 Building Keycloak with 'scripts' feature..."
-                /opt/keycloak/bin/kc.sh build \
-                  --features=scripts \
-                  --db=postgres
+                /opt/keycloak/bin/kc.sh build --features=scripts --db=postgres
                 touch /opt/keycloak/data/.kc_built_with_scripts
                 echo "✅ Build completed."
               else
                 echo "ℹ️  Already built with scripts; skipping build."
               fi
 
-              echo "▶️  Starting Keycloak (verbose)…"
+              echo "▶️  Starting Keycloak (verbose) with scripts enabled…"
               set +e
-              /opt/keycloak/bin/kc.sh start --verbose
+              /opt/keycloak/bin/kc.sh start --features=scripts --verbose
               rc="$?"
               set -e
               if [ "$rc" -ne 0 ]; then
