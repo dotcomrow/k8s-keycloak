@@ -696,6 +696,7 @@ spec:
             - containerPort: 8080
               name: http
           env:
+            # === DB connection ===
             - name: KC_DB
               value: "postgres"
             - name: KC_DB_URL
@@ -705,7 +706,7 @@ spec:
             - name: KC_DB_URL_PROPERTIES
               value: "currentSchema=keycloak"
 
-            # Enable preview+scripts via env/JVM (no CLI --profile flag on 21.x)
+            # === Enable preview & scripts (build-time/runtime) ===
             - name: KC_PROFILE
               value: "preview"
             - name: KC_FEATURES
@@ -713,7 +714,7 @@ spec:
             - name: JAVA_OPTS_APPEND
               value: "-Dkeycloak.profile=preview -Dkeycloak.profile.feature.scripts=enabled"
 
-            # Logging
+            # === Logging ===
             - name: KC_LOG
               value: "console,file"
             - name: KC_LOG_FILE
@@ -725,7 +726,7 @@ spec:
             - name: KC_DB_LOG_SLOW_QUERIES_THRESHOLD
               value: "1"
 
-            # Hostname & HTTP
+            # === Hostname & HTTP ===
             - name: KC_HOSTNAME_URL
               value: "https://keycloak.app.suncoast.systems"
             - name: KC_HOSTNAME_ADMIN_URL
@@ -744,31 +745,29 @@ spec:
               value: "/"
             - name: KC_HTTP_COOKIE_SAME_SITE
               value: "LAX"
-          command: ["/bin/bash", "-c"]
-          args:
-            - |
-              set -euo pipefail
-              mkdir -p /opt/keycloak/data/log
-              source /vault/secrets/keycloak-admin
-              export KC_DB_USERNAME="$(cat /vault/secrets/db-username)"
-              export KC_DB_PASSWORD="$(cat /vault/secrets/db-password)"
+          command: ["/bin/bash","-lc"]
+          args: |
+            set -euo pipefail
+            mkdir -p /opt/keycloak/data/log
+            source /vault/secrets/keycloak-admin
+            export KC_DB_USERNAME="$(cat /vault/secrets/db-username)"
+            export KC_DB_PASSWORD="$(cat /vault/secrets/db-password)"
 
-              echo "🔧 Building Keycloak with 'scripts' feature (21.0.2)…"
-              /opt/keycloak/bin/kc.sh build --features=scripts
+            echo "▶️  Starting Keycloak 21.0.2 with --auto-build and 'scripts'…"
+            # One-shot sanity banner of config that matters
+            /opt/keycloak/bin/kc.sh show-config --all | egrep -i '(^profile=|features=)' || true
 
-              echo "🔎 Quarkus config (expect: profile=preview, features includes 'scripts')"
-              /opt/keycloak/bin/kc.sh show-config --all | grep -i -E 'profile|features' -A1 || true
-
-              echo "▶️  Starting Keycloak…"
-              set +e
-              /opt/keycloak/bin/kc.sh start --features=scripts
-              rc="$?"
-              set -e
-              if [ "$rc" -ne 0 ]; then
-                echo "❌ Keycloak exited (code $rc) — holding pod to prevent Kubernetes restarts."
-                echo "   🔍 Logs: kubectl -n keycloak logs deploy/keycloak -c keycloak --tail=-1"
-                tail -f /dev/null
-              fi
+            set +e
+            /opt/keycloak/bin/kc.sh start \
+              --auto-build \
+              --features=scripts
+            rc="$?"
+            set -e
+            if [ "$rc" -ne 0 ]; then
+              echo "❌ Keycloak exited (code $rc) — holding pod to prevent Kubernetes restarts."
+              echo "   🔍 Logs: kubectl -n keycloak logs deploy/keycloak -c keycloak --tail=-1"
+              tail -f /dev/null
+            fi
           readinessProbe:
             httpGet:
               path: /health/ready
@@ -777,12 +776,8 @@ spec:
             failureThreshold: 6
             timeoutSeconds: 5
           resources:
-            requests:
-              cpu: "500m"
-              memory: "1Gi"
-            limits:
-              cpu: "2"
-              memory: "3Gi"
+            requests: { cpu: "500m", memory: "1Gi" }
+            limits:   { cpu: "2",    memory: "3Gi" }
           volumeMounts:
             - name: kc-scripts
               mountPath: /opt/keycloak/scripts
