@@ -722,6 +722,7 @@ spec:
             - containerPort: 8080
               name: http
           env:
+            # === DB connection ===
             - name: KC_DB
               value: "postgres"
             - name: KC_DB_URL
@@ -729,13 +730,21 @@ spec:
             - name: KC_DB_SCHEMA
               value: "keycloak"
             - name: KC_DB_URL_PROPERTIES
-              value: "currentSchema=keycloak&reWriteBatchedInserts=true&options=-c%20default_transaction_isolation%3Dread%20committed"
+              value: >-
+                currentSchema=keycloak
+                &reWriteBatchedInserts=true
+                &preferQueryMode=simple
+                &autosave=always
+                &ApplicationName=keycloak
+                &options=-c%20default_transaction_isolation%3Dread%20committed%20-c%20yb_enable_read_committed_isolation%3Don
 
+            # === Pool (keep small during migrations) ===
             - name: KC_DB_POOL_INITIAL_SIZE
               value: "1"
             - name: KC_DB_POOL_MAX_SIZE
               value: "10"
 
+            # === Enable preview & scripts ===
             - name: KC_PROFILE
               value: "preview"
             - name: KC_FEATURES
@@ -743,6 +752,7 @@ spec:
             - name: JAVA_OPTS_APPEND
               value: "-Dkeycloak.profile=preview -Dkeycloak.profile.feature.scripts=enabled"
 
+            # === Logging ===
             - name: KC_LOG
               value: "console,file"
             - name: KC_LOG_FILE
@@ -754,6 +764,7 @@ spec:
             - name: KC_DB_LOG_SLOW_QUERIES_THRESHOLD
               value: "1"
 
+            # === Hostname & HTTP ===
             - name: KC_HOSTNAME_URL
               value: "https://keycloak.app.suncoast.systems"
             - name: KC_HOSTNAME_ADMIN_URL
