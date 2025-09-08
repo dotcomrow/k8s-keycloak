@@ -746,7 +746,8 @@ spec:
             - name: KC_HTTP_COOKIE_SAME_SITE
               value: "LAX"
           command: ["/bin/bash","-lc"]
-          args: |
+          args: 
+          - |
             set -euo pipefail
             mkdir -p /opt/keycloak/data/log
             source /vault/secrets/keycloak-admin
