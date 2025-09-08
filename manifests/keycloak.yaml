@@ -202,13 +202,13 @@ spec:
 
               # --- Policy & K8s role for the Keycloak pod ---
               vault policy write "keycloak" - <<'EOF'
-              path "yugabyte-db/static-creds/keycloak-app"               { capabilities = ["read"] }
-              path "secret/data/keycloak/admin"                           { capabilities = ["read"] }
-              path "secret/data/vaultadmin"                               { capabilities = ["read"] }
-              path "secret/data/keycloak-oauth-client-id"                 { capabilities = ["read"] }
-              path "secret/data/keycloak-oauth-client-secret"             { capabilities = ["read"] }
-              path "secret/data/k8s-teleport-teleport-github-org"         { capabilities = ["read"] }
-              path "secret/data/k8s-teleport-teleport-github-admin-team"  { capabilities = ["read"] }
+              path "yugabyte-db/static-creds/keycloak-app"        { capabilities = ["read"] }
+              path "secret/data/keycloak/admin"                   { capabilities = ["read"] }
+              path "secret/data/vaultadmin"                       { capabilities = ["read"] }
+              path "secret/data/keycloak-oauth-client-id"         { capabilities = ["read"] }
+              path "secret/data/keycloak-oauth-client-secret"     { capabilities = ["read"] }
+              path "secret/data/k8s-teleport-teleport-github-org" { capabilities = ["read"] }
+              path "secret/data/k8s-teleport-teleport-github-admin-team" { capabilities = ["read"] }
               EOF
 
               vault write auth/kubernetes/role/keycloak \
@@ -323,7 +323,7 @@ data:
 
       var client = session.clients().getClientByClientId(realm, "realm-management");
       var adminRole = client.getRole("realm-admin");
-      if (isMember) { 
+      if (isMember) {
         LOG.info("Granting realm-admin to " + user.getUsername());
         user.grantRole(adminRole);
       } else {
@@ -384,7 +384,7 @@ spec:
           {{- end -}}
           {{- end -}}
 
-        # GitHub OAuth app creds + org/team (from Vault)
+        # GitHub OAuth app creds + org + admin team (Vault only; no fallbacks)
         vault.hashicorp.com/agent-inject-secret-github-client-id: "secret/data/keycloak-oauth-client-id"
         vault.hashicorp.com/agent-inject-template-github-client-id: |
           {{- with secret "secret/data/keycloak-oauth-client-id" -}}{{ .Data.data.value }}{{- end -}}
@@ -548,15 +548,15 @@ spec:
               SERVER="http://127.0.0.1:8080"
               FLOW_ALIAS="GitHub-PostLogin"
 
-              # --- Admin creds & GitHub secrets (Vault-injected files ONLY) ---
+              # --- Admin creds & GitHub secrets from Vault files (no fallbacks) ---
               source /vault/secrets/keycloak-admin
               CLIENT_ID="$(cat /vault/secrets/github-client-id)"
               CLIENT_SECRET="$(cat /vault/secrets/github-client-secret)"
               GITHUB_ORG="$(cat /vault/secrets/github-org)"
               GITHUB_TEAM="$(cat /vault/secrets/github-admin-team)"
 
-              if [ -z "${GITHUB_ORG}" ] || [ -z "${GITHUB_TEAM}" ]; then
-                echo "FATAL: Missing GitHub org/team from Vault-injected files"; exit 1
+              if [ -z "$GITHUB_ORG" ] || [ -z "$GITHUB_TEAM" ]; then
+                echo "FATAL: missing GitHub org/team from Vault (github-org, github-admin-team)."; exit 1
               fi
 
               json_objects_onelines() { tr -d '\n' | sed 's/},[[:space:]]*{/}\n{/g'; }
@@ -570,32 +570,9 @@ spec:
                 done
               }
 
-              wait_idp() {
-                until /opt/keycloak/bin/kcadm.sh get identity-provider/instances/github -r "$REALM" >/dev/null 2>&1; do
-                  sleep 1
-                done
-              }
-
               # -------- helpers --------
               flow_exists() {
                 /opt/keycloak/bin/kcadm.sh get "authentication/flows/${FLOW_ALIAS}" -r "$REALM" >/dev/null 2>&1
-              }
-
-              wait_script_feature() {
-                local tries=0 max=60
-                while :; do
-                  if /opt/keycloak/bin/kcadm.sh get authentication/authenticator-providers -r "$REALM" 2>/dev/null \
-                      | tr -d '\n' | sed 's/},[[:space:]]*{/}\n{/g' \
-                      | grep -q '"id"[[:space:]]*:[[:space:]]*"script"'; then
-                    return 0
-                  fi
-                  tries=$((tries+1))
-                  [ "$tries" -ge "$max" ] && {
-                    echo "FATAL: 'script' authenticator not registered. Start Keycloak with --features=scripts (KC_FEATURES=scripts)."
-                    exit 1
-                  }
-                  sleep 2
-                done
               }
 
               purge_flow_executions() {
@@ -616,40 +593,14 @@ spec:
                 echo "WARN: executions may still remain (loop guard tripped); continuing."
               }
 
-              ensure_flow_exists() {
-                if flow_exists; then
-                  echo "Flow '${FLOW_ALIAS}' exists; will reset it."
-                else
-                  echo "Creating flow '${FLOW_ALIAS}'..."
-                  /opt/keycloak/bin/kcadm.sh create authentication/flows -r "$REALM" \
-                    -s "alias=${FLOW_ALIAS}" \
-                    -s 'description=Grant realm-admin to members of a GitHub team' \
-                    -s providerId=basic-flow -s topLevel=true -s builtIn=false
-                fi
-              }
-
-              create_mapper_file() {
-                local file="$1" tries=0
-                while :; do
-                  if /opt/keycloak/bin/kcadm.sh create identity-provider/instances/github/mappers -r "$REALM" -f "$file"; then
-                    return 0
-                  fi
-                  tries=$((tries+1)); [ "$tries" -ge 12 ] && { echo "FATAL: failed to create mapper from $file"; exit 1; }
-                  sleep 2
-                done
-              }
-
               add_script_execution() {
-                # 1) Ensure script execution node exists
-                /opt/keycloak/bin/kcadm.sh create "authentication/flows/${FLOW_ALIAS}/executions/execution" -r "$REALM" \
-                  -s provider=script >/dev/null 2>&1 || true
+                # Attempt to create a script execution — if feature isn't enabled, this call fails → hard error.
+                if ! /opt/keycloak/bin/kcadm.sh create "authentication/flows/${FLOW_ALIAS}/executions/execution" -r "$REALM" -s provider=script >/dev/null 2>&1; then
+                  echo "FATAL: 'script' authenticator not available. Ensure Keycloak starts with KC_PROFILE=preview and --features=scripts (KC_FEATURES=scripts)."
+                  exit 1
+                fi
 
-                # 2) Resolve placeholders and prepare config payload
-                sed -e "s|__WANT_ORG__|${GITHUB_ORG}|g" \
-                    -e "s|__WANT_TEAM__|${GITHUB_TEAM}|g" \
-                    /opt/keycloak/scripts/github-team-admin.js > /tmp/github-team-admin.resolved.js
-
-                # 3) Find execution id
+                # Find the new execution id
                 local EXEC_ID=""
                 for i in $(seq 1 20); do
                   EXEC_ID="$(
@@ -664,7 +615,13 @@ spec:
                 done
                 [ -z "${EXEC_ID:-}" ] && { echo "FATAL: could not find script execution id"; exit 1; }
 
-                # 4) Attach/Update CONFIG FIRST
+                /opt/keycloak/bin/kcadm.sh update "authentication/executions/${EXEC_ID}" -r "$REALM" -s 'requirement=REQUIRED'
+
+                # Substitute org/team into the JS and attach as config
+                sed -e "s|__WANT_ORG__|${GITHUB_ORG}|g" \
+                    -e "s|__WANT_TEAM__|${GITHUB_TEAM}|g" \
+                    /opt/keycloak/scripts/github-team-admin.js > /tmp/github-team-admin.resolved.js
+
                 local SCRIPT_ESCAPED
                 SCRIPT_ESCAPED="$(sed -e 's/\\/\\\\/g' -e 's/"/\\"/g' -e ':a;N;$!ba;s/\n/\\n/g' /tmp/github-team-admin.resolved.js)"
                 cat >/tmp/script-cfg.json <<EOF
@@ -676,9 +633,6 @@ spec:
                               | sed -n 's/.*"id"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -n1)
                   [ -n "${CFG_ID:-}" ] && /opt/keycloak/bin/kcadm.sh update "authentication/executions/${EXEC_ID}/config/${CFG_ID}" -r "$REALM" -f /tmp/script-cfg.json
                 }
-
-                # 5) THEN set requirement to REQUIRED
-                /opt/keycloak/bin/kcadm.sh update "authentication/executions/${EXEC_ID}" -r "$REALM" -s 'requirement=REQUIRED'
               }
 
               wait_admin
@@ -694,7 +648,6 @@ spec:
                 -s "config.clientSecret=$CLIENT_SECRET" \
                 -s 'config.defaultScope=read:user user:email read:org' \
                 -s 'config.guiOrder=1' -s 'config.hideOnLoginPage=false'
-              wait_idp
 
               # Mappers
               cat >/tmp/mapper-email.json <<'JSON'
@@ -712,16 +665,22 @@ spec:
                 "identityProviderMapper":"oidc-user-attribute-idp-mapper",
                 "config":{ "claim":"name", "user.attribute":"firstName", "syncMode":"INHERIT" } }
               JSON
-              create_mapper_file /tmp/mapper-email.json
-              create_mapper_file /tmp/mapper-username.json
-              create_mapper_file /tmp/mapper-name.json
+              /opt/keycloak/bin/kcadm.sh create identity-provider/instances/github/mappers -r "$REALM" -f /tmp/mapper-email.json
+              /opt/keycloak/bin/kcadm.sh create identity-provider/instances/github/mappers -r "$REALM" -f /tmp/mapper-username.json
+              /opt/keycloak/bin/kcadm.sh create identity-provider/instances/github/mappers -r "$REALM" -f /tmp/mapper-name.json
 
               # ===== FLOW: ensure exists, then clean & rebuild =====
-              ensure_flow_exists
-              purge_flow_executions
+              if flow_exists; then
+                echo "Flow '${FLOW_ALIAS}' exists; will reset it."
+              else
+                echo "Creating flow '${FLOW_ALIAS}'..."
+                /opt/keycloak/bin/kcadm.sh create authentication/flows -r "$REALM" \
+                  -s "alias=${FLOW_ALIAS}" \
+                  -s 'description=Grant realm-admin to members of a GitHub team' \
+                  -s providerId=basic-flow -s topLevel=true -s builtIn=false
+              fi
 
-              # scripts feature must be enabled
-              wait_script_feature
+              purge_flow_executions
               add_script_execution
 
               # Wire IdP to use the post-broker flow
