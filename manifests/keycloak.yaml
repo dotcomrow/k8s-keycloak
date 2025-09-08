@@ -373,7 +373,7 @@ spec:
           export KEYCLOAK_ADMIN_PASSWORD={{ .Data.data.password }}
           {{- end -}}
 
-        # vaultadmin password for privileged preflight
+        # vaultadmin password for privileged preflight (no Sprig funcs)
         vault.hashicorp.com/agent-inject-secret-vaultadmin: "secret/data/vaultadmin"
         vault.hashicorp.com/agent-inject-template-vaultadmin: |
           {{- with secret "secret/data/vaultadmin" -}}
@@ -409,8 +409,8 @@ spec:
         - name: kc-scripts
           configMap:
             name: kc-script-github-admin
-
-      # --- Init containers ---
+        - name: kc-home
+          emptyDir: {}
       initContainers:
         - name: wait-for-config-job
           image: alpine/k8s:1.31.4
@@ -439,7 +439,6 @@ spec:
                 echo "  └─ still waiting... succeeded=${SUCC} failed=${FAIL} active=${ACTV}"
                 sleep 5
               done
-
         - name: kc-db-preflight
           image: alpine:3.20
           imagePullPolicy: IfNotPresent
@@ -528,6 +527,20 @@ spec:
               fi
 
               echo "✅ Preflight complete."
+        - name: kc-build
+          image: quay.io/keycloak/keycloak:24.0.5
+          imagePullPolicy: IfNotPresent
+          command: ["/bin/bash","-lc"]
+          args:
+            - |
+              set -euo pipefail
+              echo "🔧 Copying Keycloak dist to writable volume and building with 'scripts' feature..."
+              cp -a /opt/keycloak/. /work/
+              /work/bin/kc.sh build --features=scripts
+              echo "✅ Build complete."
+          volumeMounts:
+            - name: kc-home
+              mountPath: /work
       containers:
         - name: keycloak-configurator
           image: quay.io/keycloak/keycloak:24.0.5
@@ -556,13 +569,6 @@ spec:
                 echo "────────────────────────────────────────────────────────"
                 tail -f /dev/null
               }
-
-              on_err() {
-                code=$?
-                echo "FATAL: configurator encountered an error (exit $code)."
-                hold
-              }
-              trap on_err ERR
 
               # --- Admin creds & GitHub secrets from Vault files (no fallbacks) ---
               source /vault/secrets/keycloak-admin
@@ -603,12 +609,6 @@ spec:
                   | grep -q "\"alias\"[[:space:]]*:[[:space:]]*\"${FLOW_ALIAS}\""
               }
 
-              list_provider_ids() {
-                /opt/keycloak/bin/kcadm.sh get authentication/authenticator-providers -r "$REALM" 2>/dev/null \
-                  | tr -d '\n' | sed 's/},[[:space:]]*{/}\n{/g' \
-                  | sed -n 's/.*"id"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p'
-              }
-
               purge_flow_executions() {
                 echo "Purging executions under flow '${FLOW_ALIAS}'..."
                 local loop_guard=0
@@ -626,40 +626,19 @@ spec:
               }
 
               add_script_execution() {
-                # 1) Try the canonical provider id first
-                local CHOSEN=""; local TRY="script"
-                if /opt/keycloak/bin/kcadm.sh create "authentication/flows/${FLOW_ALIAS}/executions/execution" \
-                     -r "$REALM" -s "provider=${TRY}" >/dev/null 2>&1; then
-                  CHOSEN="${TRY}"
-                else
-                  # 2) Discover any provider id that contains 'script' and try them in order
-                  local PID
-                  for PID in $(list_provider_ids | grep -i script || true); do
-                    if /opt/keycloak/bin/kcadm.sh create "authentication/flows/${FLOW_ALIAS}/executions/execution" \
-                         -r "$REALM" -s "provider=${PID}" >/dev/null 2>&1; then
-                      CHOSEN="${PID}"
-                      break
-                    fi
-                  done
-                fi
-
-                if [ -z "${CHOSEN:-}" ]; then
-                  echo "FATAL: No usable 'script' authenticator provider was found."
-                  echo "       Providers present:"
-                  list_provider_ids || true
-                  echo "       Ensure Keycloak is built & started with 'scripts' and KC_PROFILE=preview."
+                # Create a script execution; with kc.sh build --features=scripts the 'script' provider must be present.
+                if ! /opt/keycloak/bin/kcadm.sh create "authentication/flows/${FLOW_ALIAS}/executions/execution" -r "$REALM" -s provider=script >/dev/null 2>&1; then
+                  echo "FATAL: 'script' authenticator not available. Ensure init 'kc-build' ran successfully."
                   hold
-                else
-                  echo "ℹ️  Using script provider id: ${CHOSEN}"
                 fi
 
-                # locate the execution id for the chosen provider
+                # Find the new execution id
                 local EXEC_ID=""
                 for i in $(seq 1 20); do
                   EXEC_ID="$(
                     /opt/keycloak/bin/kcadm.sh get "authentication/flows/${FLOW_ALIAS}/executions" -r "$REALM" 2>/dev/null \
                     | json_objects_onelines \
-                    | grep -E "\"providerId\"[[:space:]]*:[[:space:]]*\"${CHOSEN}\"" \
+                    | grep -E '"providerId"[[:space:]]*:[[:space:]]*"script"' \
                     | sed -n 's/.*"id"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' \
                     | head -n1
                   )" || true
@@ -701,7 +680,7 @@ spec:
                 -s 'config.defaultScope=read:user user:email read:org' \
                 -s 'config.guiOrder=1' -s 'config.hideOnLoginPage=false' || true
 
-              # Mappers (idempotent creates)
+              # Mappers (idempotent)
               cat >/tmp/mapper-email.json <<'JSON'
               { "name":"email", "identityProviderAlias":"github",
                 "identityProviderMapper":"oidc-user-attribute-idp-mapper",
@@ -751,9 +730,7 @@ spec:
 
               set +x
               echo "✔ Reset + reconfigure complete."
-              # Keep the container up, but do not retry.
               tail -f /dev/null
-
         - name: keycloak
           image: quay.io/keycloak/keycloak:24.0.5
           imagePullPolicy: IfNotPresent
@@ -773,9 +750,10 @@ spec:
             # === Migration: FORCE UPDATE ===
             - name: KC_SPI_CONNECTIONS_JPA__QUARKUS__MIGRATION_STRATEGY
               value: "update"
+            # Fail fast on DB locks
             - name: KC_SPI_DBLOCK__JPA__LOCK_WAIT_TIMEOUT
               value: "60"
-            # === Logging ===
+            # === Logging: max visibility ===
             - name: KC_LOG
               value: "console,file"
             - name: KC_LOG_FILE
@@ -805,11 +783,9 @@ spec:
               value: "/"
             - name: KC_HTTP_COOKIE_SAME_SITE
               value: "LAX"
-            # Enable preview + scripts at runtime
+            # Keep preview env to be explicit (build already included scripts)
             - name: KC_PROFILE
               value: "preview"
-            - name: KC_FEATURES
-              value: "scripts"
           command: ["/bin/bash","-lc"]
           args:
             - |
@@ -819,19 +795,9 @@ spec:
               export KC_DB_USERNAME="$(cat /vault/secrets/db-username)"
               export KC_DB_PASSWORD="$(cat /vault/secrets/db-password)"
 
-              # Build once with scripts + postgres driver (no --http-enabled here)
-              if [ ! -f /opt/keycloak/data/.kc_built_with_scripts ]; then
-                echo "🔧 Building Keycloak with 'scripts' feature..."
-                /opt/keycloak/bin/kc.sh build --features=scripts --db=postgres
-                touch /opt/keycloak/data/.kc_built_with_scripts
-                echo "✅ Build completed."
-              else
-                echo "ℹ️  Already built with scripts; skipping build."
-              fi
-
-              echo "▶️  Starting Keycloak (verbose) with scripts enabled…"
+              echo "▶️  Starting Keycloak (scripts feature already built into distribution)…"
               set +e
-              /opt/keycloak/bin/kc.sh start --features=scripts --verbose
+              /opt/keycloak/bin/kc.sh start --verbose
               rc="$?"
               set -e
               if [ "$rc" -ne 0 ]; then
@@ -858,3 +824,5 @@ spec:
             - name: kc-scripts
               mountPath: /opt/keycloak/scripts
               readOnly: true
+            - name: kc-home
+              mountPath: /opt/keycloak
