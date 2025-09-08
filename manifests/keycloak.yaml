@@ -402,9 +402,6 @@ spec:
         config.linkerd.io/skip-outbound-ports: "8200,5433"
     spec:
       serviceAccountName: keycloak
-      securityContext:
-        fsGroup: 1000
-        fsGroupChangePolicy: "OnRootMismatch"
       volumes:
         - name: realm-import
           configMap:
@@ -412,8 +409,6 @@ spec:
         - name: kc-scripts
           configMap:
             name: kc-script-github-admin
-        - name: kc-home
-          emptyDir: {}
 
       # --- Init containers ---
       initContainers:
@@ -444,35 +439,6 @@ spec:
                 echo "  └─ still waiting... succeeded=${SUCC} failed=${FAIL} active=${ACTV}"
                 sleep 5
               done
-
-        # Build Keycloak with 'scripts' and copy to writable volume
-        - name: kc-build
-          image: quay.io/keycloak/keycloak:24.0.5
-          imagePullPolicy: IfNotPresent
-          securityContext:
-            runAsUser: 0
-            runAsGroup: 0
-            allowPrivilegeEscalation: false
-          command: ["/bin/bash","-lc"]
-          args:
-            - |
-              set -euo pipefail
-              echo "🔧 Copying Keycloak dist to writable volume (no metadata preservation)…"
-              mkdir -p /work
-              shopt -s dotglob
-              rm -rf /work/*
-              if ! cp -R /opt/keycloak/* /work/ 2>/dev/null; then
-                echo "cp failed; retrying via tar stream…"
-                (cd /opt/keycloak && tar -cf - .) | (cd /work && tar -xf -)
-              fi
-              echo "🔧 Building Keycloak with 'scripts' feature…"
-              /work/bin/kc.sh build --features=scripts
-              echo "🔧 Setting ownership to uid 1000 for runtime…"
-              chown -R 1000:0 /work
-              echo "✅ Build complete."
-          volumeMounts:
-            - name: kc-home
-              mountPath: /work
 
         - name: kc-db-preflight
           image: alpine:3.20
@@ -558,10 +524,9 @@ spec:
               fi
 
               echo "✅ Preflight complete."
-          volumeMounts: []
       containers:
         - name: keycloak-configurator
-          image: quay.io/keycloak/keycloak:24.0.5
+          image: quay.io/keycloak/keycloak:21.1.2
           imagePullPolicy: IfNotPresent
           command: ["/bin/bash","-lc"]
           resources:
@@ -571,8 +536,6 @@ spec:
             - name: kc-scripts
               mountPath: /opt/keycloak/scripts
               readOnly: true
-            - name: kc-home
-              mountPath: /opt/keycloak
           args:
             - |
               set -euo pipefail
@@ -644,19 +607,10 @@ spec:
                 done <<< "$IDS"
               }
 
-              list_provider_ids() {
-                /opt/keycloak/bin/kcadm.sh get authentication/authenticator-providers -r "$REALM" 2>/dev/null \
-                  | tr -d '\n' | sed 's/},[[:space:]]*{/}\n{/g' \
-                  | sed -n 's/.*"id"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p'
-              }
-
               add_script_execution() {
-                # Try to create using 'script' provider (present when built with --features=scripts)
+                # On 21.1.x the 'script' authenticator is available when KC_FEATURES includes 'scripts'
                 if ! /opt/keycloak/bin/kcadm.sh create "authentication/flows/${FLOW_ALIAS}/executions/execution" -r "$REALM" -s provider=script >/dev/null 2>&1; then
-                  echo "FATAL: No usable 'script' authenticator provider was found."
-                  echo "       Providers present:"
-                  list_provider_ids
-                  echo "       Ensure Keycloak is built & started with 'scripts' and KC_PROFILE=preview."
+                  echo "FATAL: 'script' authenticator not available (unexpected on 21.1.x with KC_FEATURES=scripts)."
                   hold
                 fi
 
@@ -761,7 +715,7 @@ spec:
               tail -f /dev/null
 
         - name: keycloak
-          image: quay.io/keycloak/keycloak:24.0.5
+          image: quay.io/keycloak/keycloak:21.1.2
           imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 8080
@@ -807,6 +761,7 @@ spec:
               value: "/"
             - name: KC_HTTP_COOKIE_SAME_SITE
               value: "LAX"
+            # IMPORTANT: scripts provider lives behind preview in 21.1.x
             - name: KC_FEATURES
               value: "scripts"
             - name: KC_PROFILE
@@ -820,9 +775,9 @@ spec:
               export KC_DB_USERNAME="$(cat /vault/secrets/db-username)"
               export KC_DB_PASSWORD="$(cat /vault/secrets/db-password)"
 
-              echo "▶️  Starting Keycloak (prebuilt with 'scripts')…"
+              echo "▶️  Starting Keycloak (21.1.x with 'scripts')…"
               set +e
-              /opt/keycloak/bin/kc.sh start --verbose
+              /opt/keycloak/bin/kc.sh start --features=scripts --verbose
               rc="$?"
               set -e
               if [ "$rc" -ne 0 ]; then
@@ -843,5 +798,3 @@ spec:
             - name: kc-scripts
               mountPath: /opt/keycloak/scripts
               readOnly: true
-            - name: kc-home
-              mountPath: /opt/keycloak
