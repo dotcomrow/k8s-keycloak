@@ -373,7 +373,7 @@ spec:
           export KEYCLOAK_ADMIN_PASSWORD={{ .Data.data.password }}
           {{- end -}}
 
-        # vaultadmin password for privileged preflight (no Sprig funcs)
+        # vaultadmin password for privileged preflight
         vault.hashicorp.com/agent-inject-secret-vaultadmin: "secret/data/vaultadmin"
         vault.hashicorp.com/agent-inject-template-vaultadmin: |
           {{- with secret "secret/data/vaultadmin" -}}
@@ -526,7 +526,7 @@ spec:
               echo "✅ Preflight complete."
       containers:
         - name: keycloak-configurator
-          image: quay.io/keycloak/keycloak:21.1.2
+          image: quay.io/keycloak/keycloak:21.0.2
           imagePullPolicy: IfNotPresent
           command: ["/bin/bash","-lc"]
           resources:
@@ -574,7 +574,6 @@ spec:
 
               json_objects_onelines() { tr -d '\n' | sed 's/},[[:space:]]*{/}\n{/g'; }
 
-              # --- Bounded wait for admin API; on timeout -> hold (no restart) ---
               echo "Waiting for Keycloak admin API..."
               MAX_WAIT=600
               STEP=5
@@ -592,7 +591,6 @@ spec:
               done
               echo "✅ Admin API ready."
 
-              # -------- helpers --------
               flow_exists() {
                 /opt/keycloak/bin/kcadm.sh get authentication/flows -r "$REALM" 2>/dev/null \
                   | json_objects_onelines \
@@ -617,7 +615,6 @@ spec:
               }
 
               add_script_execution() {
-                # Try canonical provider id first, else inspect the catalog
                 if /opt/keycloak/bin/kcadm.sh create "authentication/flows/${FLOW_ALIAS}/executions/execution" -r "$REALM" -s provider=script >/dev/null 2>&1; then
                   :
                 else
@@ -733,7 +730,7 @@ spec:
               tail -f /dev/null
 
         - name: keycloak
-          image: quay.io/keycloak/keycloak:21.1.2
+          image: quay.io/keycloak/keycloak:21.0.2
           imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 8080
@@ -795,10 +792,10 @@ spec:
               export KC_DB_USERNAME="$(cat /vault/secrets/db-username)"
               export KC_DB_PASSWORD="$(cat /vault/secrets/db-password)"
 
-              echo "🔧 Building Keycloak with 'scripts' feature (21.1.2)…"
+              echo "🔧 Building Keycloak with 'scripts' feature (21.0.2)…"
               /opt/keycloak/bin/kc.sh build --features=scripts
 
-              echo "▶️  Starting Keycloak with scripts enabled at runtime…"
+              echo "▶️  Starting Keycloak with scripts enabled…"
               set +e
               /opt/keycloak/bin/kc.sh start --features=scripts
               rc="$?"
