@@ -776,6 +776,8 @@ spec:
               value: "LAX"
             - name: KC_PROFILE
               value: "preview"
+            - name: KC_FEATURES
+              value: "scripts"
           command: ["/bin/bash","-lc"]
           args:
             - |
