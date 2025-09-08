@@ -113,7 +113,7 @@ spec:
               until nc -z -w1 "$PGHOST" "$PGPORT"; do echo "⏳ Waiting for DB $PGHOST:$PGPORT..."; sleep 3; done
               echo "✅ Yugabyte reachable"
 
-              # --- Wait for vaultadmin password in Vault ---
+              # --- Fetch vaultadmin password from Vault (loop until present) ---
               echo "🔐 Waiting for secret/${VAULTADMIN_USER} to exist in Vault..."
               VAULTADMIN_PASS=""
               while :; do
@@ -560,7 +560,7 @@ spec:
               }
               trap on_err ERR
 
-              # --- Admin creds & GitHub secrets from Vault files (no fallbacks) ---
+              # --- Admin creds & GitHub secrets (no fallbacks) ---
               source /vault/secrets/keycloak-admin
               CLIENT_ID="$(cat /vault/secrets/github-client-id)"
               CLIENT_SECRET="$(cat /vault/secrets/github-client-secret)"
@@ -575,9 +575,7 @@ spec:
               json_objects_onelines() { tr -d '\n' | sed 's/},[[:space:]]*{/}\n{/g'; }
 
               echo "Waiting for Keycloak admin API..."
-              MAX_WAIT=600
-              STEP=5
-              waited=0
+              MAX_WAIT=600; STEP=5; waited=0
               until /opt/keycloak/bin/kcadm.sh config credentials \
                       --server "$SERVER" --realm "$REALM" \
                       --user "$KEYCLOAK_ADMIN" --password "$KEYCLOAK_ADMIN_PASSWORD" >/dev/null 2>&1
@@ -586,11 +584,11 @@ spec:
                   echo "FATAL: Admin API not ready after ${MAX_WAIT}s."
                   hold
                 fi
-                sleep "$STEP"
-                waited=$((waited+STEP))
+                sleep "$STEP"; waited=$((waited+STEP))
               done
               echo "✅ Admin API ready."
 
+              # -------- helpers --------
               flow_exists() {
                 /opt/keycloak/bin/kcadm.sh get authentication/flows -r "$REALM" 2>/dev/null \
                   | json_objects_onelines \
@@ -621,8 +619,7 @@ spec:
                   PIDS="$(list_provider_ids | grep -i script || true)"
                   if [ -z "$PIDS" ]; then
                     echo "FATAL: No usable 'script' authenticator provider was found."
-                    echo "       Providers present:"
-                    list_provider_ids
+                    echo "       Providers present:"; list_provider_ids
                     echo "       Ensure Keycloak is built & started with 'scripts' and KC_PROFILE=preview."
                     hold
                   else
@@ -632,7 +629,6 @@ spec:
                   fi
                 fi
 
-                # Find the new execution id
                 local EXEC_ID=""
                 for i in $(seq 1 20); do
                   EXEC_ID="$(
@@ -649,7 +645,6 @@ spec:
 
                 /opt/keycloak/bin/kcadm.sh update "authentication/executions/${EXEC_ID}" -r "$REALM" -s 'requirement=REQUIRED'
 
-                # Substitute org/team into the JS and attach as config
                 sed -e "s|__WANT_ORG__|${GITHUB_ORG}|g" \
                     -e "s|__WANT_TEAM__|${GITHUB_TEAM}|g" \
                     /opt/keycloak/scripts/github-team-admin.js > /tmp/github-team-admin.resolved.js
@@ -715,7 +710,6 @@ spec:
               /opt/keycloak/bin/kcadm.sh update identity-provider/instances/github -r "$REALM" \
                 -s "postBrokerLoginFlowAlias=${FLOW_ALIAS}" || true
 
-              # Realm defaults
               /opt/keycloak/bin/kcadm.sh update "realms/${REALM}" \
                 -s sslRequired=EXTERNAL \
                 -s loginWithEmailAllowed=true \
@@ -745,10 +739,12 @@ spec:
               value: "keycloak"
             - name: KC_DB_URL_PROPERTIES
               value: "currentSchema=keycloak"
+
+            # JVM flags (extra belt-and-suspenders)
             - name: JAVA_OPTS_APPEND
               value: "-Dkeycloak.profile=preview -Dkeycloak.profile.feature.scripts=enabled"
 
-            # === Enable scripts feature & preview profile ===
+            # Quarkus/Keycloak feature & profile
             - name: KC_PROFILE
               value: "preview"
             - name: KC_FEATURES
@@ -795,17 +791,16 @@ spec:
               export KC_DB_PASSWORD="$(cat /vault/secrets/db-password)"
 
               echo "🔧 Building Keycloak with 'scripts' feature (21.0.2)…"
-              /opt/keycloak/bin/kc.sh build --features=scripts
+              /opt/keycloak/bin/kc.sh build --features=scripts --profile=preview
 
               echo "🔎 Quarkus config (expect: profile=preview, features includes 'scripts')"
               /opt/keycloak/bin/kc.sh show-config --all | grep -i -E 'profile|features' -A1 || true
 
-              echo "▶️  Starting Keycloak with scripts enabled…"
+              echo "▶️  Starting Keycloak…"
               set +e
-              /opt/keycloak/bin/kc.sh start --features=scripts
+              /opt/keycloak/bin/kc.sh start --features=scripts --profile=preview
               rc="$?"
               set -e
-
               if [ "$rc" -ne 0 ]; then
                 echo "❌ Keycloak exited (code $rc) — holding pod to prevent Kubernetes restarts."
                 echo "   🔍 Logs: kubectl -n keycloak logs deploy/keycloak -c keycloak --tail=-1"
