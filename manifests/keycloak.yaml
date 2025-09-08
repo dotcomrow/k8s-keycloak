@@ -439,6 +439,12 @@ spec:
 
         - name: kc-db-preflight
           image: alpine:3.20
+          securityContext:
+            runAsUser: 0
+            runAsGroup: 0
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: false
+            capabilities: { drop: ["ALL"] }
           env:
             - name: PGHOST
               value: "yb-tserver-service.yugabyte.svc.cluster.local"
@@ -450,30 +456,71 @@ spec:
               value: "keycloak"
             - name: PGSCHEMA_OWNER
               value: "keycloak_app"
-            - name: KC_FORCE_RESET_SCHEMA_ON_CONFLICT
-              value: "true"
-            - name: KC_CLEAR_CHANGELOG_CHECKSUMS
-              value: "true"
             - name: PGADMIN_USER
               value: "vaultadmin"
+            # set this to "true" for one-shot enforced reset
+            - name: KC_FORCE_DROP_SCHEMA
+              value: "false"
+            # backwards-compatible switch: drop if any tables exist
+            - name: KC_FORCE_RESET_SCHEMA_ON_CONFLICT
+              value: "true"
+            # optionally clear liquibase checksums if table exists
+            - name: KC_CLEAR_CHANGELOG_CHECKSUMS
+              value: "true"
           command: ["/bin/sh","-lc"]
           args:
             - |
               set -euo pipefail
-              apk add --no-cache postgresql15-client jq
+
+              # tools
+              apk add --no-cache postgresql15-client jq bind-tools busybox-extras
 
               export PGUSER="${PGADMIN_USER}"
-              export PGPASSWORD="$(cat /vault/secrets/vaultadmin)"
+              export PGPASSWORD="$(tr -d '\r\n' < /vault/secrets/vaultadmin)"
 
-              echo "🔎 Preflight (admin): connecting to ${PGHOST}:${PGPORT}/${PGDATABASE} as ${PGUSER}..."
+              echo "🔎 DNS for ${PGHOST}"; getent hosts "${PGHOST}" || true
+              echo "🔎 TCP ${PGHOST}:${PGPORT}"; nc -vz -w 3 "${PGHOST}" "${PGPORT}" || true
+
+              echo "🔎 Preflight (admin): connecting to ${PGHOST}:${PGPORT}/${PGDATABASE} as ${PGUSER}…"
               until psql -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDATABASE" -tAc "select 1" >/dev/null 2>&1; do
-                echo "  ⏳ waiting for DB..."
+                echo "  ⏳ waiting for DB…"
                 sleep 2
               done
               echo "✅ DB reachable"
+              psql -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDATABASE" -c "select version();" -At || true
 
-              psql -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDATABASE" -v ON_ERROR_STOP=1 -c "CREATE SCHEMA IF NOT EXISTS ${PGSCHEMA};"
+              # Ensure schema exists (safe even if dropped later)
+              psql -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDATABASE" -v ON_ERROR_STOP=1 \
+                -c "CREATE SCHEMA IF NOT EXISTS ${PGSCHEMA};"
 
+              # Count existing tables in the schema
+              TABLES=$(
+                psql -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDATABASE" -Atc \
+                  "select table_schema||'.'||table_name
+                    from information_schema.tables
+                    where table_schema='${PGSCHEMA}'
+                    order by 1"
+              )
+              COUNT="$(printf '%s\n' "$TABLES" | sed '/^$/d' | wc -l | tr -d ' ')"
+              echo "ℹ️  ${PGSCHEMA} currently has ${COUNT:-0} table(s)."
+              if [ -n "${TABLES:-}" ]; then
+                echo "$TABLES" | sed 's/^/   • /'
+              fi
+
+              # Decide whether to drop
+              if [ "${KC_FORCE_DROP_SCHEMA:-false}" = "true" ] || { [ "${KC_FORCE_RESET_SCHEMA_ON_CONFLICT:-false}" = "true" ] && [ "${COUNT:-0}" -gt 0 ]; }; then
+                echo "🧨 Dropping schema ${PGSCHEMA} (CASCADE) for a clean migration…"
+                psql -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDATABASE" -v ON_ERROR_STOP=1 <<EOSQL
+              DROP SCHEMA IF EXISTS ${PGSCHEMA} CASCADE;
+              CREATE SCHEMA ${PGSCHEMA} AUTHORIZATION ${PGSCHEMA_OWNER};
+              ALTER ROLE ${PGSCHEMA_OWNER} SET search_path = ${PGSCHEMA};
+              GRANT USAGE, CREATE ON SCHEMA ${PGSCHEMA} TO ${PGSCHEMA_OWNER};
+              EOSQL
+              else
+                echo "ℹ️  Not dropping schema (KC_FORCE_DROP_SCHEMA=false and table count ${COUNT:-0})."
+              fi
+
+              # Liquibase lock clean-up
               HAS_LOCK_TABLE="$(psql -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDATABASE" -Atc \
                 "select 1 from information_schema.tables where table_schema='${PGSCHEMA}' and table_name='databasechangeloglock'")" || true
               if [ "${HAS_LOCK_TABLE:-}" = "1" ]; then
@@ -486,35 +533,11 @@ spec:
                 fi
               fi
 
-              HAS_CONFLICT_TABLE="$(psql -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDATABASE" -Atc "
-                select 1
-                from information_schema.tables
-                where table_schema='${PGSCHEMA}'
-                  and table_name ilike any (array[
-                    'application_default_roles','application_role','realm','client',
-                    'event_entity','migration_model','user_entity','keycloak_role',
-                    'composite_role','federated_user','federated_identity',
-                    'component','credential','client_session','authentication_flow'
-                  ])
-                limit 1
-              " 2>/dev/null || true)"
-
-              if [ "${KC_FORCE_RESET_SCHEMA_ON_CONFLICT:-false}" = "true" ] && [ "${HAS_CONFLICT_TABLE:-}" = "1" ]; then
-                echo "🧨 Conflict tables found in ${PGSCHEMA} → dropping schema CASCADE for a clean migration…"
-                psql -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDATABASE" -v ON_ERROR_STOP=1 <<EOSQL
-              DROP SCHEMA IF EXISTS ${PGSCHEMA} CASCADE;
-              CREATE SCHEMA ${PGSCHEMA} AUTHORIZATION ${PGSCHEMA_OWNER};
-              ALTER ROLE ${PGSCHEMA_OWNER} SET search_path = ${PGSCHEMA};
-              GRANT USAGE, CREATE ON SCHEMA ${PGSCHEMA} TO ${PGSCHEMA_OWNER};
-              EOSQL
-              else
-                echo "ℹ️  No destructive reset (KC_FORCE_RESET_SCHEMA_ON_CONFLICT=false or no conflict tables found)."
-              fi
-
+              # Optional: clear checksums
               HAS_CHANGELOG="$(psql -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDATABASE" -Atc \
                 "select 1 from information_schema.tables where table_schema='${PGSCHEMA}' and table_name='databasechangelog'")" || true
               if [ "${KC_CLEAR_CHANGELOG_CHECKSUMS:-false}" = "true" ] && [ "${HAS_CHANGELOG:-}" = "1" ]; then
-                echo "🧹 Clearing Liquibase checksums (md5sum=NULL)…"
+                echo "🧹 Clearing Liquibase checksums…"
                 psql -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDATABASE" -v ON_ERROR_STOP=0 \
                   -c "UPDATE ${PGSCHEMA}.databasechangelog SET md5sum=NULL;"
               fi
