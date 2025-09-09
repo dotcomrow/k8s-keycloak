@@ -391,6 +391,16 @@ spec:
               set -euo pipefail
               apk add --no-cache postgresql15-client jq bind-tools busybox-extras
 
+              # Wait for Vault agent to write the secret file
+              for i in $(seq 1 60); do
+                if [ -s /vault/secrets/vaultadmin ]; then break; fi
+                echo "⏳ waiting for /vault/secrets/vaultadmin..."
+                sleep 1
+              done
+              if [ ! -s /vault/secrets/vaultadmin ]; then
+                echo "❌ /vault/secrets/vaultadmin not found or empty"; exit 1
+              fi
+
               export PGUSER="${PGADMIN_USER}"
               export PGPASSWORD="$(tr -d '\r\n' < /vault/secrets/vaultadmin)"
 
@@ -404,7 +414,7 @@ spec:
               done
               echo "✅ DB reachable"
 
-              # Ensure schema exists so following DROP works deterministically
+              # Ensure schema exists so DROP works deterministically
               psql -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDATABASE" -v ON_ERROR_STOP=1 \
                 -c "CREATE SCHEMA IF NOT EXISTS ${PGSCHEMA};"
 
@@ -412,7 +422,7 @@ spec:
               TABLES=$(
                 psql -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDATABASE" -Atc \
                   "select table_schema||'.'||table_name
-                     from information_schema.tables
+                    from information_schema.tables
                     where table_schema='${PGSCHEMA}'
                     order by 1"
               )
@@ -421,18 +431,29 @@ spec:
               if [ -n "${TABLES:-}" ]; then echo "$TABLES" | sed 's/^/   • /'; fi
 
               echo "🧨 Dropping schema ${PGSCHEMA} (CASCADE) for a clean migration…"
-              psql -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDATABASE" -v ON_ERROR_STOP=1 <<EOSQL
-              DROP SCHEMA IF EXISTS ${PGSCHEMA} CASCADE;
-              CREATE SCHEMA ${PGSCHEMA} AUTHORIZATION ${PGSCHEMA_OWNER};
-              ALTER ROLE ${PGSCHEMA_OWNER} SET search_path = ${PGSCHEMA};
-              GRANT USAGE, CREATE ON SCHEMA ${PGSCHEMA} TO ${PGSCHEMA_OWNER};
+              psql -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDATABASE" -v ON_ERROR_STOP=1 <<'EOSQL'
+              DROP SCHEMA IF EXISTS :PGSCHEMA CASCADE;
+              CREATE SCHEMA :PGSCHEMA AUTHORIZATION :PGSCHEMA_OWNER;
+              ALTER ROLE :PGSCHEMA_OWNER SET search_path = :PGSCHEMA;
+              GRANT USAGE, CREATE ON SCHEMA :PGSCHEMA TO :PGSCHEMA_OWNER;
               EOSQL
 
-              # Clear any stale Liquibase data if present
-              psql -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDATABASE" -v ON_ERROR_STOP=0 <<EOSQL
-              TRUNCATE TABLE keycloak.databasechangelog    RESTART IDENTITY CASCADE;
-              TRUNCATE TABLE keycloak.databasechangeloglock RESTART IDENTITY CASCADE;
-              EOSQL || true
+              # (Optional) If you really want to try clearing Liquibase state only when tables exist,
+              # guard each statement. But it's unnecessary because we just recreated the schema.
+              # Keeping the pattern here properly formed to avoid the previous EOSQL parse error:
+              psql -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDATABASE" -v ON_ERROR_STOP=0 <<'EOSQL' || true
+              DO $$
+              BEGIN
+                IF EXISTS (SELECT 1 FROM information_schema.tables
+                            WHERE table_schema=:PGSCHEMA AND table_name='databasechangelog') THEN
+                  EXECUTE format('TRUNCATE TABLE %I.databasechangelog RESTART IDENTITY CASCADE', :PGSCHEMA);
+                END IF;
+                IF EXISTS (SELECT 1 FROM information_schema.tables
+                            WHERE table_schema=:PGSCHEMA AND table_name='databasechangeloglock') THEN
+                  EXECUTE format('TRUNCATE TABLE %I.databasechangeloglock RESTART IDENTITY CASCADE', :PGSCHEMA);
+                END IF;
+              END$$;
+              EOSQL
 
               echo "✅ Preflight complete."
 
