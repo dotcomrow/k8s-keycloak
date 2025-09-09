@@ -474,8 +474,8 @@ spec:
       containers:
         # --- One-time configuration sidecar (GitHub IdP + flow + attach provider) ---
         - name: keycloak-configurator
-          image: ghcr.io/dotcomrow/keycloak-image:24.0.4
-          imagePullPolicy: IfNotPresent
+          image: ghcr.io/dotcomrow/keycloak-image:24.0.5
+          imagePullPolicy: Always
           command: ["/bin/bash","-lc"]
           resources:
             requests: { cpu: "100m", memory: "128Mi" }
@@ -585,8 +585,8 @@ spec:
 
         # --- Keycloak runtime ---
         - name: keycloak
-          image: ghcr.io/dotcomrow/keycloak-image:24.0.4
-          imagePullPolicy: IfNotPresent
+          image: ghcr.io/dotcomrow/keycloak-image:24.0.5
+          imagePullPolicy: Always
           ports:
             - containerPort: 8080
               name: http
