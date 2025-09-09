@@ -444,21 +444,28 @@ spec:
               GRANT USAGE, CREATE ON SCHEMA ${PGSCHEMA} TO ${PGSCHEMA_OWNER};
               EOSQL
 
-              # (Optional) If you really want to try clearing Liquibase state only when tables exist,
-              # guard each statement. But it's unnecessary because we just recreated the schema.
-              # Keeping the pattern here properly formed to avoid the previous EOSQL parse error:
-              psql -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDATABASE" -v ON_ERROR_STOP=0 <<'EOSQL' || true
-              DO $$
+              # Only keep this if you truly need it; otherwise delete the whole block.
+              psql -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDATABASE" \
+                -v ON_ERROR_STOP=0 -v SCHEMA="$PGSCHEMA" <<'EOSQL' || true
+              DO $blk$
               BEGIN
-                IF EXISTS (SELECT 1 FROM information_schema.tables
-                            WHERE table_schema=:PGSCHEMA AND table_name='databasechangelog') THEN
-                  EXECUTE format('TRUNCATE TABLE %I.databasechangelog RESTART IDENTITY CASCADE', :PGSCHEMA);
+                IF EXISTS (
+                  SELECT 1
+                  FROM information_schema.tables
+                  WHERE table_schema = :'SCHEMA' AND table_name = 'databasechangelog'
+                ) THEN
+                  EXECUTE format('TRUNCATE TABLE %I.databasechangelog RESTART IDENTITY CASCADE', :'SCHEMA');
                 END IF;
-                IF EXISTS (SELECT 1 FROM information_schema.tables
-                            WHERE table_schema=:PGSCHEMA AND table_name='databasechangeloglock') THEN
-                  EXECUTE format('TRUNCATE TABLE %I.databasechangeloglock RESTART IDENTITY CASCADE', :PGSCHEMA);
+
+                IF EXISTS (
+                  SELECT 1
+                  FROM information_schema.tables
+                  WHERE table_schema = :'SCHEMA' AND table_name = 'databasechangeloglock'
+                ) THEN
+                  EXECUTE format('TRUNCATE TABLE %I.databasechangeloglock RESTART IDENTITY CASCADE', :'SCHEMA');
                 END IF;
-              END$$;
+              END
+              $blk$ LANGUAGE plpgsql;
               EOSQL
 
               echo "✅ Preflight complete."
@@ -533,14 +540,22 @@ spec:
               EID=""
               for i in {1..40}; do
                 EXECS=$(/opt/keycloak/bin/kcadm.sh get "authentication/flows/$FLOW/executions" -r "$REALM" || echo "[]")
-                EID=$(echo "$EXECS" | tr -d '\n' | sed 's/},[[:space:]]*{/}\n{/g' \
-                  | awk -v id="$PROVIDER_ID" '
-                      /"providerId"[[:space:]]*:[[:space:]]*"/ {p=$0}
-                      /"id"[[:space:]]*:/ && p ~ ("\"" id "\"") {match($0, /"id"[[:space:]]*:[[:space:]]*"([^"]+)"/, m); print m[1]; exit}
-                    ')
+                # 1) collapse to one line, 2) split each object onto its own line,
+                # 3) keep only the line for our provider, 4) extract the execution "id"
+                EID=$(echo "$EXECS" \
+                      | tr -d '\n' \
+                      | sed 's/},[[:space:]]*{/}\n{/g' \
+                      | grep -E "\"providerId\"[[:space:]]*:[[:space:]]*\"$PROVIDER_ID\"" \
+                      | sed -n 's/.*"id"[[:space:]]*:[[:space:]]*"\([^"]\+\)".*/\1/p' \
+                      | head -n1)
                 [ -n "$EID" ] && break || sleep 1
               done
-              [ -n "${EID:-}" ] || { echo "❌ Could not discover execution id"; hold; }
+
+              if [ -z "${EID:-}" ]; then
+                echo "❌ Could not discover execution id for provider '$PROVIDER_ID'. Dumping executions for debugging:"
+                echo "$EXECS"
+                exit 1
+              fi
 
               ok=""
               for i in {1..10}; do
@@ -550,6 +565,7 @@ spec:
                   sleep 1
                 fi
               done
+
               if [ -z "$ok" ]; then
                 echo "Falling back to flow-level update…"
                 printf '{ "id":"%s", "requirement":"REQUIRED" }\n' "$EID" >/tmp/r.json
