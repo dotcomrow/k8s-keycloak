@@ -444,28 +444,29 @@ spec:
               GRANT USAGE, CREATE ON SCHEMA ${PGSCHEMA} TO ${PGSCHEMA_OWNER};
               EOSQL
 
-              # Only keep this if you truly need it; otherwise delete the whole block.
-              psql -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDATABASE" \
-                -v ON_ERROR_STOP=0 -v SCHEMA="$PGSCHEMA" <<'EOSQL' || true
-              DO $blk$
+              # NOTE: unquoted heredoc so $PGSCHEMA expands in the shell.
+              psql -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDATABASE" -v ON_ERROR_STOP=0 <<EOSQL || true
+              DO \$blk\$
+              DECLARE
+                sch text := quote_ident('$PGSCHEMA');  -- safe identifier quoting
               BEGIN
                 IF EXISTS (
                   SELECT 1
                   FROM information_schema.tables
-                  WHERE table_schema = :'SCHEMA' AND table_name = 'databasechangelog'
+                  WHERE table_schema = '$PGSCHEMA' AND table_name = 'databasechangelog'
                 ) THEN
-                  EXECUTE format('TRUNCATE TABLE %I.databasechangelog RESTART IDENTITY CASCADE', :'SCHEMA');
+                  EXECUTE 'TRUNCATE TABLE ' || sch || '.databasechangelog RESTART IDENTITY CASCADE';
                 END IF;
 
                 IF EXISTS (
                   SELECT 1
                   FROM information_schema.tables
-                  WHERE table_schema = :'SCHEMA' AND table_name = 'databasechangeloglock'
+                  WHERE table_schema = '$PGSCHEMA' AND table_name = 'databasechangeloglock'
                 ) THEN
-                  EXECUTE format('TRUNCATE TABLE %I.databasechangeloglock RESTART IDENTITY CASCADE', :'SCHEMA');
+                  EXECUTE 'TRUNCATE TABLE ' || sch || '.databasechangeloglock RESTART IDENTITY CASCADE';
                 END IF;
               END
-              $blk$ LANGUAGE plpgsql;
+              \$blk\$ LANGUAGE plpgsql;
               EOSQL
 
               echo "✅ Preflight complete."
@@ -610,7 +611,9 @@ spec:
             - name: KC_LOG_FILE
               value: "/opt/keycloak/data/log/keycloak.log"
             - name: KC_LOG_LEVEL
-              value: "INFO,liquibase:INFO"
+              value: "INFO,com.example.kc.github:DEBUG,org.keycloak.authentication:DEBUG,org.keycloak.events:INFO"
+            - name: KC_PROXY
+              value: "edge" 
 
             # Hostname & HTTP
             - name: KC_HOSTNAME_URL
