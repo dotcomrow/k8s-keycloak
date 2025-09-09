@@ -154,7 +154,7 @@ spec:
               secs=0; ok=0
               while [ $secs -lt "$WAIT_DB_MAX" ]; do
                 nc -z -w 2 "$PGHOST" "$PGPORT" && { ok=1; break; }
-                secs=0$((secs+3)); sleep 3
+                secs=$((secs+3)); sleep 3
               done
               [ $ok -eq 1 ] || { echo "ERROR: Cannot connect to DB $PGHOST:$PGPORT."; exit 1; }
 
@@ -437,21 +437,76 @@ spec:
           args:
             - |
               set -euo pipefail
-              apk add --no-cache postgresql15-client jq bind-tools busybox-extras >/dev/null
-              # Wait for Vault-agent rendered file
-              for i in $(seq 1 60); do [ -s /vault/secrets/vaultadmin ] && break; sleep 1; done
-              [ -s /vault/secrets/vaultadmin ] || { echo "/vault/secrets/vaultadmin missing"; exit 1; }
+              apk add --no-cache postgresql15-client jq bind-tools busybox-extras
+
+              for i in $(seq 1 60); do
+                if [ -s /vault/secrets/vaultadmin ]; then break; fi
+                echo "⏳ waiting for /vault/secrets/vaultadmin..."
+                sleep 1
+              done
+              if [ ! -s /vault/secrets/vaultadmin ]; then
+                echo "❌ /vault/secrets/vaultadmin not found or empty"; exit 1
+              fi
+
               export PGUSER="${PGADMIN_USER}"
               export PGPASSWORD="$(tr -d '\r\n' < /vault/secrets/vaultadmin)"
-              echo "Preflight: wait DB…"
-              until psql -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDATABASE" -tAc "select 1" >/dev/null 2>&1; do sleep 2; done
-              # Make schema (idempotent)
+
+              echo "🔎 DNS for ${PGHOST}"; getent hosts "${PGHOST}" || true
+              echo "🔎 TCP ${PGHOST}:${PGPORT}"; nc -vz -w 3 "${PGHOST}" "${PGPORT}" || true
+
+              echo "🔎 Preflight (admin): connecting to ${PGHOST}:${PGPORT}/${PGDATABASE} as ${PGUSER}…"
+              until psql -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDATABASE" -tAc "select 1" >/dev/null 2>&1; do
+                echo "  ⏳ waiting for DB…"
+                sleep 2
+              done
+              echo "✅ DB reachable"
+
               psql -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDATABASE" -v ON_ERROR_STOP=1 \
                 -c "CREATE SCHEMA IF NOT EXISTS ${PGSCHEMA};"
-              echo "Preflight done."
+
+              TABLES=$(
+                psql -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDATABASE" -Atc \
+                  "select table_schema||'.'||table_name
+                    from information_schema.tables
+                    where table_schema='${PGSCHEMA}'
+                    order by 1"
+              )
+              COUNT="$(printf '%s\n' "$TABLES" | sed '/^$/d' | wc -l | tr -d ' ')"
+              echo "ℹ️  ${PGSCHEMA} currently has ${COUNT:-0} table(s)."
+              if [ -n "${TABLES:-}" ]; then echo "$TABLES" | sed 's/^/   • /'; fi
+
+              echo "🧨 Dropping schema ${PGSCHEMA} (CASCADE) for a clean migration…"
+              psql -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDATABASE" -v ON_ERROR_STOP=1 <<EOSQL
+              DROP SCHEMA IF EXISTS ${PGSCHEMA} CASCADE;
+              CREATE SCHEMA ${PGSCHEMA} AUTHORIZATION ${PGSCHEMA_OWNER};
+              ALTER ROLE ${PGSCHEMA_OWNER} SET search_path = ${PGSCHEMA};
+              GRANT USAGE, CREATE ON SCHEMA ${PGSCHEMA} TO ${PGSCHEMA_OWNER};
+              EOSQL
+
+              psql -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDATABASE" -v ON_ERROR_STOP=0 <<EOSQL || true
+              DO \$blk\$
+              DECLARE
+                sch text := quote_ident('$PGSCHEMA');
+              BEGIN
+                IF EXISTS (
+                  SELECT 1 FROM information_schema.tables
+                  WHERE table_schema = '$PGSCHEMA' AND table_name = 'databasechangelog'
+                ) THEN
+                  EXECUTE 'TRUNCATE TABLE ' || sch || '.databasechangelog RESTART IDENTITY CASCADE';
+                END IF;
+                IF EXISTS (
+                  SELECT 1 FROM information_schema.tables
+                  WHERE table_schema = '$PGSCHEMA' AND table_name = 'databasechangeloglock'
+                ) THEN
+                  EXECUTE 'TRUNCATE TABLE ' || sch || '.databasechangeloglock RESTART IDENTITY CASCADE';
+                END IF;
+              END
+              \$blk\$ LANGUAGE plpgsql;
+              EOSQL
+
+              echo "✅ Preflight complete."
 
       containers:
-        # Keep your existing configurator + runtime containers (unchanged behavior)
         - name: keycloak-configurator
           image: ghcr.io/dotcomrow/keycloak-image:24.0.5
           imagePullPolicy: Always
@@ -538,7 +593,7 @@ spec:
                 printf '{ "id":"%s", "requirement":"REQUIRED" }\n' "$REDIR_ID" >/tmp/r2.json
                 /opt/keycloak/bin/kcadm.sh update "authentication/flows/${FLOW_BROWSER}/executions" -r "$REALM" -f /tmp/r2.json
               fi
-              CFG_ID=$(/opt/keycloak/bin/kcadm.sh get "authentication/executions/${REDIR_ID}/config" -r "$REALM" | sed -n 's/.*"id"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -n1 || true)
+              CFG_ID=$(/opt/keycloak/bin/kcadm.sh get "authentication/executions/${REDIR_ID}/config" -r "$REALM" | sed -n 's/.*"id"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -n1 | tr -d '\n' || true)
               if [ -n "${CFG_ID:-}" ]; then
                 /opt/keycloak/bin/kcadm.sh update "authentication/executions/${REDIR_ID}/config/${CFG_ID}" -r "$REALM" -s alias=redirect-to-github -s 'config.defaultProvider=github'
               else
