@@ -384,7 +384,6 @@ spec:
               value: "keycloak_app"
             - name: PGADMIN_USER
               value: "vaultadmin"
-            # Always drop schema before Keycloak boots
             - name: KC_FORCE_DROP_SCHEMA
               value: "true"
             - name: KC_FORCE_RESET_SCHEMA_ON_CONFLICT
@@ -397,7 +396,6 @@ spec:
               set -euo pipefail
               apk add --no-cache postgresql15-client jq bind-tools busybox-extras
 
-              # Wait for Vault agent to write the secret file
               for i in $(seq 1 60); do
                 if [ -s /vault/secrets/vaultadmin ]; then break; fi
                 echo "⏳ waiting for /vault/secrets/vaultadmin..."
@@ -420,11 +418,9 @@ spec:
               done
               echo "✅ DB reachable"
 
-              # Ensure schema exists so DROP works deterministically
               psql -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDATABASE" -v ON_ERROR_STOP=1 \
                 -c "CREATE SCHEMA IF NOT EXISTS ${PGSCHEMA};"
 
-              # Log what exists
               TABLES=$(
                 psql -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDATABASE" -Atc \
                   "select table_schema||'.'||table_name
@@ -444,23 +440,19 @@ spec:
               GRANT USAGE, CREATE ON SCHEMA ${PGSCHEMA} TO ${PGSCHEMA_OWNER};
               EOSQL
 
-              # NOTE: unquoted heredoc so $PGSCHEMA expands in the shell.
               psql -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDATABASE" -v ON_ERROR_STOP=0 <<EOSQL || true
               DO \$blk\$
               DECLARE
-                sch text := quote_ident('$PGSCHEMA');  -- safe identifier quoting
+                sch text := quote_ident('$PGSCHEMA');
               BEGIN
                 IF EXISTS (
-                  SELECT 1
-                  FROM information_schema.tables
+                  SELECT 1 FROM information_schema.tables
                   WHERE table_schema = '$PGSCHEMA' AND table_name = 'databasechangelog'
                 ) THEN
                   EXECUTE 'TRUNCATE TABLE ' || sch || '.databasechangelog RESTART IDENTITY CASCADE';
                 END IF;
-
                 IF EXISTS (
-                  SELECT 1
-                  FROM information_schema.tables
+                  SELECT 1 FROM information_schema.tables
                   WHERE table_schema = '$PGSCHEMA' AND table_name = 'databasechangeloglock'
                 ) THEN
                   EXECUTE 'TRUNCATE TABLE ' || sch || '.databasechangeloglock RESTART IDENTITY CASCADE';
@@ -472,7 +464,6 @@ spec:
               echo "✅ Preflight complete."
 
       containers:
-        # --- One-time configuration sidecar (GitHub IdP + flow + attach provider) ---
         - name: keycloak-configurator
           image: ghcr.io/dotcomrow/keycloak-image:24.0.5
           imagePullPolicy: Always
@@ -487,16 +478,15 @@ spec:
               REALM="master"
               SERVER="http://127.0.0.1:8080"
 
-              FLOW_POST="GitHub-PostLogin"                  # your plugin flow
-              PROVIDER_ID="github-team-admin"               # your plugin id
+              FLOW_POST="GitHub-PostLogin"
+              PROVIDER_ID="github-team-admin"
 
-              FLOW_BROWSER="browser-github-only"            # new: GitHub-only browser flow
+              FLOW_BROWSER="browser-github-only"
 
               hold(){ echo "Configurator holding for logs…"; tail -f /dev/null; }
               on_err(){ code=$?; echo "Configurator error (exit $code)"; hold; }
               trap on_err ERR
 
-              # --- secrets from Vault agent ---
               source /vault/secrets/keycloak-admin
               GITHUB_CLIENT_ID="$(cat /vault/secrets/github-client-id)"
               GITHUB_CLIENT_SECRET="$(cat /vault/secrets/github-client-secret)"
@@ -528,14 +518,13 @@ spec:
                   -s 'config.defaultScope=read:org user:email'
               fi
 
-              # --- Your post-broker flow (kept as-is) ---
+              # --- Post-broker flow (your plugin) ---
               if ! /opt/keycloak/bin/kcadm.sh get authentication/flows -r "$REALM" | grep -q "\"alias\" *: *\"$FLOW_POST\""; then
                 /opt/keycloak/bin/kcadm.sh create authentication/flows -r "$REALM" \
                   -s "alias=$FLOW_POST" -s providerId=basic-flow -s topLevel=true -s builtIn=false \
                   -s 'description=Grant roles to GitHub users'
               fi
 
-              # reset executions (idempotent)
               EXECS=$(/opt/keycloak/bin/kcadm.sh get "authentication/flows/$FLOW_POST/executions" -r "$REALM" || echo "[]")
               echo "$EXECS" | tr -d '\n' | sed 's/},[[:space:]]*{/}\n{/g' | sed -n 's/.*"id"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' \
                 | while read -r EID; do [ -n "$EID" ] && /opt/keycloak/bin/kcadm.sh delete "authentication/executions/$EID" -r "$REALM" || true; done
@@ -551,11 +540,10 @@ spec:
               done
               [ -z "$EID" ] && { echo "❌ cannot find execution for $PROVIDER_ID"; exit 1; }
               /opt/keycloak/bin/kcadm.sh update "authentication/executions/$EID" -r "$REALM" -s requirement=REQUIRED
-
               /opt/keycloak/bin/kcadm.sh update identity-provider/instances/github -r "$REALM" \
                 -s "postBrokerLoginFlowAlias=$FLOW_POST" || true
 
-              # --- NEW: GitHub-only Browser flow (no username/password) ---
+              # --- GitHub-only Browser flow ---
               if ! /opt/keycloak/bin/kcadm.sh get authentication/flows -r "$REALM" | grep -q "\"alias\" *: *\"$FLOW_BROWSER\""; then
                 /opt/keycloak/bin/kcadm.sh create authentication/flows -r "$REALM" \
                   -s "alias=${FLOW_BROWSER}" -s providerId=basic-flow -s topLevel=true -s builtIn=false \
@@ -564,7 +552,6 @@ spec:
                   -s provider=identity-provider-redirector
               fi
 
-              # make redirector REQUIRED and default to github
               EXECS=$(/opt/keycloak/bin/kcadm.sh get "authentication/flows/${FLOW_BROWSER}/executions" -r "$REALM")
               REDIR_ID=$(echo "$EXECS" | tr -d '\n' | sed 's/},[[:space:]]*{/}\n{/g' \
                         | grep -E '"providerId" *: *"identity-provider-redirector"' \
@@ -582,11 +569,10 @@ spec:
                   -s alias=redirect-to-github -s 'config.defaultProvider=github'
               fi
 
-              # bind as realm browserFlow
+              # Bind GitHub-only browser flow
               /opt/keycloak/bin/kcadm.sh update "realms/${REALM}" -s "browserFlow=${FLOW_BROWSER}"
 
-              # --- Disable Direct Access Grants (password grant) ---
-              # 1) realm-level: create a blank direct-grant flow and bind it
+              # Disable Direct Access Grants (password grant)
               DG="disabled-direct-grant"
               if ! /opt/keycloak/bin/kcadm.sh get authentication/flows -r "$REALM" | grep -q "\"alias\" *: *\"$DG\""; then
                 /opt/keycloak/bin/kcadm.sh create authentication/flows -r "$REALM" \
@@ -594,7 +580,7 @@ spec:
               fi
               /opt/keycloak/bin/kcadm.sh update "realms/${REALM}" -s "directGrantFlow=$DG"
 
-              # 2) per-client defensive flip
+              # Defensive: turn off DAG per client
               for CID in $(/opt/keycloak/bin/kcadm.sh get clients -r "$REALM" -q first=0 -q max=200 \
                           | tr -d '\n' | sed 's/},[[:space:]]*{/}\n{/g' \
                           | sed -n 's/.*"id"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p'); do
@@ -602,10 +588,19 @@ spec:
                   -s directAccessGrantsEnabled=false >/dev/null 2>&1 || true
               done
 
+              # Realm hygiene: disable registration/reset password; keep sane defaults
+              /opt/keycloak/bin/kcadm.sh update "realms/${REALM}" \
+                -s registrationAllowed=false \
+                -s resetPasswordAllowed=false \
+                -s loginWithEmailAllowed=true \
+                -s rememberMe=true \
+                -s bruteForceProtected=true \
+                -s permanentLockout=false \
+                -s sslRequired=EXTERNAL || true
+
               echo "✔ GitHub IdP + GitHub-only browser flow configured. Holding for logs."
               hold
 
-        # --- Keycloak runtime ---
         - name: keycloak
           image: ghcr.io/dotcomrow/keycloak-image:24.0.5
           imagePullPolicy: Always
@@ -613,7 +608,6 @@ spec:
             - containerPort: 8080
               name: http
           env:
-            # DB
             - name: KC_DB
               value: "postgres"
             - name: KC_DB_URL
@@ -627,7 +621,6 @@ spec:
             - name: KC_DB_POOL_MAX_SIZE
               value: "10"
 
-            # Logging
             - name: KC_LOG
               value: "console,file"
             - name: KC_LOG_FILE
@@ -635,9 +628,8 @@ spec:
             - name: KC_LOG_LEVEL
               value: "INFO,com.example.kc.github:DEBUG,org.keycloak.authentication:DEBUG,org.keycloak.events:INFO"
             - name: KC_PROXY
-              value: "edge" 
+              value: "edge"
 
-            # Hostname & HTTP
             - name: KC_HOSTNAME_URL
               value: "https://keycloak.app.suncoast.systems"
             - name: KC_HOSTNAME_ADMIN_URL
