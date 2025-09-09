@@ -464,6 +464,7 @@ spec:
               echo "✅ Preflight complete."
 
       containers:
+        # --- One-time Keycloak configurator (IdP + flows) ---
         - name: keycloak-configurator
           image: ghcr.io/dotcomrow/keycloak-image:24.0.5
           imagePullPolicy: Always
@@ -500,7 +501,7 @@ spec:
               done
               echo "✅ Admin API ready."
 
-              # --- IdP: GitHub (OIDC) with storeToken + scopes ---
+              # --- IdP: GitHub (OIDC) ---
               if /opt/keycloak/bin/kcadm.sh get identity-provider/instances/github -r "$REALM" >/dev/null 2>&1; then
                 /opt/keycloak/bin/kcadm.sh update identity-provider/instances/github -r "$REALM" \
                   -s enabled=true -s 'firstBrokerLoginFlowAlias=first broker login' \
@@ -518,28 +519,54 @@ spec:
                   -s 'config.defaultScope=read:org user:email'
               fi
 
-              # --- Post-broker flow (your plugin) ---
+              # --- Post-broker flow (plugin) ---
               if ! /opt/keycloak/bin/kcadm.sh get authentication/flows -r "$REALM" | grep -q "\"alias\" *: *\"$FLOW_POST\""; then
                 /opt/keycloak/bin/kcadm.sh create authentication/flows -r "$REALM" \
                   -s "alias=$FLOW_POST" -s providerId=basic-flow -s topLevel=true -s builtIn=false \
                   -s 'description=Grant roles to GitHub users'
               fi
 
+              # Purge & re-add provider execution (idempotent)
               EXECS=$(/opt/keycloak/bin/kcadm.sh get "authentication/flows/$FLOW_POST/executions" -r "$REALM" || echo "[]")
               echo "$EXECS" | tr -d '\n' | sed 's/},[[:space:]]*{/}\n{/g' | sed -n 's/.*"id"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' \
                 | while read -r EID; do [ -n "$EID" ] && /opt/keycloak/bin/kcadm.sh delete "authentication/executions/$EID" -r "$REALM" || true; done
 
               /opt/keycloak/bin/kcadm.sh create "authentication/flows/$FLOW_POST/executions/execution" -r "$REALM" -s provider="$PROVIDER_ID"
+
+              # Robustly fetch the real execution id, then set REQUIRED with fallback
               EID=""
-              for i in {1..30}; do
+              for i in {1..40}; do
                 EXECS=$(/opt/keycloak/bin/kcadm.sh get "authentication/flows/$FLOW_POST/executions" -r "$REALM" || echo "[]")
-                EID=$(echo "$EXECS" | tr -d '\n' | sed 's/},[[:space:]]*{/}\n{/g' \
+                EID=$(echo "$EXECS" \
+                      | tr -d '\n' \
+                      | sed 's/},[[:space:]]*{/}\n{/g' \
                       | grep -E "\"providerId\" *: *\"$PROVIDER_ID\"" \
-                      | sed -n 's/.*"id"[[:space:]]*:[[:space:]]*"\([^"]\+\)".*/\1/p' | head -n1)
+                      | sed -n 's/.*"id"[[:space:]]*:[[:space:]]*"\([^"]\+\)".*/\1/p' \
+                      | head -n1)
                 [ -n "$EID" ] && break || sleep 1
               done
-              [ -z "$EID" ] && { echo "❌ cannot find execution for $PROVIDER_ID"; exit 1; }
-              /opt/keycloak/bin/kcadm.sh update "authentication/executions/$EID" -r "$REALM" -s requirement=REQUIRED
+
+              if [ -z "${EID:-}" ]; then
+                echo "❌ Could not discover execution id for provider '$PROVIDER_ID'. Dumping executions:"
+                echo "$EXECS"
+                exit 1
+              fi
+
+              ok=""
+              for i in {1..10}; do
+                if /opt/keycloak/bin/kcadm.sh update "authentication/executions/$EID" -r "$REALM" -s 'requirement=REQUIRED' >/dev/null 2>&1; then
+                  ok="yes"; break
+                else
+                  sleep 1
+                fi
+              done
+
+              if [ -z "$ok" ]; then
+                echo "↩️ Falling back to flow-level executions update…"
+                printf '{ "id":"%s", "requirement":"REQUIRED" }\n' "$EID" >/tmp/r.json
+                /opt/keycloak/bin/kcadm.sh update "authentication/flows/$FLOW_POST/executions" -r "$REALM" -f /tmp/r.json
+              fi
+
               /opt/keycloak/bin/kcadm.sh update identity-provider/instances/github -r "$REALM" \
                 -s "postBrokerLoginFlowAlias=$FLOW_POST" || true
 
@@ -569,7 +596,7 @@ spec:
                   -s alias=redirect-to-github -s 'config.defaultProvider=github'
               fi
 
-              # Bind GitHub-only browser flow
+              # Bind as realm browserFlow
               /opt/keycloak/bin/kcadm.sh update "realms/${REALM}" -s "browserFlow=${FLOW_BROWSER}"
 
               # Disable Direct Access Grants (password grant)
@@ -580,7 +607,7 @@ spec:
               fi
               /opt/keycloak/bin/kcadm.sh update "realms/${REALM}" -s "directGrantFlow=$DG"
 
-              # Defensive: turn off DAG per client
+              # Defensive: per-client flip
               for CID in $(/opt/keycloak/bin/kcadm.sh get clients -r "$REALM" -q first=0 -q max=200 \
                           | tr -d '\n' | sed 's/},[[:space:]]*{/}\n{/g' \
                           | sed -n 's/.*"id"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p'); do
@@ -588,7 +615,7 @@ spec:
                   -s directAccessGrantsEnabled=false >/dev/null 2>&1 || true
               done
 
-              # Realm hygiene: disable registration/reset password; keep sane defaults
+              # Realm hygiene
               /opt/keycloak/bin/kcadm.sh update "realms/${REALM}" \
                 -s registrationAllowed=false \
                 -s resetPasswordAllowed=false \
@@ -601,6 +628,7 @@ spec:
               echo "✔ GitHub IdP + GitHub-only browser flow configured. Holding for logs."
               hold
 
+        # --- Keycloak runtime ---
         - name: keycloak
           image: ghcr.io/dotcomrow/keycloak-image:24.0.5
           imagePullPolicy: Always
@@ -608,6 +636,7 @@ spec:
             - containerPort: 8080
               name: http
           env:
+            # DB
             - name: KC_DB
               value: "postgres"
             - name: KC_DB_URL
@@ -621,6 +650,7 @@ spec:
             - name: KC_DB_POOL_MAX_SIZE
               value: "10"
 
+            # Logging
             - name: KC_LOG
               value: "console,file"
             - name: KC_LOG_FILE
@@ -628,8 +658,9 @@ spec:
             - name: KC_LOG_LEVEL
               value: "INFO,com.example.kc.github:DEBUG,org.keycloak.authentication:DEBUG,org.keycloak.events:INFO"
             - name: KC_PROXY
-              value: "edge"
+              value: "edge" 
 
+            # Hostname & HTTP
             - name: KC_HOSTNAME_URL
               value: "https://keycloak.app.suncoast.systems"
             - name: KC_HOSTNAME_ADMIN_URL
