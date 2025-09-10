@@ -521,48 +521,62 @@ spec:
           args:
             - |
               set -euo pipefail
+
               REALM="master"
               SERVER="http://127.0.0.1:8080"
               FLOW_POST="GitHub-PostLogin"
               PROVIDER_ID="github-team-admin"
               FLOW_BROWSER="browser-github-only"
+
+              # Inputs from Vault
               source /vault/secrets/keycloak-admin
               GITHUB_CLIENT_ID="$(cat /vault/secrets/github-client-id)"
               GITHUB_CLIENT_SECRET="$(cat /vault/secrets/github-client-secret)"
-              echo "Waiting for admin API…"
+
+              echo "Waiting for Keycloak admin API..."
               for i in {1..120}; do
-                if /opt/keycloak/bin/kcadm.sh config credentials --server "$SERVER" --realm "$REALM" --user "$KEYCLOAK_ADMIN" --password "$KEYCLOAK_ADMIN_PASSWORD" >/dev/null 2>&1; then break; fi
+                if /opt/keycloak/bin/kcadm.sh config credentials \
+                     --server "$SERVER" --realm "$REALM" \
+                     --user "$KEYCLOAK_ADMIN" --password "$KEYCLOAK_ADMIN_PASSWORD" >/dev/null 2>&1; then
+                  break
+                fi
                 sleep 2
               done
-              echo "Admin API ready."
+              echo "✅ Admin API ready."
 
-              # IdP (uses config.scope + storeToken)
+              # --- GitHub IdP: delete to avoid drift, then re-create with the exact, known-good flags ---
               if /opt/keycloak/bin/kcadm.sh get identity-provider/instances/github -r "$REALM" >/dev/null 2>&1; then
-                /opt/keycloak/bin/kcadm.sh update identity-provider/instances/github -r "$REALM" \
-                  -s enabled=true -s 'firstBrokerLoginFlowAlias=first broker login' \
-                  -s 'config.storeToken=true' \
-                  -s "config.clientId=${GITHUB_CLIENT_ID}" \
-                  -s "config.clientSecret=${GITHUB_CLIENT_SECRET}" \
-                  -s 'config.scope=read:user user:email read:org'
-              else
-                /opt/keycloak/bin/kcadm.sh create identity-provider/instances -r "$REALM" \
-                  -s alias=github -s providerId=github -s enabled=true \
-                  -s 'firstBrokerLoginFlowAlias=first broker login' \
-                  -s 'config.storeToken=true' \
-                  -s "config.clientId=${GITHUB_CLIENT_ID}" \
-                  -s "config.clientSecret=${GITHUB_CLIENT_SECRET}" \
-                  -s 'config.scope=read:user user:email read:org'
+                echo "↻ Removing existing 'github' IdP to prevent config drift…"
+                /opt/keycloak/bin/kcadm.sh delete identity-provider/instances/github -r "$REALM" || true
               fi
 
-              # Post-broker flow (idempotent, with fallback)
+              echo "➕ Creating 'github' IdP (storeToken=true, defaultScope=read:org user:email)…"
+              /opt/keycloak/bin/kcadm.sh create identity-provider/instances -r "$REALM" \
+                -s alias=github \
+                -s providerId=github \
+                -s enabled=true \
+                -s 'firstBrokerLoginFlowAlias=first broker login' \
+                -s 'config.storeToken=true' \
+                -s "config.clientId=${GITHUB_CLIENT_ID}" \
+                -s "config.clientSecret=${GITHUB_CLIENT_SECRET}" \
+                -s 'config.defaultScope=read:org user:email' \
+                -s 'config.syncMode=IMPORT'
+
+              # --- Post-broker flow (plugin) ---
               if ! /opt/keycloak/bin/kcadm.sh get authentication/flows -r "$REALM" | grep -q "\"alias\" *: *\"$FLOW_POST\""; then
                 /opt/keycloak/bin/kcadm.sh create authentication/flows -r "$REALM" \
-                  -s "alias=$FLOW_POST" -s providerId=basic-flow -s topLevel=true -s builtIn=false
+                  -s "alias=$FLOW_POST" -s providerId=basic-flow -s topLevel=true -s builtIn=false \
+                  -s 'description=Grant roles to GitHub users'
               fi
+
+              # Purge & re-add provider execution (idempotent)
               EXECS=$(/opt/keycloak/bin/kcadm.sh get "authentication/flows/$FLOW_POST/executions" -r "$REALM" || echo "[]")
               echo "$EXECS" | tr -d '\n' | sed 's/},[[:space:]]*{/}\n{/g' | sed -n 's/.*"id"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' \
                 | while read -r EID; do [ -n "$EID" ] && /opt/keycloak/bin/kcadm.sh delete "authentication/executions/$EID" -r "$REALM" || true; done
+
               /opt/keycloak/bin/kcadm.sh create "authentication/flows/$FLOW_POST/executions/execution" -r "$REALM" -s provider="$PROVIDER_ID"
+
+              # Find execution id
               EID=""
               for i in {1..40}; do
                 EXECS=$(/opt/keycloak/bin/kcadm.sh get "authentication/flows/$FLOW_POST/executions" -r "$REALM" || echo "[]")
@@ -571,44 +585,56 @@ spec:
                       | sed -n 's/.*"id"[[:space:]]*:[[:space:]]*"\([^"]\+\)".*/\1/p' | head -n1)
                 [ -n "$EID" ] && break || sleep 1
               done
+              [ -n "$EID" ] || { echo "❌ Could not resolve execution id for $PROVIDER_ID"; exit 1; }
+
+              # REQUIRED (with fallback)
               if ! /opt/keycloak/bin/kcadm.sh update "authentication/executions/$EID" -r "$REALM" -s requirement=REQUIRED >/dev/null 2>&1; then
                 printf '{ "id":"%s", "requirement":"REQUIRED" }\n' "$EID" >/tmp/r.json
                 /opt/keycloak/bin/kcadm.sh update "authentication/flows/$FLOW_POST/executions" -r "$REALM" -f /tmp/r.json
               fi
-              /opt/keycloak/bin/kcadm.sh update identity-provider/instances/github -r "$REALM" -s "postBrokerLoginFlowAlias=$FLOW_POST" || true
 
-              # Browser redirector (GitHub only)
-              FLOW_BROWSER="browser-github-only"
+              # Bind IdP to the post-broker flow
+              /opt/keycloak/bin/kcadm.sh update identity-provider/instances/github -r "$REALM" \
+                -s "postBrokerLoginFlowAlias=$FLOW_POST" || true
+
+              # --- GitHub-only Browser flow (unchanged) ---
               if ! /opt/keycloak/bin/kcadm.sh get authentication/flows -r "$REALM" | grep -q "\"alias\" *: *\"$FLOW_BROWSER\""; then
                 /opt/keycloak/bin/kcadm.sh create authentication/flows -r "$REALM" \
-                  -s "alias=${FLOW_BROWSER}" -s providerId=basic-flow -s topLevel=true -s builtIn=false
+                  -s "alias=${FLOW_BROWSER}" -s providerId=basic-flow -s topLevel=true -s builtIn=false \
+                  -s 'description=Browser flow that redirects to GitHub'
                 /opt/keycloak/bin/kcadm.sh create "authentication/flows/${FLOW_BROWSER}/executions/execution" -r "$REALM" \
                   -s provider=identity-provider-redirector
               fi
+
               EXECS=$(/opt/keycloak/bin/kcadm.sh get "authentication/flows/${FLOW_BROWSER}/executions" -r "$REALM")
               REDIR_ID=$(echo "$EXECS" | tr -d '\n' | sed 's/},[[:space:]]*{/}\n{/g' \
                         | grep -E '"providerId" *: *"identity-provider-redirector"' \
                         | sed -n 's/.*"id"[[:space:]]*:[[:space:]]*"\([^"]\+\)".*/\1/p' | head -n1)
-              if ! /opt/keycloak/bin/kcadm.sh update "authentication/executions/${REDIR_ID}" -r "$REALM" -s requirement=REQUIRED >/dev/null 2>&1; then
-                printf '{ "id":"%s", "requirement":"REQUIRED" }\n' "$REDIR_ID" >/tmp/r2.json
-                /opt/keycloak/bin/kcadm.sh update "authentication/flows/${FLOW_BROWSER}/executions" -r "$REALM" -f /tmp/r2.json
-              fi
-              CFG_ID=$(/opt/keycloak/bin/kcadm.sh get "authentication/executions/${REDIR_ID}/config" -r "$REALM" | sed -n 's/.*"id"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -n1 | tr -d '\n' || true)
+              [ -z "$REDIR_ID" ] && { echo "❌ cannot find redirector execution"; exit 1; }
+              /opt/keycloak/bin/kcadm.sh update "authentication/executions/${REDIR_ID}" -r "$REALM" -s requirement=REQUIRED
+
+              CFG_ID=$(/opt/keycloak/bin/kcadm.sh get "authentication/executions/${REDIR_ID}/config" -r "$REALM" \
+                        | sed -n 's/.*"id"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -n1 || true)
               if [ -n "${CFG_ID:-}" ]; then
-                /opt/keycloak/bin/kcadm.sh update "authentication/executions/${REDIR_ID}/config/${CFG_ID}" -r "$REALM" -s alias=redirect-to-github -s 'config.defaultProvider=github'
+                /opt/keycloak/bin/kcadm.sh update "authentication/executions/${REDIR_ID}/config/${CFG_ID}" -r "$REALM" \
+                  -s alias=redirect-to-github -s 'config.defaultProvider=github'
               else
-                /opt/keycloak/bin/kcadm.sh create "authentication/executions/${REDIR_ID}/config" -r "$REALM" -s alias=redirect-to-github -s 'config.defaultProvider=github'
+                /opt/keycloak/bin/kcadm.sh create "authentication/executions/${REDIR_ID}/config" -r "$REALM" \
+                  -s alias=redirect-to-github -s 'config.defaultProvider=github'
               fi
+
+              # Set as realm browserFlow
               /opt/keycloak/bin/kcadm.sh update "realms/${REALM}" -s "browserFlow=${FLOW_BROWSER}"
 
-              # Disable Direct Access Grants
+              # Disable Direct Access Grants (unchanged)
               DG="disabled-direct-grant"
               if ! /opt/keycloak/bin/kcadm.sh get authentication/flows -r "$REALM" | grep -q "\"alias\" *: *\"$DG\""; then
-                /opt/keycloak/bin/kcadm.sh create authentication/flows -r "$REALM" -s "alias=$DG" -s providerId=basic-flow -s topLevel=true -s builtIn=false
+                /opt/keycloak/bin/kcadm.sh create authentication/flows -r "$REALM" \
+                  -s "alias=$DG" -s providerId=basic-flow -s topLevel=true -s builtIn=false
               fi
               /opt/keycloak/bin/kcadm.sh update "realms/${REALM}" -s "directGrantFlow=$DG"
 
-              echo "Configurator finished. Holding for logs."
+              echo "✔ GitHub IdP + flows configured (token storage enforced). Holding for logs."
               tail -f /dev/null
 
         - name: keycloak
