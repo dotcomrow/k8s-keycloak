@@ -541,8 +541,6 @@ spec:
               EID=""
               for i in {1..40}; do
                 EXECS=$(/opt/keycloak/bin/kcadm.sh get "authentication/flows/$FLOW/executions" -r "$REALM" || echo "[]")
-                # 1) collapse to one line, 2) split each object onto its own line,
-                # 3) keep only the line for our provider, 4) extract the execution "id"
                 EID=$(echo "$EXECS" \
                       | tr -d '\n' \
                       | sed 's/},[[:space:]]*{/}\n{/g' \
@@ -576,6 +574,41 @@ spec:
               /opt/keycloak/bin/kcadm.sh update identity-provider/instances/github -r "$REALM" \
                 -s "postBrokerLoginFlowAlias=$FLOW" || true
 
+              # --- GitHub-only Browser flow (forces redirect; hides local username/password form) ---
+              FLOW_BROWSER="browser-github-only"
+
+              if ! /opt/keycloak/bin/kcadm.sh get authentication/flows -r "$REALM" | grep -q "\"alias\"[[:space:]]*:[[:space:]]*\"$FLOW_BROWSER\""; then
+                /opt/keycloak/bin/kcadm.sh create authentication/flows -r "$REALM" \
+                  -s "alias=${FLOW_BROWSER}" -s providerId=basic-flow -s topLevel=true -s builtIn=false \
+                  -s 'description=Browser flow that redirects to GitHub'
+                /opt/keycloak/bin/kcadm.sh create "authentication/flows/${FLOW_BROWSER}/executions/execution" -r "$REALM" \
+                  -s provider=identity-provider-redirector
+              fi
+
+              EXECS=$(/opt/keycloak/bin/kcadm.sh get "authentication/flows/${FLOW_BROWSER}/executions" -r "$REALM")
+              REDIR_ID=$(echo "$EXECS" | tr -d '\n' | sed 's/},[[:space:]]*{/}\n{/g' \
+                        | grep -E '"providerId" *: *"identity-provider-redirector"' \
+                        | sed -n 's/.*"id"[[:space:]]*:[[:space:]]*"\([^"]\+\)".*/\1/p' | head -n1)
+              [ -z "$REDIR_ID" ] && { echo "❌ cannot find redirector execution"; exit 1; }
+
+              if ! /opt/keycloak/bin/kcadm.sh update "authentication/executions/${REDIR_ID}" -r "$REALM" -s requirement=REQUIRED >/dev/null 2>&1; then
+                printf '{ "id":"%s", "requirement":"REQUIRED" }\n' "$REDIR_ID" >/tmp/r2.json
+                /opt/keycloak/bin/kcadm.sh update "authentication/flows/${FLOW_BROWSER}/executions" -r "$REALM" -f /tmp/r2.json
+              fi
+
+              CFG_ID=$(/opt/keycloak/bin/kcadm.sh get "authentication/executions/${REDIR_ID}/config" -r "$REALM" \
+                      | sed -n 's/.*"id"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -n1 || true)
+              if [ -n "${CFG_ID:-}" ]; then
+                /opt/keycloak/bin/kcadm.sh update "authentication/executions/${REDIR_ID}/config/${CFG_ID}" -r "$REALM" \
+                  -s alias=redirect-to-github -s 'config.defaultProvider=github'
+              else
+                /opt/keycloak/bin/kcadm.sh create "authentication/executions/${REDIR_ID}/config" -r "$REALM" \
+                  -s alias=redirect-to-github -s 'config.defaultProvider=github'
+              fi
+
+              /opt/keycloak/bin/kcadm.sh update "realms/${REALM}" -s "browserFlow=${FLOW_BROWSER}"
+
+              # Realm hygiene (unchanged)
               /opt/keycloak/bin/kcadm.sh update "realms/$REALM" \
                 -s sslRequired=EXTERNAL -s loginWithEmailAllowed=true -s registrationAllowed=false \
                 -s rememberMe=true -s resetPasswordAllowed=true -s bruteForceProtected=true -s permanentLockout=false || true
