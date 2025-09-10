@@ -278,13 +278,11 @@ spec:
       labels:
         app: keycloak
       annotations:
-        # Vault agent for secret files
         vault.hashicorp.com/agent-inject: "true"
         vault.hashicorp.com/role: "keycloak"
         vault.hashicorp.com/agent-init-first: "true"
         vault.hashicorp.com/agent-pre-populate: "true"
 
-        # DB creds (static role)
         vault.hashicorp.com/agent-inject-secret-db-username: "yugabyte-db/static-creds/keycloak-app"
         vault.hashicorp.com/agent-inject-template-db-username: |
           {{- with secret "yugabyte-db/static-creds/keycloak-app" -}}{{ .Data.username }}{{- end -}}
@@ -292,7 +290,6 @@ spec:
         vault.hashicorp.com/agent-inject-template-db-password: |
           {{- with secret "yugabyte-db/static-creds/keycloak-app" -}}{{ .Data.password }}{{- end -}}
 
-        # Admin creds
         vault.hashicorp.com/agent-inject-secret-keycloak-admin: "secret/data/keycloak/admin"
         vault.hashicorp.com/agent-inject-template-keycloak-admin: |
           {{- with secret "secret/data/keycloak/admin" -}}
@@ -300,7 +297,6 @@ spec:
           export KEYCLOAK_ADMIN_PASSWORD={{ .Data.data.password }}
           {{- end -}}
 
-        # GitHub OAuth + org/team for provider
         vault.hashicorp.com/agent-inject-secret-github-client-id: "secret/data/keycloak-oauth-client-id"
         vault.hashicorp.com/agent-inject-template-github-client-id: |
           {{- with secret "secret/data/keycloak-oauth-client-id" -}}{{ .Data.data.value }}{{- end -}}
@@ -314,7 +310,6 @@ spec:
         vault.hashicorp.com/agent-inject-template-github-admin-team: |
           {{- with secret "secret/data/k8s-teleport-teleport-github-admin-team" -}}{{ .Data.data.value }}{{- end -}}
 
-        # Linkerd: allow direct Postgres/Vault egress from this pod
         config.linkerd.io/skip-outbound-ports: "8200,5433"
 
         vault.hashicorp.com/agent-inject-secret-vaultadmin: "secret/data/vaultadmin"
@@ -526,7 +521,7 @@ spec:
                   -s 'description=Grant roles to GitHub users'
               fi
 
-              # Purge & re-add provider execution (idempotent)
+              # Purge & re-add provider execution
               EXECS=$(/opt/keycloak/bin/kcadm.sh get "authentication/flows/$FLOW_POST/executions" -r "$REALM" || echo "[]")
               echo "$EXECS" | tr -d '\n' | sed 's/},[[:space:]]*{/}\n{/g' | sed -n 's/.*"id"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' \
                 | while read -r EID; do [ -n "$EID" ] && /opt/keycloak/bin/kcadm.sh delete "authentication/executions/$EID" -r "$REALM" || true; done
@@ -562,7 +557,7 @@ spec:
               done
 
               if [ -z "$ok" ]; then
-                echo "↩️ Falling back to flow-level executions update…"
+                echo "↩️ Falling back to flow-level executions update (post-broker)…"
                 printf '{ "id":"%s", "requirement":"REQUIRED" }\n' "$EID" >/tmp/r.json
                 /opt/keycloak/bin/kcadm.sh update "authentication/flows/$FLOW_POST/executions" -r "$REALM" -f /tmp/r.json
               fi
@@ -584,7 +579,20 @@ spec:
                         | grep -E '"providerId" *: *"identity-provider-redirector"' \
                         | sed -n 's/.*"id"[[:space:]]*:[[:space:]]*"\([^"]\+\)".*/\1/p' | head -n1)
               [ -z "$REDIR_ID" ] && { echo "❌ cannot find redirector execution"; exit 1; }
-              /opt/keycloak/bin/kcadm.sh update "authentication/executions/${REDIR_ID}" -r "$REALM" -s requirement=REQUIRED
+
+              ok=""
+              for i in {1..10}; do
+                if /opt/keycloak/bin/kcadm.sh update "authentication/executions/${REDIR_ID}" -r "$REALM" -s requirement=REQUIRED >/dev/null 2>&1; then
+                  ok="yes"; break
+                else
+                  sleep 1
+                fi
+              done
+              if [ -z "$ok" ]; then
+                echo "↩️ Falling back to flow-level executions update (browser)…"
+                printf '{ "id":"%s", "requirement":"REQUIRED" }\n' "$REDIR_ID" >/tmp/r2.json
+                /opt/keycloak/bin/kcadm.sh update "authentication/flows/${FLOW_BROWSER}/executions" -r "$REALM" -f /tmp/r2.json
+              fi
 
               CFG_ID=$(/opt/keycloak/bin/kcadm.sh get "authentication/executions/${REDIR_ID}/config" -r "$REALM" \
                       | sed -n 's/.*"id"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -n1 || true)
@@ -679,6 +687,11 @@ spec:
               value: "/"
             - name: KC_HTTP_COOKIE_SAME_SITE
               value: "LAX"
+
+            # --- SAFETY: disable destructive revocation until token is confirmed present ---
+            - name: GITHUB_STRICT_REVOKE
+              value: "false"
+
           command: ["/bin/bash","-lc"]
           args:
             - |
