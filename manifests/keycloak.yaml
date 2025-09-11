@@ -626,6 +626,22 @@ spec:
                 -s sslRequired=EXTERNAL -s loginWithEmailAllowed=true -s registrationAllowed=false \
                 -s rememberMe=true -s resetPasswordAllowed=true -s bruteForceProtected=true -s permanentLockout=false || true
 
+              # 1) Disable Direct Access Grants (password grant)
+              DG="disabled-direct-grant"
+              if ! /opt/keycloak/bin/kcadm.sh get authentication/flows -r "$REALM" | grep -q "\"alias\" *: *\"$DG\""; then
+                /opt/keycloak/bin/kcadm.sh create authentication/flows -r "$REALM" \
+                  -s "alias=$DG" -s providerId=basic-flow -s topLevel=true -s builtIn=false
+              fi
+              /opt/keycloak/bin/kcadm.sh update "realms/$REALM" -s "directGrantFlow=$DG" || true
+
+              # 2) Disable the bootstrap admin user (safer than delete; not recreated; no password logins)
+              ADMIN_ID=$(/opt/keycloak/bin/kcadm.sh get users -r "$REALM" -q username="$KEYCLOAK_ADMIN" \
+                | tr -d '\n' | sed 's/},[[:space:]]*{/}\n{/g' \
+                | sed -n 's/.*"id"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -n1)
+              if [ -n "$ADMIN_ID" ]; then
+                /opt/keycloak/bin/kcadm.sh update "users/$ADMIN_ID" -r "$REALM" -s enabled=false -s 'credentials=[]' || true
+              fi
+
               echo "✔ Configurator finished. Holding for logs."
               hold
 
