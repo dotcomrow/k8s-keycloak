@@ -88,13 +88,26 @@ spec:
               export VAULT_TOKEN="$(cat /vault-token/VAULT_TOKEN)"
 
               echo "🧩 Ensuring KV v2 at 'secret/'..."
-              if ! vault secrets list -format=json | jq -e '."secret/".type=="kv" and ."secret/".options.version=="2"' >/dev/null 2>&1; then
-                if vault secrets list -format=json | jq -e 'has("secret/")' >/dev/null 2>&1; then
-                  echo "❌ 'secret/' exists but is not KVv2; please migrate manually."; exit 1
-                else
-                  vault secrets enable -path=secret -version=2 kv
+              while :; do
+                # already KVv2?
+                if vault secrets list -format=json 2>/dev/null \
+                  | jq -e '."secret/".type=="kv" and ."secret/".options.version=="2"' >/dev/null; then
+                  echo "✅ 'secret/' is KVv2"
+                  break
                 fi
-              fi
+
+                # path exists but not KVv2 → bail
+                if vault secrets list -format=json 2>/dev/null \
+                  | jq -e 'has("secret/")' >/dev/null; then
+                  echo "❌ 'secret/' exists but is not KVv2; please migrate manually."
+                  exit 1
+                fi
+
+                # try to enable KVv2; if it works, we're done; otherwise, retry after a short pause
+                vault secrets enable -path=secret -version=2 kv && break
+
+                sleep 2
+              done
 
               echo "🔐 Seeding Keycloak admin creds at secret/keycloak/admin (if missing)..."
               if ! vault kv get -format=json secret/keycloak/admin >/dev/null 2>&1; then
