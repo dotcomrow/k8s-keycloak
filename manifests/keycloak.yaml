@@ -531,7 +531,7 @@ spec:
                 -s "config.clientSecret=$CLIENT_SECRET" \
                 -s 'config.defaultScope=read:user user:email read:org' \
                 -s 'config.guiOrder=1' -s 'config.hideOnLoginPage=false' \
-                -s 'config.syncMode=force' || true
+                -s 'config.syncMode=FORCE' || true
 
               # Flow create/reset
               if ! /opt/keycloak/bin/kcadm.sh get authentication/flows -r "$REALM" | grep -q "\"alias\"[[:space:]]*:[[:space:]]*\"$FLOW\""; then
