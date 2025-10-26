@@ -688,9 +688,9 @@ spec:
 
             # Hostname & HTTP
             - name: KC_HOSTNAME_URL
-              value: "https://keycloak.app.suncoast.systems"
+              value: "https://keycloak.teleport.app.suncoast.systems"
             - name: KC_HOSTNAME_ADMIN_URL
-              value: "https://keycloak.app.suncoast.systems"
+              value: "https://keycloak.teleport.app.suncoast.systems"
             - name: KC_HEALTH_ENABLED
               value: "true"
             - name: KC_HOSTNAME_STRICT
