@@ -239,8 +239,16 @@ kind: Service
 metadata:
   name: keycloak
   namespace: keycloak
+  annotations:
+    teleport.dev/name: "keycloak"
+    teleport.dev/protocol: "http"
+    teleport.dev/public-addr: "keycloak.teleport.app.suncoast.systems"
+    teleport.dev/description: "Keycloak Service"
   labels:
     app: keycloak
+    app.kubernetes.io/name: keycloak
+    app.kubernetes.io/component: authentication
+    teleport.dev/enroll: "true"
 spec:
   type: ClusterIP
   selector:
