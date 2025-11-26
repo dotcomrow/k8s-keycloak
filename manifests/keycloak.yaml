@@ -234,6 +234,73 @@ spec:
             requests: { cpu: "50m",  memory: "64Mi" }
             limits:   { cpu: "200m", memory: "256Mi" }
 ---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: keycloak-vault-k8s-role
+  namespace: vault
+spec:
+  backoffLimit: 0
+  template:
+    metadata:
+      annotations:
+        linkerd.io/inject: "disabled"
+    spec:
+      restartPolicy: Never
+      serviceAccountName: default
+      volumes:
+        - name: root-token
+          secret:
+            secretName: vault-root-token
+      containers:
+        - name: ensure-role
+          image: hashicorp/vault:1.15.4
+          command: ["/bin/sh","-c"]
+          args:
+            - |
+              set -euo pipefail
+              export PATH="$PATH:/vault-bin"
+              export VAULT_ADDR="http://vault.vault.svc.cluster.local:8200"
+
+              while [ ! -s /vault-token/VAULT_TOKEN ]; do
+                echo "🔁 Waiting for Vault token file..."
+                sleep 2
+              done
+              export VAULT_TOKEN="$(cat /vault-token/VAULT_TOKEN)"
+
+              echo "🔎 Checking for auth/kubernetes/role/keycloak..."
+              if vault read auth/kubernetes/role/keycloak >/dev/null 2>&1; then
+                echo "✅ Role already exists; nothing to do."
+                exit 0
+              fi
+
+              echo "⚙️  (Re)creating policy 'keycloak' and Kubernetes role..."
+              vault policy write "keycloak" - <<'EOF'
+              path "yugabyte-db/static-creds/keycloak-app"        { capabilities = ["read"] }
+              path "secret/data/keycloak/admin"                   { capabilities = ["read"] }
+              path "secret/data/vaultadmin"                       { capabilities = ["read"] }
+              path "secret/data/keycloak-oauth-client-id"         { capabilities = ["read"] }
+              path "secret/data/keycloak-oauth-client-secret"     { capabilities = ["read"] }
+              path "secret/data/k8s-teleport-teleport-github-org" { capabilities = ["read"] }
+              path "secret/data/k8s-teleport-teleport-github-admin-team" { capabilities = ["read"] }
+              EOF
+
+              vault write auth/kubernetes/role/keycloak \
+                bound_service_account_names="keycloak" \
+                bound_service_account_namespaces="keycloak" \
+                policies="keycloak" \
+                ttl="48h"
+
+              vault read auth/kubernetes/role/keycloak >/dev/null
+              echo "🎉 Vault Kubernetes role 'keycloak' ready."
+          volumeMounts:
+            - name: root-token
+              mountPath: /vault-token
+              readOnly: true
+          resources:
+            requests: { cpu: "50m", memory: "64Mi" }
+            limits:   { cpu: "200m", memory: "256Mi" }
+---
 apiVersion: v1
 kind: Service
 metadata:
@@ -362,26 +429,33 @@ spec:
           command: ["/bin/sh","-lc"]
           args:
             - |
-              echo "Waiting for Job vault/keycloak-yugabyte-config to complete (will retry until ready)..."
-              while true; do
-                if ! kubectl -n vault get job keycloak-yugabyte-config >/dev/null 2>&1; then
-                  echo "  └─ job not found yet..."
+              wait_job() {
+                local JOB="$1"
+                echo "Waiting for Job vault/${JOB} to complete (will retry until ready)..."
+                while true; do
+                  if ! kubectl -n vault get job "${JOB}" >/dev/null 2>&1; then
+                    echo "  └─ job ${JOB} not found yet..."
+                    sleep 5
+                    continue
+                  fi
+                  SUCC="$(kubectl -n vault get job "${JOB}" -o jsonpath='{.status.succeeded}' 2>/dev/null || true)"; SUCC="${SUCC:-0}"
+                  if [ "$SUCC" -ge 1 ] 2>/dev/null; then
+                    echo "✅ job ${JOB} is complete."
+                    break
+                  fi
+                  if kubectl -n vault wait --for=condition=complete "job/${JOB}" --timeout=10s >/dev/null 2>&1; then
+                    echo "✅ job ${JOB} is complete."
+                    break
+                  fi
+                  FAIL="$(kubectl -n vault get job "${JOB}" -o jsonpath='{.status.failed}' 2>/dev/null || true)";  FAIL="${FAIL:-0}"
+                  ACTV="$(kubectl -n vault get job "${JOB}" -o jsonpath='{.status.active}' 2>/dev/null || true)";  ACTV="${ACTV:-0}"
+                  echo "  └─ still waiting... succeeded=${SUCC} failed=${FAIL} active=${ACTV}"
                   sleep 5
-                  continue
-                fi
-                SUCC="$(kubectl -n vault get job keycloak-yugabyte-config -o jsonpath='{.status.succeeded}' 2>/dev/null || true)"; SUCC="${SUCC:-0}"
-                if [ "$SUCC" -ge 1 ] 2>/dev/null; then
-                  echo "✅ DB bootstrap job is complete."
-                  break
-                fi
-                if kubectl -n vault wait --for=condition=complete job/keycloak-yugabyte-config --timeout=10s >/dev/null 2>&1; then
-                  echo "✅ DB bootstrap job is complete."
-                  break
-                fi
-                FAIL="$(kubectl -n vault get job keycloak-yugabyte-config -o jsonpath='{.status.failed}' 2>/dev/null || true)";  FAIL="${FAIL:-0}"
-                ACTV="$(kubectl -n vault get job keycloak-yugabyte-config -o jsonpath='{.status.active}' 2>/dev/null || true)";  ACTV="${ACTV:-0}"
-                echo "  └─ still waiting... succeeded=${SUCC} failed=${FAIL} active=${ACTV}"
-                sleep 5
+                done
+              }
+
+              for job in keycloak-vault-k8s-role keycloak-yugabyte-config; do
+                wait_job "$job"
               done
 
         - name: kc-db-preflight
