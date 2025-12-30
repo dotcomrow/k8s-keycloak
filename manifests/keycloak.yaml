@@ -30,9 +30,6 @@ spec:
       containers:
         - name: copy-secret
           image: alpine/k8s:1.31.4
-          resources:
-            requests: { cpu: "50m", memory: "64Mi" }
-            limits:   { cpu: "200m", memory: "256Mi" }
           command: ["/bin/sh","-c"]
           args:
             - |
@@ -283,9 +280,6 @@ spec:
             - name: root-token
               mountPath: /vault-token
               readOnly: true
-          resources:
-            requests: { cpu: "50m",  memory: "64Mi" }
-            limits:   { cpu: "200m", memory: "256Mi" }
 ---
 apiVersion: batch/v1
 kind: Job
@@ -350,9 +344,6 @@ spec:
             - name: root-token
               mountPath: /vault-token
               readOnly: true
-          resources:
-            requests: { cpu: "50m", memory: "64Mi" }
-            limits:   { cpu: "200m", memory: "256Mi" }
 ---
 apiVersion: v1
 kind: Service
@@ -625,9 +616,6 @@ spec:
           image: ghcr.io/dotcomrow/keycloak-image:24.0.5
           imagePullPolicy: Always
           command: ["/bin/bash","-lc"]
-          resources:
-            requests: { cpu: "100m", memory: "128Mi" }
-            limits:   { cpu: "500m", memory: "512Mi" }
           args:
             - |
               set -euo pipefail
@@ -856,9 +844,6 @@ spec:
             periodSeconds: 10
             failureThreshold: 6
             timeoutSeconds: 5
-          resources:
-            requests: { cpu: "500m", memory: "1Gi" }
-            limits:   { cpu: "2",    memory: "3Gi" }
           volumeMounts:
             - name: keycloak-data
               mountPath: /opt/keycloak/data
