@@ -523,13 +523,13 @@ spec:
               value: "keycloak_app"
             - name: PGADMIN_USER
               value: "vaultadmin"
-            # Always drop schema before Keycloak boots
+            # Optional schema reset controls (leave false to preserve existing data)
             - name: KC_FORCE_DROP_SCHEMA
-              value: "true"
+              value: "false"
             - name: KC_FORCE_RESET_SCHEMA_ON_CONFLICT
-              value: "true"
+              value: "false"
             - name: KC_CLEAR_CHANGELOG_CHECKSUMS
-              value: "true"
+              value: "false"
           command: ["/bin/sh","-lc"]
           args:
             - |
@@ -574,6 +574,32 @@ spec:
               COUNT="$(printf '%s\n' "$TABLES" | sed '/^$/d' | wc -l | tr -d ' ')"
               echo "ℹ️  ${PGSCHEMA} currently has ${COUNT:-0} table(s)."
               if [ -n "${TABLES:-}" ]; then echo "$TABLES" | sed 's/^/   • /'; fi
+
+              CHANGELOG_EXISTS="$(psql -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDATABASE" -Atc \
+                "select 1 from information_schema.tables where table_schema='${PGSCHEMA}' and table_name='databasechangelog' limit 1" \
+                2>/dev/null || true)"
+              CHANGELOG_EXISTS="${CHANGELOG_EXISTS:-0}"
+              CHANGELOG_ROWS="0"
+              if [ "${CHANGELOG_EXISTS}" = "1" ]; then
+                CHANGELOG_ROWS="$(psql -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDATABASE" -Atc \
+                  "select count(*) from ${PGSCHEMA}.databasechangelog" 2>/dev/null || echo 0)"
+                CHANGELOG_ROWS="${CHANGELOG_ROWS:-0}"
+              fi
+
+              if [ "${COUNT:-0}" -gt 0 ] && [ "${KC_FORCE_DROP_SCHEMA:-false}" != "true" ]; then
+                if [ "${KC_FORCE_RESET_SCHEMA_ON_CONFLICT:-false}" = "true" ] && \
+                   { [ "${CHANGELOG_EXISTS}" != "1" ] || [ "${CHANGELOG_ROWS}" = "0" ]; }; then
+                  echo "⚠️  Existing tables without Liquibase history; resetting schema."
+                else
+                  if [ "${KC_CLEAR_CHANGELOG_CHECKSUMS:-false}" = "true" ] && [ "${CHANGELOG_EXISTS}" = "1" ]; then
+                    echo "🧹 Clearing Liquibase checksums in ${PGSCHEMA}.databasechangelog"
+                    psql -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDATABASE" -v ON_ERROR_STOP=1 \
+                      -c "UPDATE ${PGSCHEMA}.databasechangelog SET md5sum=NULL;"
+                  fi
+                  echo "✅ Existing schema detected; skipping destructive reset."
+                  exit 0
+                fi
+              fi
 
               echo "🧨 Dropping schema ${PGSCHEMA} (CASCADE) for a clean migration…"
               psql -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDATABASE" -v ON_ERROR_STOP=1 <<EOSQL
