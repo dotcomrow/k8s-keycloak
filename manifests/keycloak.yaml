@@ -527,7 +527,7 @@ spec:
             - name: KC_FORCE_DROP_SCHEMA
               value: "false"
             - name: KC_FORCE_RESET_SCHEMA_ON_CONFLICT
-              value: "false"
+              value: "true"
             - name: KC_CLEAR_CHANGELOG_CHECKSUMS
               value: "false"
           command: ["/bin/sh","-lc"]
