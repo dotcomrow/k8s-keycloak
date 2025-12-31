@@ -5,7 +5,6 @@ metadata:
   annotations:
     linkerd.io/inject: enabled
     field.cattle.io/projectId: local:applications
-    scheduler.alpha.kubernetes.io/node-selector: "dedicated=srvr-node"
 ---
 apiVersion: v1
 kind: ServiceAccount
@@ -455,6 +454,16 @@ spec:
           {{- if .Data.data.password -}}{{ .Data.data.password }}{{ else }}{{ .Data.data.value }}{{ end -}}
           {{- end -}}
     spec:
+      affinity:
+        nodeAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              preference:
+                matchExpressions:
+                  - key: dedicated
+                    operator: In
+                    values:
+                      - srvr-node
       serviceAccountName: keycloak
 
       securityContext:
