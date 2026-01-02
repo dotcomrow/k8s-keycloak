@@ -15,7 +15,7 @@ metadata:
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: keycloak-client-config
+  name: keycloak-client-config-internal
   namespace: keycloak
 data:
   openwebui.json: |
@@ -33,6 +33,13 @@ data:
         "pkce.code.challenge.method": "S256"
       }
     }
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: keycloak-client-config-external
+  namespace: keycloak
+data:
   public-app.json: |
     {
       "clientId": "public-app",
@@ -426,7 +433,8 @@ metadata:
     app.kubernetes.io/component: authentication
     teleport.dev/enroll: "true"
 spec:
-  type: ClusterIP
+  type: LoadBalancer
+  loadBalancerIP: 10.0.0.114
   selector:
     app: keycloak
   ports:
@@ -564,9 +572,12 @@ spec:
       volumes:
         - name: keycloak-data
           emptyDir: {}
-        - name: keycloak-client-config
+        - name: keycloak-client-config-internal
           configMap:
-            name: keycloak-client-config
+            name: keycloak-client-config-internal
+        - name: keycloak-client-config-external
+          configMap:
+            name: keycloak-client-config-external
             optional: true
 
       initContainers:
@@ -772,6 +783,14 @@ spec:
           env:
             - name: KEYCLOAK_REALM
               value: "apps"
+            - name: KEYCLOAK_INTERNAL_REALM
+              value: "internal"
+            - name: KEYCLOAK_EXTERNAL_REALM
+              value: "apps"
+            - name: APPS_GITHUB_ENABLED
+              value: "true"
+            - name: EXTERNAL_GITHUB_ENABLED
+              value: "false"
             - name: PROVIDER_WARN
               value: "false"
           command: ["/bin/bash","-lc"]
@@ -780,7 +799,8 @@ spec:
               set -euo pipefail
               
               ADMIN_REALM="master"
-              REALM="${KEYCLOAK_REALM:-apps}"
+              INTERNAL_REALM="${KEYCLOAK_INTERNAL_REALM:-internal}"
+              EXTERNAL_REALM="${KEYCLOAK_EXTERNAL_REALM:-${KEYCLOAK_REALM:-apps}}"
               SERVER="http://127.0.0.1:8080"
               FLOW_GH="GitHub-PostLogin"
               FLOW_GGL="Google-PostLogin"
@@ -793,6 +813,9 @@ spec:
               PROVIDER_IDP_AUTO_LINK="idp-auto-link"
               PROVIDER_WARN="${PROVIDER_WARN:-false}"
               ADMIN_REALM_FORCE_GITHUB_REDIRECT="${ADMIN_REALM_FORCE_GITHUB_REDIRECT:-false}"
+              INTERNAL_GITHUB_ENABLED="${APPS_GITHUB_ENABLED:-true}"
+              INTERNAL_GITHUB_HIDE_ON_LOGIN="${APPS_GITHUB_HIDE_ON_LOGIN:-false}"
+              EXTERNAL_GITHUB_ENABLED="${EXTERNAL_GITHUB_ENABLED:-false}"
               KCADM="/opt/keycloak/bin/kcadm.sh"
               KCADM_CONFIG="/tmp/kcadm.config"
               export KCADM_CONFIG
@@ -833,7 +856,8 @@ spec:
               CLIENT_SECRET_MAP_FILE="/vault/secrets/client-secrets"
               CLIENT_SECRET_DIR="/vault/secrets"
               CLIENT_SECRET_PREFIX="client-secret-"
-              CLIENT_CONFIG_DIR="/opt/keycloak/data/clients"
+              CLIENT_CONFIG_DIR_INTERNAL="/opt/keycloak/data/clients/internal"
+              CLIENT_CONFIG_DIR_EXTERNAL="/opt/keycloak/data/clients/external"
               
               login_with_client() {
                 [ -n "${CONFIG_CLIENT_SECRET:-}" ] || return 1
@@ -994,7 +1018,8 @@ spec:
                 fatal "Failed to ensure realm: ${realm}"
               }
 
-              ensure_realm "${REALM}"
+              ensure_realm "${INTERNAL_REALM}"
+              ensure_realm "${EXTERNAL_REALM}"
               
               # Use admin creds for master realm config to avoid permission edge cases
               if login_with_admin; then
@@ -1204,6 +1229,10 @@ spec:
               
               ensure_github_idp() {
                 local realm="$1"
+                local hide_on_login="$2"
+                if [ -z "${hide_on_login:-}" ]; then
+                  hide_on_login="false"
+                fi
                 if $KCADM get identity-provider/instances/github -r "$realm" >/dev/null 2>&1; then
                   $KCADM update identity-provider/instances/github -r "$realm" \
                     -s enabled=true -s storeToken=true -s alias=github -s providerId=github \
@@ -1211,7 +1240,7 @@ spec:
                     -s "config.clientSecret=$CLIENT_SECRET" \
                     -s 'config.defaultScope=read:user user:email read:org' \
                     -s 'config.trustEmail=true' \
-                    -s 'config.guiOrder=1' -s 'config.hideOnLoginPage=false' \
+                    -s 'config.guiOrder=1' -s "config.hideOnLoginPage=${hide_on_login}" \
                     -s 'config.syncMode=FORCE' || true
                 else
                   $KCADM create identity-provider/instances -r "$realm" \
@@ -1220,7 +1249,7 @@ spec:
                     -s "config.clientSecret=$CLIENT_SECRET" \
                     -s 'config.defaultScope=read:user user:email read:org' \
                     -s 'config.trustEmail=true' \
-                    -s 'config.guiOrder=1' -s 'config.hideOnLoginPage=false' \
+                    -s 'config.guiOrder=1' -s "config.hideOnLoginPage=${hide_on_login}" \
                     -s 'config.syncMode=FORCE' || true
                 fi
               }
@@ -1256,7 +1285,7 @@ spec:
               echo "admin: load providers"
               load_provider_list || true
               echo "admin: ensure github idp"
-              ensure_github_idp "$ADMIN_REALM" || true
+              ensure_github_idp "$ADMIN_REALM" "false" || true
               echo "admin: ensure first-broker flow"
               ensure_first_broker_flow_autolink "$ADMIN_REALM" || true
               echo "admin: ensure post-broker flow"
@@ -1294,63 +1323,80 @@ spec:
                 fi
               fi
 
-              echo "Configuring app realm: ${REALM}"
-              ensure_github_idp "$REALM"
-              ensure_first_broker_flow_autolink "$REALM"
-              ensure_flow "$REALM" "$FLOW_GH" "Post-broker: GitHub teams + Google groups"
-              if provider_exists "$PROVIDER_GH"; then
-                add_exec_required "$REALM" "$FLOW_GH" "$PROVIDER_GH"
+              echo "Configuring internal realm: ${INTERNAL_REALM}"
+              if [ "$INTERNAL_GITHUB_ENABLED" = "true" ]; then
+                ensure_github_idp "$INTERNAL_REALM" "$INTERNAL_GITHUB_HIDE_ON_LOGIN"
               else
-                if [ "$PROVIDER_WARN" = "true" ]; then
-                  echo "⚠️  Missing provider in ${REALM}: ${PROVIDER_GH} (skipping execution)"
+                echo "ℹ️  GitHub IdP disabled in internal realm by config."
+                if $KCADM get identity-provider/instances/github -r "$INTERNAL_REALM" >/dev/null 2>&1; then
+                  $KCADM update identity-provider/instances/github -r "$INTERNAL_REALM" \
+                    -s enabled=false -s 'config.hideOnLoginPage=true' || true
                 fi
               fi
-              if provider_exists "$PROVIDER_GGL"; then
-                add_exec_required "$REALM" "$FLOW_GH" "$PROVIDER_GGL"
+              ensure_first_broker_flow_autolink "$INTERNAL_REALM"
+              ensure_flow "$INTERNAL_REALM" "$FLOW_GH" "Post-broker: GitHub teams"
+              if [ "$INTERNAL_GITHUB_ENABLED" = "true" ] && provider_exists "$PROVIDER_GH"; then
+                add_exec_required "$INTERNAL_REALM" "$FLOW_GH" "$PROVIDER_GH"
               else
                 if [ "$PROVIDER_WARN" = "true" ]; then
-                  echo "⚠️  Missing provider in ${REALM}: ${PROVIDER_GGL} (skipping execution)"
+                  echo "⚠️  Missing provider in ${INTERNAL_REALM}: ${PROVIDER_GH} (skipping execution)"
                 fi
               fi
-              if flow_has_execution "$REALM" "$FLOW_GH"; then
-              $KCADM update identity-provider/instances/github -r "$REALM" \
+              if [ "$INTERNAL_GITHUB_ENABLED" = "true" ] && flow_has_execution "$INTERNAL_REALM" "$FLOW_GH"; then
+              $KCADM update identity-provider/instances/github -r "$INTERNAL_REALM" \
                 -s "postBrokerLoginFlowAlias=$FLOW_GH" || true
               else
-                echo "⚠️  GitHub post-broker flow has no executions in ${REALM}; skipping postBrokerLoginFlowAlias."
+                echo "⚠️  GitHub post-broker flow has no executions in ${INTERNAL_REALM}; skipping postBrokerLoginFlowAlias."
+              fi
+              if [ "$INTERNAL_GITHUB_ENABLED" = "true" ]; then
+                ensure_redirect_flow "$INTERNAL_REALM" "$FLOW_BROWSER_GH" "github" "Browser flow that redirects to GitHub"
               fi
               
-              GOOGLE_READY="false"
-              if ensure_google_idp "$REALM"; then
-                GOOGLE_READY="true"
-                ensure_flow "$REALM" "$FLOW_GGL" "Post-broker: Google groups only"
+              EXTERNAL_GOOGLE_READY="false"
+              echo "Configuring external realm: ${EXTERNAL_REALM}"
+              if [ "$EXTERNAL_GITHUB_ENABLED" = "true" ]; then
+                ensure_github_idp "$EXTERNAL_REALM" "true"
+              else
+                if $KCADM get identity-provider/instances/github -r "$EXTERNAL_REALM" >/dev/null 2>&1; then
+                  $KCADM delete identity-provider/instances/github -r "$EXTERNAL_REALM" || true
+                fi
+              fi
+              ensure_first_broker_flow_autolink "$EXTERNAL_REALM"
+              if ensure_google_idp "$EXTERNAL_REALM"; then
+                EXTERNAL_GOOGLE_READY="true"
+                ensure_flow "$EXTERNAL_REALM" "$FLOW_GGL" "Post-broker: Google groups only"
                 if provider_exists "$PROVIDER_GGL"; then
-                  add_exec_required "$REALM" "$FLOW_GGL" "$PROVIDER_GGL"
+                  add_exec_required "$EXTERNAL_REALM" "$FLOW_GGL" "$PROVIDER_GGL"
                 else
                   if [ "$PROVIDER_WARN" = "true" ]; then
-                    echo "⚠️  Missing provider in ${REALM}: ${PROVIDER_GGL} (skipping execution)"
+                    echo "⚠️  Missing provider in ${EXTERNAL_REALM}: ${PROVIDER_GGL} (skipping execution)"
                   fi
                 fi
-                if flow_has_execution "$REALM" "$FLOW_GGL"; then
-                  $KCADM update identity-provider/instances/google -r "$REALM" \
+                if flow_has_execution "$EXTERNAL_REALM" "$FLOW_GGL"; then
+                  $KCADM update identity-provider/instances/google -r "$EXTERNAL_REALM" \
                     -s "postBrokerLoginFlowAlias=$FLOW_GGL" || true
                 else
-                  echo "⚠️  Google post-broker flow has no executions in ${REALM}; skipping postBrokerLoginFlowAlias."
+                  echo "⚠️  Google post-broker flow has no executions in ${EXTERNAL_REALM}; skipping postBrokerLoginFlowAlias."
                 fi
               else
                 echo "⚠️  Google IdP not configured (missing client id/secret)."
               fi
-              
-              ensure_redirect_flow "$REALM" "$FLOW_BROWSER_GH" "github" "Browser flow that redirects to GitHub"
-              if [ "$GOOGLE_READY" = "true" ]; then
-                ensure_redirect_flow "$REALM" "$FLOW_BROWSER_GGL" "google" "Browser flow that redirects to Google"
+              if [ "$EXTERNAL_GOOGLE_READY" = "true" ]; then
+                ensure_redirect_flow "$EXTERNAL_REALM" "$FLOW_BROWSER_GGL" "google" "Browser flow that redirects to Google"
               fi
               
-              if [ "$REALM" != "$ADMIN_REALM" ]; then
-                $KCADM update "realms/${REALM}" -s "browserFlow=browser" || true
+              if [ "$INTERNAL_REALM" != "$ADMIN_REALM" ]; then
+                $KCADM update "realms/${INTERNAL_REALM}" -s "browserFlow=browser" || true
+              fi
+              if [ "$EXTERNAL_REALM" != "$ADMIN_REALM" ]; then
+                $KCADM update "realms/${EXTERNAL_REALM}" -s "browserFlow=browser" || true
               fi
               
               # Realm hygiene (unchanged)
-              $KCADM update "realms/$REALM" \
+              $KCADM update "realms/$INTERNAL_REALM" \
+                -s sslRequired=EXTERNAL -s loginWithEmailAllowed=true -s registrationAllowed=false \
+                -s rememberMe=true -s resetPasswordAllowed=true -s bruteForceProtected=true -s permanentLockout=false || true
+              $KCADM update "realms/$EXTERNAL_REALM" \
                 -s sslRequired=EXTERNAL -s loginWithEmailAllowed=true -s registrationAllowed=false \
                 -s rememberMe=true -s resetPasswordAllowed=true -s bruteForceProtected=true -s permanentLockout=false || true
               
@@ -1364,7 +1410,8 @@ spec:
                 fi
                 $KCADM update "realms/$realm" -s "directGrantFlow=$DG" || true
               }
-              ensure_disabled_direct_grant_flow "$REALM"
+              ensure_disabled_direct_grant_flow "$INTERNAL_REALM"
+              ensure_disabled_direct_grant_flow "$EXTERNAL_REALM"
               
               # 2) Disable the bootstrap admin user in master (only after configurator client auth is working)
               if [ "${DISABLE_BOOTSTRAP_ADMIN:-false}" = "true" ] && [ "${AUTH_MODE:-}" = "client" ]; then
@@ -1378,10 +1425,11 @@ spec:
               
               apply_clients_from_dir() {
                 local realm="$1"
-                if [ ! -d "$CLIENT_CONFIG_DIR" ]; then
+                local dir="$2"
+                if [ -z "${dir:-}" ] || [ ! -d "$dir" ]; then
                   return 0
                 fi
-                for f in "$CLIENT_CONFIG_DIR"/*.json; do
+                for f in "$dir"/*.json; do
                   [ -f "$f" ] || continue
                   client_id=$(sed -n "s/.*\"clientId\"[[:space:]]*:[[:space:]]*\"\\([^\"]*\\)\".*/\\1/p" "$f" | head -n1)
                   if [ -z "${client_id:-}" ]; then
@@ -1444,14 +1492,21 @@ spec:
                 fi
               }
               
-              apply_clients_from_dir "$REALM"
-              disable_direct_grants_for_clients "$REALM"
-              enforce_pkce_for_client "$REALM" "openwebui"
+              apply_clients_from_dir "$INTERNAL_REALM" "$CLIENT_CONFIG_DIR_INTERNAL"
+              disable_direct_grants_for_clients "$INTERNAL_REALM"
+              enforce_pkce_for_client "$INTERNAL_REALM" "openwebui"
+
+              apply_clients_from_dir "$EXTERNAL_REALM" "$CLIENT_CONFIG_DIR_EXTERNAL"
+              disable_direct_grants_for_clients "$EXTERNAL_REALM"
 
               # Sample roles for mapping (edit/remove as needed)
-              for role in tier_free tier_pro feature_x openwebui_access; do
-                $KCADM get "roles/$role" -r "$REALM" >/dev/null 2>&1 || \
-                  $KCADM create roles -r "$REALM" -s "name=$role" || true
+              for role in openwebui_access; do
+                $KCADM get "roles/$role" -r "$INTERNAL_REALM" >/dev/null 2>&1 || \
+                  $KCADM create roles -r "$INTERNAL_REALM" -s "name=$role" || true
+              done
+              for role in tier_free tier_pro feature_x; do
+                $KCADM get "roles/$role" -r "$EXTERNAL_REALM" >/dev/null 2>&1 || \
+                  $KCADM create roles -r "$EXTERNAL_REALM" -s "name=$role" || true
               done
               
               ensure_roles_from_map() {
@@ -1493,8 +1548,8 @@ spec:
                 done <<<"$specs"
               }
               
-              ensure_roles_from_map "$REALM" "$GITHUB_ROLE_MAP_JSON"
-              ensure_roles_from_map "$REALM" "$GOOGLE_GROUP_ROLE_MAP_JSON"
+              ensure_roles_from_map "$INTERNAL_REALM" "$GITHUB_ROLE_MAP_JSON"
+              ensure_roles_from_map "$EXTERNAL_REALM" "$GOOGLE_GROUP_ROLE_MAP_JSON"
 
               set_client_flow_override() {
                 local realm="$1"
@@ -1534,11 +1589,13 @@ spec:
               }
               
               # Enforce GitHub-only for internal apps
-              set_client_flow_override "$REALM" "openwebui" "$FLOW_BROWSER_GH"
+              if [ "$INTERNAL_GITHUB_ENABLED" = "true" ]; then
+                set_client_flow_override "$INTERNAL_REALM" "openwebui" "$FLOW_BROWSER_GH"
+              fi
               
               # Enforce Google-only for external apps (example clientId)
-              if [ "$GOOGLE_READY" = "true" ]; then
-                set_client_flow_override "$REALM" "public-app" "$FLOW_BROWSER_GGL"
+              if [ "$EXTERNAL_GOOGLE_READY" = "true" ]; then
+                set_client_flow_override "$EXTERNAL_REALM" "public-app" "$FLOW_BROWSER_GGL"
               fi
 
               if [ "$CONFIGURATOR_DELETE_CLIENT" = "true" ]; then
@@ -1551,8 +1608,11 @@ spec:
               echo "✔ Configurator finished. Holding for logs."
               hold
           volumeMounts:
-            - name: keycloak-client-config
-              mountPath: /opt/keycloak/data/clients
+            - name: keycloak-client-config-internal
+              mountPath: /opt/keycloak/data/clients/internal
+              readOnly: true
+            - name: keycloak-client-config-external
+              mountPath: /opt/keycloak/data/clients/external
               readOnly: true
 
         # --- Keycloak runtime ---
@@ -1591,13 +1651,17 @@ spec:
 
             # Hostname & HTTP
             - name: KC_HOSTNAME_URL
-              value: "https://keycloak.teleport.app.suncoast.systems"
+              value: "https://auth.suncoast.systems"
             - name: KC_HOSTNAME_ADMIN_URL
               value: "https://keycloak.teleport.app.suncoast.systems"
+            - name: KC_HOSTNAME
+              value: "auth.suncoast.systems"
+            - name: KC_HOSTNAME_ADMIN
+              value: "keycloak.teleport.app.suncoast.systems"
             - name: KC_HEALTH_ENABLED
               value: "true"
             - name: KC_HOSTNAME_STRICT
-              value: "false"
+              value: "true"
             - name: KC_HTTP_ENABLED
               value: "true"
             - name: KC_TRANSACTION_XA_ENABLED
@@ -1654,6 +1718,10 @@ spec:
           volumeMounts:
             - name: keycloak-data
               mountPath: /opt/keycloak/data
-            - name: keycloak-client-config
-              mountPath: /opt/keycloak/data/clients
+            - name: keycloak-client-config-internal
+              mountPath: /opt/keycloak/data/clients/internal
+              readOnly: true
+            - name: keycloak-client-config-external
+              mountPath: /opt/keycloak/data/clients/external
+              readOnly: true
               readOnly: true
