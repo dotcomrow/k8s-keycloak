@@ -541,6 +541,12 @@ spec:
         vault.hashicorp.com/agent-inject-secret-keycloak-configurator-client-secret: "secret/data/keycloak-configurator-client-secret"
         vault.hashicorp.com/agent-inject-template-keycloak-configurator-client-secret: |
           {{- with secret "secret/data/keycloak-configurator-client-secret" -}}{{ .Data.data.value }}{{- end -}}
+        vault.hashicorp.com/agent-inject-secret-client-id-openwebui: "secret/data/keycloak-client-id-openwebui"
+        vault.hashicorp.com/agent-inject-template-client-id-openwebui: |
+          {{- with secret "secret/data/keycloak-client-id-openwebui" -}}{{ .Data.data.value }}{{- end -}}
+        vault.hashicorp.com/agent-inject-secret-client-secret-openwebui: "secret/data/keycloak-client-secret-openwebui"
+        vault.hashicorp.com/agent-inject-template-client-secret-openwebui: |
+          {{- with secret "secret/data/keycloak-client-secret-openwebui" -}}{{ .Data.data.value }}{{- end -}}
 
         # Linkerd: allow direct Postgres/Vault egress from this pod
         config.linkerd.io/skip-outbound-ports: "8200,5433"
@@ -856,6 +862,7 @@ spec:
               CLIENT_SECRET_MAP_FILE="/vault/secrets/client-secrets"
               CLIENT_SECRET_DIR="/vault/secrets"
               CLIENT_SECRET_PREFIX="client-secret-"
+              CLIENT_ID_DIR="/vault/secrets"
               CLIENT_CONFIG_DIR_INTERNAL="/opt/keycloak/data/clients/internal"
               CLIENT_CONFIG_DIR_EXTERNAL="/opt/keycloak/data/clients/external"
               
@@ -1448,29 +1455,49 @@ spec:
                     echo "info: missing clientId in $f"
                     continue
                   fi
-                  CID=$($KCADM get clients -r "$realm" -q "clientId=$client_id" --fields id --format csv 2>/dev/null | tail -n1 || true)
+                  effective_id="$client_id"
+                  override_id_file="${CLIENT_ID_DIR:-/vault/secrets}/client-id-${client_id}"
+                  if [ -s "$override_id_file" ]; then
+                    override_id="$(tr -d '\r\n' < "$override_id_file")"
+                    if [ -n "${override_id:-}" ]; then
+                      effective_id="$override_id"
+                    fi
+                  fi
+                  json_file="$f"
+                  if [ "$effective_id" != "$client_id" ]; then
+                    esc_id="$(printf '%s' "$effective_id" | sed 's/[&|]/\\&/g')"
+                    json_file="$(mktemp)"
+                    sed "s|\"clientId\"[[:space:]]*:[[:space:]]*\"[^\"]*\"|\"clientId\":\"$esc_id\"|" "$f" > "$json_file"
+                  fi
+                  CID=$($KCADM get clients -r "$realm" -q "clientId=$effective_id" --fields id --format csv 2>/dev/null | tail -n1 || true)
                   CID="$(clean_id "$CID")"
                   if [ -n "${CID:-}" ]; then
-                    $KCADM update "clients/$CID" -r "$realm" -f "$f" || true
+                    $KCADM update "clients/$CID" -r "$realm" -f "$json_file" || true
                   else
-                    $KCADM create clients -r "$realm" -f "$f" || true
-                    CID=$($KCADM get clients -r "$realm" -q "clientId=$client_id" --fields id --format csv 2>/dev/null | tail -n1 || true)
+                    $KCADM create clients -r "$realm" -f "$json_file" || true
+                    CID=$($KCADM get clients -r "$realm" -q "clientId=$effective_id" --fields id --format csv 2>/dev/null | tail -n1 || true)
                     CID="$(clean_id "$CID")"
                   fi
                   if [ -z "${CID:-}" ]; then
-                    echo "⚠️  client not found after apply: ${client_id} in realm ${realm}"
+                    echo "⚠️  client not found after apply: ${effective_id} in realm ${realm}"
                   fi
                   if [ -n "${CID:-}" ]; then
                     secret=""
                     secret_file="${CLIENT_SECRET_DIR}/${CLIENT_SECRET_PREFIX}${client_id}"
+                    secret_file_effective="${CLIENT_SECRET_DIR}/${CLIENT_SECRET_PREFIX}${effective_id}"
                     if [ -s "$secret_file" ]; then
                       secret="$(tr -d '\r\n' < "$secret_file")"
+                    elif [ -s "$secret_file_effective" ]; then
+                      secret="$(tr -d '\r\n' < "$secret_file_effective")"
                     elif [ -s "$CLIENT_SECRET_MAP_FILE" ]; then
                       secret="$(awk -F= -v cid="$client_id" '$1==cid { $1=""; sub(/^=/,""); print; exit }' "$CLIENT_SECRET_MAP_FILE")"
                     fi
                     if [ -n "${secret:-}" ]; then
                       $KCADM update "clients/$CID" -r "$realm" -s "secret=$secret" || true
                     fi
+                  fi
+                  if [ "$json_file" != "$f" ] && [ -f "$json_file" ]; then
+                    rm -f "$json_file"
                   fi
                 done
               }
