@@ -784,7 +784,7 @@ spec:
             - name: KEYCLOAK_REALM
               value: "apps"
             - name: KEYCLOAK_INTERNAL_REALM
-              value: "internal"
+              value: "master"
             - name: KEYCLOAK_EXTERNAL_REALM
               value: "apps"
             - name: APPS_GITHUB_ENABLED
