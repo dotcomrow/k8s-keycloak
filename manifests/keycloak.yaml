@@ -74,6 +74,8 @@ kind: Job
 metadata:
   name: keycloak-yugabyte-config
   namespace: vault
+  annotations:
+    argocd.argoproj.io/sync-options: Replace=true
 spec:
   backoffLimit: 0
   template:
@@ -324,6 +326,8 @@ kind: Job
 metadata:
   name: keycloak-vault-k8s-role
   namespace: vault
+  annotations:
+    argocd.argoproj.io/sync-options: Replace=true
 spec:
   backoffLimit: 0
   template:
