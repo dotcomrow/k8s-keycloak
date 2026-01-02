@@ -986,13 +986,20 @@ spec:
                 local realm="$1"
                 local provider="$2"
                 local out=""
-                out=$($KCADM get authentication/execution-providers -r "$realm" 2>/dev/null || true)
+                if [ "$realm" = "$ADMIN_REALM" ] && [ -n "${PROVIDER_LIST_MASTER:-}" ]; then
+                  out="$PROVIDER_LIST_MASTER"
+                elif [ "$realm" = "$REALM" ] && [ -n "${PROVIDER_LIST_APPS:-}" ]; then
+                  out="$PROVIDER_LIST_APPS"
+                else
+                  out=$($KCADM get authentication/execution-providers -r "$realm" 2>/dev/null || true)
+                fi
                 [ -z "${out:-}" ] && return 1
+                out="$(printf '%s' "$out" | tr -d '\r')"
                 if printf '%s' "$out" | grep -q "\"id\"[[:space:]]*:"; then
-                  printf '%s\n' "$out" | grep -q "\"id\"[[:space:]]*:[[:space:]]*\"$provider\""
+                  printf '%s\n' "$out" | sed -n 's/.*"id"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | grep -xq "$provider"
                   return $?
                 fi
-                printf '%s\n' "$out" | tr -d '\r' | tr -d '"[],{}' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' | grep -xq "$provider"
+                printf '%s\n' "$out" | tr -d '"[],{}' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' | grep -xq "$provider"
               }
 
               flow_has_execution() {
@@ -1186,6 +1193,7 @@ spec:
               }
               
               echo "Configuring admin realm: ${ADMIN_REALM}"
+              PROVIDER_LIST_MASTER="$($KCADM get authentication/execution-providers -r "$ADMIN_REALM" 2>/dev/null || true)"
               ensure_github_idp "$ADMIN_REALM"
               ensure_first_broker_flow_autolink "$ADMIN_REALM"
               ensure_flow "$ADMIN_REALM" "$FLOW_GH" "Post-broker: GitHub team admin"
@@ -1218,6 +1226,7 @@ spec:
               fi
 
               echo "Configuring app realm: ${REALM}"
+              PROVIDER_LIST_APPS="$($KCADM get authentication/execution-providers -r "$REALM" 2>/dev/null || true)"
               ensure_github_idp "$REALM"
               ensure_first_broker_flow_autolink "$REALM"
               ensure_flow "$REALM" "$FLOW_GH" "Post-broker: GitHub teams + Google groups"
