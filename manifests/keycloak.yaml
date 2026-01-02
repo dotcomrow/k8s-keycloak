@@ -869,6 +869,7 @@ spec:
               CLIENT_ID_DIR="/vault/secrets"
               CLIENT_CONFIG_DIR_INTERNAL="/opt/keycloak/data/clients/internal"
               CLIENT_CONFIG_DIR_EXTERNAL="/opt/keycloak/data/clients/external"
+              EXTERNAL_DISABLE_LOCAL_LOGIN="${EXTERNAL_DISABLE_LOCAL_LOGIN:-true}"
               OPENWEBUI_CLIENT_ID="openwebui"
               PUBLIC_APP_CLIENT_ID="public-app"
               if [ -s "${CLIENT_ID_DIR}/client-id-openwebui" ]; then
@@ -1416,7 +1417,11 @@ spec:
                 $KCADM update "realms/${INTERNAL_REALM}" -s "browserFlow=browser" || true
               fi
               if [ "$EXTERNAL_REALM" != "$ADMIN_REALM" ]; then
-                $KCADM update "realms/${EXTERNAL_REALM}" -s "browserFlow=browser" || true
+                if [ "$EXTERNAL_DISABLE_LOCAL_LOGIN" = "true" ] && [ "$EXTERNAL_GOOGLE_READY" = "true" ]; then
+                  $KCADM update "realms/${EXTERNAL_REALM}" -s "browserFlow=${FLOW_BROWSER_GGL}" || true
+                else
+                  $KCADM update "realms/${EXTERNAL_REALM}" -s "browserFlow=browser" || true
+                fi
               fi
               
               # Realm hygiene (unchanged)
@@ -1425,7 +1430,7 @@ spec:
                 -s rememberMe=true -s resetPasswordAllowed=true -s bruteForceProtected=true -s permanentLockout=false || true
               $KCADM update "realms/$EXTERNAL_REALM" \
                 -s sslRequired=EXTERNAL -s loginWithEmailAllowed=true -s registrationAllowed=false \
-                -s rememberMe=true -s resetPasswordAllowed=true -s bruteForceProtected=true -s permanentLockout=false || true
+                -s rememberMe=false -s resetPasswordAllowed=false -s bruteForceProtected=true -s permanentLockout=false || true
               
               # 1) Disable Direct Access Grants (password grant)
               DG="disabled-direct-grant"
