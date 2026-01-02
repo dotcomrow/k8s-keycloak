@@ -824,9 +824,14 @@ spec:
                   --user "$KEYCLOAK_ADMIN" --password "$KEYCLOAK_ADMIN_PASSWORD" >/dev/null 2>&1
               }
 
+              clean_id() {
+                printf '%s' "$1" | tr -d '"' | tr -d '[:space:]'
+              }
+
               ensure_configurator_client() {
                 [ -n "${CONFIG_CLIENT_SECRET:-}" ] || { echo "❌ Missing configurator client secret"; exit 1; }
                 CID=$($KCADM get clients -r "$ADMIN_REALM" -q "clientId=$CONFIG_CLIENT_ID" --fields id --format csv | tail -n1)
+                CID="$(clean_id "$CID")"
                 if [ -z "${CID:-}" ]; then
                   $KCADM create clients -r "$ADMIN_REALM" \
                     -s "clientId=$CONFIG_CLIENT_ID" \
@@ -840,6 +845,7 @@ spec:
                     -s "clientAuthenticatorType=client-secret" \
                     -s "secret=$CONFIG_CLIENT_SECRET"
                   CID=$($KCADM get clients -r "$ADMIN_REALM" -q "clientId=$CONFIG_CLIENT_ID" --fields id --format csv | tail -n1)
+                  CID="$(clean_id "$CID")"
                 else
                   $KCADM update "clients/$CID" -r "$ADMIN_REALM" \
                     -s enabled=true \
@@ -853,6 +859,7 @@ spec:
                 fi
                 SA_ID=$($KCADM get "clients/$CID/service-account-user" -r "$ADMIN_REALM" \
                   | sed -n "s/.*\"id\"[[:space:]]*:[[:space:]]*\"\\([^\"]*\\)\".*/\\1/p" | head -n1)
+                SA_ID="$(clean_id "$SA_ID")"
                 if [ -n "${SA_ID:-}" ]; then
                   for role in realm-admin admin create-realm manage-realm view-realm manage-users manage-clients manage-identity-providers manage-authorization manage-events view-events query-realms query-users query-clients query-groups view-users view-clients view-identity-providers; do
                     $KCADM add-roles -r "$ADMIN_REALM" --uuserid "$SA_ID" \
@@ -1114,11 +1121,13 @@ spec:
                     continue
                   fi
                   CID=$($KCADM get clients -r "$realm" -q "clientId=$client_id" --fields id --format csv | tail -n1)
+                  CID="$(clean_id "$CID")"
                   if [ -n "${CID:-}" ]; then
                     $KCADM update "clients/$CID" -r "$realm" -f "$f"
                   else
                     $KCADM create clients -r "$realm" -f "$f"
                     CID=$($KCADM get clients -r "$realm" -q "clientId=$client_id" --fields id --format csv | tail -n1)
+                    CID="$(clean_id "$CID")"
                   fi
                   if [ -n "${CID:-}" ]; then
                     secret=""
@@ -1139,6 +1148,8 @@ spec:
                 local realm="$1"
                 $KCADM get clients -r "$realm" --fields id,clientId,directAccessGrantsEnabled --format csv \
                   | tail -n +2 | while IFS=, read -r id cid dag; do
+                      id="$(clean_id "$id")"
+                      cid="$(clean_id "$cid")"
                       [ -z "${id:-}" ] && continue
                       if [ "$dag" = "true" ] || [ "$dag" = "TRUE" ]; then
                         echo "🔒 Disabling direct grants for client: $cid"
@@ -1151,6 +1162,7 @@ spec:
                 local realm="$1"
                 local clientId="$2"
                 CID=$($KCADM get clients -r "$realm" -q "clientId=$clientId" --fields id --format csv | tail -n1)
+                CID="$(clean_id "$CID")"
                 if [ -n "${CID:-}" ]; then
                   $KCADM update "clients/$CID" -r "$realm" \
                     -s "publicClient=true" \
@@ -1225,6 +1237,7 @@ spec:
                 local clientId="$2"
                 local flow="$3"
                 CID=$($KCADM get clients -r "$realm" -q "clientId=$clientId" --fields id --format csv | tail -n1)
+                CID="$(clean_id "$CID")"
                 if [ -n "${CID:-}" ]; then
                   $KCADM update "clients/$CID" -r "$realm" \
                     -s "authenticationFlowBindingOverrides={\"browser\":\"$flow\"}"
