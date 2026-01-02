@@ -788,6 +788,7 @@ spec:
               PROVIDER_GGL="google-groups-authenticator"
               FLOW_BROWSER_GH="browser-github-only"
               FLOW_BROWSER_GGL="browser-google-only"
+              ADMIN_REALM_FORCE_GITHUB_REDIRECT="${ADMIN_REALM_FORCE_GITHUB_REDIRECT:-false}"
               KCADM="/opt/keycloak/bin/kcadm.sh"
               KCADM_CONFIG="/tmp/kcadm.config"
               export KCADM_CONFIG
@@ -1007,10 +1008,8 @@ spec:
                   echo "$EXECS"
                   exit 1
                 fi
-                if ! $KCADM update "authentication/executions/$EID" -r "$realm" -s 'requirement=REQUIRED'; then
-                  printf '{ "id":"%s", "requirement":"REQUIRED" }\n' "$EID" >/tmp/r.json
-                  $KCADM update "authentication/flows/$flow/executions" -r "$realm" -f /tmp/r.json
-                fi
+                printf '{ "id":"%s", "requirement":"REQUIRED" }\n' "$EID" >/tmp/r.json
+                $KCADM update "authentication/flows/$flow/executions" -r "$realm" -f /tmp/r.json || true
               }
               
               ensure_redirect_flow() {
@@ -1035,25 +1034,37 @@ spec:
                             | sed -n "s/.*\"id\"[[:space:]]*:[[:space:]]*\"\([^\"]\+\)\".*/\1/p" | head -n1)
                   [ -n "$REDIR_ID" ] && break || sleep 1
                 done
+                if [ -z "$REDIR_ID" ]; then
+                  $KCADM create "authentication/flows/${flow}/executions/execution" -r "$realm" \
+                    -s provider=identity-provider-redirector || true
+                  for i in {1..10}; do
+                    EXECS=$($KCADM get "authentication/flows/${flow}/executions" -r "$realm" || echo "[]")
+                    REDIR_ID=$(echo "$EXECS" | tr -d "\n" | sed "s/},[[:space:]]*{/}\n{/g" \
+                              | grep -E '"providerId" *: *"identity-provider-redirector"' \
+                              | sed -n "s/.*\"id\"[[:space:]]*:[[:space:]]*\"\\([^\"]\\+\\)\".*/\\1/p" | head -n1)
+                    [ -n "$REDIR_ID" ] && break || sleep 1
+                  done
+                fi
                 [ -z "$REDIR_ID" ] && { echo "❌ cannot find redirector execution for ${flow}"; exit 1; }
               
-                if ! $KCADM update "authentication/executions/${REDIR_ID}" -r "$realm" -s requirement=REQUIRED >/dev/null 2>&1; then
-                  printf '{ "id":"%s", "requirement":"REQUIRED" }\n' "$REDIR_ID" >/tmp/r2.json
-                  $KCADM update "authentication/flows/${flow}/executions" -r "$realm" -f /tmp/r2.json
-                fi
+                printf '{ "id":"%s", "requirement":"REQUIRED" }\n' "$REDIR_ID" >/tmp/r2.json
+                $KCADM update "authentication/flows/${flow}/executions" -r "$realm" -f /tmp/r2.json || true
               
                 CFG_ID=""
                 for i in {1..30}; do
-                  CFG_ID=$($KCADM get "authentication/executions/${REDIR_ID}/config" -r "$realm" \
+                  CFG_ID=$($KCADM get "authentication/executions/${REDIR_ID}/config" -r "$realm" 2>/dev/null \
                           | sed -n "s/.*\"id\"[[:space:]]*:[[:space:]]*\"\([^\"]*\)\".*/\1/p" | head -n1 || true)
                   [ -n "${CFG_ID:-}" ] && break || sleep 1
                 done
                 if [ -n "${CFG_ID:-}" ]; then
-                  $KCADM update "authentication/executions/${REDIR_ID}/config/${CFG_ID}" -r "$realm" \
-                    -s "alias=redirect-to-${provider}" -s "config.defaultProvider=${provider}"
+                  if ! $KCADM update "authentication/executions/${REDIR_ID}/config/${CFG_ID}" -r "$realm" \
+                    -s "alias=redirect-to-${provider}" -s "config.defaultProvider=${provider}"; then
+                    $KCADM create "authentication/executions/${REDIR_ID}/config" -r "$realm" \
+                      -s "alias=redirect-to-${provider}" -s "config.defaultProvider=${provider}" || true
+                  fi
                 else
                   $KCADM create "authentication/executions/${REDIR_ID}/config" -r "$realm" \
-                    -s "alias=redirect-to-${provider}" -s "config.defaultProvider=${provider}"
+                    -s "alias=redirect-to-${provider}" -s "config.defaultProvider=${provider}" || true
                 fi
               }
               
@@ -1096,8 +1107,12 @@ spec:
               $KCADM update identity-provider/instances/github -r "$ADMIN_REALM" \
                 -s "postBrokerLoginFlowAlias=$FLOW_GH" || true
               
-              ensure_redirect_flow "$ADMIN_REALM" "$FLOW_BROWSER_GH" "github" "Browser flow that redirects to GitHub"
-              $KCADM update "realms/${ADMIN_REALM}" -s "browserFlow=${FLOW_BROWSER_GH}"
+              if [ "$ADMIN_REALM_FORCE_GITHUB_REDIRECT" = "true" ]; then
+                ensure_redirect_flow "$ADMIN_REALM" "$FLOW_BROWSER_GH" "github" "Browser flow that redirects to GitHub"
+                $KCADM update "realms/${ADMIN_REALM}" -s "browserFlow=${FLOW_BROWSER_GH}"
+              else
+                $KCADM update "realms/${ADMIN_REALM}" -s "browserFlow=browser" || true
+              fi
               
               # Switch back to client creds for app realm config
               if login_with_client; then
