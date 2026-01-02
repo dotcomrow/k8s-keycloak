@@ -772,6 +772,8 @@ spec:
           env:
             - name: KEYCLOAK_REALM
               value: "apps"
+            - name: PROVIDER_WARN
+              value: "false"
           command: ["/bin/bash","-lc"]
           args:
             - |
@@ -789,7 +791,7 @@ spec:
               FIRST_BROKER_FLOW="first-broker-login-autolink"
               FIRST_BROKER_BASE="first broker login"
               PROVIDER_IDP_AUTO_LINK="idp-auto-link"
-              PROVIDER_WARN="${PROVIDER_WARN:-true}"
+              PROVIDER_WARN="${PROVIDER_WARN:-false}"
               ADMIN_REALM_FORCE_GITHUB_REDIRECT="${ADMIN_REALM_FORCE_GITHUB_REDIRECT:-false}"
               KCADM="/opt/keycloak/bin/kcadm.sh"
               KCADM_CONFIG="/tmp/kcadm.config"
