@@ -1427,10 +1427,14 @@ spec:
                 local realm="$1"
                 local dir="$2"
                 if [ -z "${dir:-}" ] || [ ! -d "$dir" ]; then
+                  echo "ℹ️  client config dir missing or empty: $dir"
                   return 0
                 fi
+                echo "📦 Applying clients for realm '${realm}' from ${dir}"
+                ls -al "$dir" || true
                 for f in "$dir"/*.json; do
                   [ -f "$f" ] || continue
+                  echo "↳ Applying client config: $f"
                   client_id=$(sed -n "s/.*\"clientId\"[[:space:]]*:[[:space:]]*\"\\([^\"]*\\)\".*/\\1/p" "$f" | head -n1)
                   if [ -z "${client_id:-}" ]; then
                     echo "info: missing clientId in $f"
@@ -1444,6 +1448,9 @@ spec:
                     $KCADM create clients -r "$realm" -f "$f" || true
                     CID=$($KCADM get clients -r "$realm" -q "clientId=$client_id" --fields id --format csv 2>/dev/null | tail -n1 || true)
                     CID="$(clean_id "$CID")"
+                  fi
+                  if [ -z "${CID:-}" ]; then
+                    echo "⚠️  client not found after apply: ${client_id} in realm ${realm}"
                   fi
                   if [ -n "${CID:-}" ]; then
                     secret=""
@@ -1495,6 +1502,9 @@ spec:
               apply_clients_from_dir "$INTERNAL_REALM" "$CLIENT_CONFIG_DIR_INTERNAL"
               disable_direct_grants_for_clients "$INTERNAL_REALM"
               enforce_pkce_for_client "$INTERNAL_REALM" "openwebui"
+              if ! $KCADM get clients -r "$INTERNAL_REALM" -q "clientId=openwebui" --fields id --format csv 2>/dev/null | tail -n1 | grep -q .; then
+                echo "⚠️  openwebui client not present in internal realm (${INTERNAL_REALM})"
+              fi
 
               apply_clients_from_dir "$EXTERNAL_REALM" "$CLIENT_CONFIG_DIR_EXTERNAL"
               disable_direct_grants_for_clients "$EXTERNAL_REALM"
