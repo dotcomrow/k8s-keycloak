@@ -636,6 +636,8 @@ spec:
               value: "true"
             - name: KC_CLEAR_CHANGELOG_CHECKSUMS
               value: "false"
+            - name: KC_BOOTSTRAP_MASTER_DIRECT_GRANT
+              value: "true"
           command: ["/bin/sh","-lc"]
           args:
             - |
@@ -701,6 +703,25 @@ spec:
                     echo "🧹 Clearing Liquibase checksums in ${PGSCHEMA}.databasechangelog"
                     psql -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDATABASE" -v ON_ERROR_STOP=1 \
                       -c "UPDATE ${PGSCHEMA}.databasechangelog SET md5sum=NULL;"
+                  fi
+                  if [ "${KC_BOOTSTRAP_MASTER_DIRECT_GRANT:-true}" = "true" ]; then
+                    HAS_REALM_TABLE="$(psql -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDATABASE" -tAc "SELECT to_regclass('${PGSCHEMA}.realm');" || true)"
+                    if [ -n "${HAS_REALM_TABLE:-}" ] && [ "${HAS_REALM_TABLE}" != "null" ]; then
+                      REALM_ID="$(psql -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDATABASE" -tAc "SELECT id FROM ${PGSCHEMA}.realm WHERE name='master' LIMIT 1;" || true)"
+                      if [ -n "${REALM_ID:-}" ]; then
+                        HAS_CLIENT="$(psql -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDATABASE" -tAc "SELECT 1 FROM ${PGSCHEMA}.client WHERE client_id='keycloak-configurator' AND realm_id='${REALM_ID}' LIMIT 1;" || true)"
+                        if [ "${HAS_CLIENT:-0}" != "1" ]; then
+                          DG_ID="$(psql -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDATABASE" -tAc "SELECT id FROM ${PGSCHEMA}.authentication_flow WHERE realm_id='${REALM_ID}' AND lower(alias) IN ('direct grant','direct grant flow','direct-grant') LIMIT 1;" || true)"
+                          if [ -n "${DG_ID:-}" ]; then
+                            psql -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDATABASE" -v ON_ERROR_STOP=1 \
+                              -c "UPDATE ${PGSCHEMA}.realm SET direct_grant_flow='${DG_ID}' WHERE id='${REALM_ID}';"
+                            echo "✅ Enabled master direct-grant flow for configurator bootstrap."
+                          else
+                            echo "⚠️  Direct-grant flow not found in master realm; bootstrap may fail."
+                          fi
+                        fi
+                      fi
+                    fi
                   fi
                   echo "✅ Existing schema detected; skipping destructive reset."
                   exit 0
@@ -1034,7 +1055,6 @@ spec:
                 $KCADM update "realms/$realm" -s "directGrantFlow=$DG" || true
               }
               ensure_disabled_direct_grant_flow "$REALM"
-              ensure_disabled_direct_grant_flow "$ADMIN_REALM"
               
               # 2) Disable the bootstrap admin user in master (safer than delete; not recreated; no password logins)
               ADMIN_ID=$($KCADM get users -r "$ADMIN_REALM" -q username="$KEYCLOAK_ADMIN" \
@@ -1111,6 +1131,9 @@ spec:
               disable_direct_grants_for_clients "$REALM"
               disable_direct_grants_for_clients "$ADMIN_REALM"
               enforce_pkce_for_client "$REALM" "openwebui"
+              if [ "${AUTH_MODE:-}" = "client" ]; then
+                ensure_disabled_direct_grant_flow "$ADMIN_REALM"
+              fi
 
               # Sample roles for mapping (edit/remove as needed)
               for role in tier_free tier_pro feature_x openwebui_access; do
