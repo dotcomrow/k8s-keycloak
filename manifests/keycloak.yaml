@@ -295,6 +295,7 @@ spec:
               path "secret/data/keycloak-google-admin-email"      { capabilities = ["read"] }
               path "secret/data/keycloak-google-sa-json"          { capabilities = ["read"] }
               path "secret/data/keycloak-google-group-role-map"   { capabilities = ["read"] }
+              path "secret/data/keycloak-configurator-client-secret" { capabilities = ["read"] }
               path "secret/data/keycloak-client-secret-*"         { capabilities = ["read"] }
               path "secret/data/k8s-teleport-teleport-github-org" { capabilities = ["read"] }
               path "secret/data/k8s-teleport-teleport-github-admin-team" { capabilities = ["read"] }
@@ -390,6 +391,7 @@ spec:
               path "secret/data/keycloak-google-admin-email"      { capabilities = ["read"] }
               path "secret/data/keycloak-google-sa-json"          { capabilities = ["read"] }
               path "secret/data/keycloak-google-group-role-map"   { capabilities = ["read"] }
+              path "secret/data/keycloak-configurator-client-secret" { capabilities = ["read"] }
               path "secret/data/keycloak-client-secret-*"         { capabilities = ["read"] }
               path "secret/data/k8s-teleport-teleport-github-org" { capabilities = ["read"] }
               path "secret/data/k8s-teleport-teleport-github-admin-team" { capabilities = ["read"] }
@@ -528,6 +530,9 @@ spec:
         vault.hashicorp.com/agent-inject-secret-google-group-role-map: "secret/data/keycloak-google-group-role-map"
         vault.hashicorp.com/agent-inject-template-google-group-role-map: |
           {{- with secret "secret/data/keycloak-google-group-role-map" -}}{{ .Data.data.value }}{{- end -}}
+        vault.hashicorp.com/agent-inject-secret-keycloak-configurator-client-secret: "secret/data/keycloak-configurator-client-secret"
+        vault.hashicorp.com/agent-inject-template-keycloak-configurator-client-secret: |
+          {{- with secret "secret/data/keycloak-configurator-client-secret" -}}{{ .Data.data.value }}{{- end -}}
 
         # Linkerd: allow direct Postgres/Vault egress from this pod
         config.linkerd.io/skip-outbound-ports: "8200,5433"
@@ -776,19 +781,86 @@ spec:
               GOOGLE_CLIENT_SECRET="$(cat /vault/secrets/google-client-secret 2>/dev/null || true)"
               GITHUB_ROLE_MAP_JSON="$(cat /vault/secrets/github-role-map 2>/dev/null || true)"
               GOOGLE_GROUP_ROLE_MAP_JSON="$(cat /vault/secrets/google-group-role-map 2>/dev/null || true)"
+              CONFIG_CLIENT_ID="keycloak-configurator"
+              CONFIG_CLIENT_SECRET="$(cat /vault/secrets/keycloak-configurator-client-secret 2>/dev/null || true)"
+              CONFIGURATOR_DELETE_CLIENT="${CONFIGURATOR_DELETE_CLIENT:-false}"
               CLIENT_SECRET_MAP_FILE="/vault/secrets/client-secrets"
               CLIENT_SECRET_DIR="/vault/secrets"
               CLIENT_SECRET_PREFIX="client-secret-"
               CLIENT_CONFIG_DIR="/opt/keycloak/data/clients"
               
+              login_with_client() {
+                [ -n "${CONFIG_CLIENT_SECRET:-}" ] || return 1
+                $KCADM config credentials --server "$SERVER" --realm "$ADMIN_REALM" \
+                  --client "$CONFIG_CLIENT_ID" --secret "$CONFIG_CLIENT_SECRET" >/dev/null 2>&1
+              }
+
+              login_with_admin() {
+                $KCADM config credentials --server "$SERVER" --realm "$ADMIN_REALM" \
+                  --user "$KEYCLOAK_ADMIN" --password "$KEYCLOAK_ADMIN_PASSWORD" >/dev/null 2>&1
+              }
+
+              ensure_configurator_client() {
+                [ -n "${CONFIG_CLIENT_SECRET:-}" ] || { echo "❌ Missing configurator client secret"; exit 1; }
+                CID=$($KCADM get clients -r "$ADMIN_REALM" -q "clientId=$CONFIG_CLIENT_ID" --fields id --format csv | tail -n1)
+                if [ -z "${CID:-}" ]; then
+                  $KCADM create clients -r "$ADMIN_REALM" \
+                    -s "clientId=$CONFIG_CLIENT_ID" \
+                    -s "name=Keycloak Configurator" \
+                    -s enabled=true \
+                    -s serviceAccountsEnabled=true \
+                    -s publicClient=false \
+                    -s standardFlowEnabled=false \
+                    -s implicitFlowEnabled=false \
+                    -s directAccessGrantsEnabled=false \
+                    -s "clientAuthenticatorType=client-secret" \
+                    -s "secret=$CONFIG_CLIENT_SECRET"
+                  CID=$($KCADM get clients -r "$ADMIN_REALM" -q "clientId=$CONFIG_CLIENT_ID" --fields id --format csv | tail -n1)
+                else
+                  $KCADM update "clients/$CID" -r "$ADMIN_REALM" \
+                    -s enabled=true \
+                    -s serviceAccountsEnabled=true \
+                    -s publicClient=false \
+                    -s standardFlowEnabled=false \
+                    -s implicitFlowEnabled=false \
+                    -s directAccessGrantsEnabled=false \
+                    -s "clientAuthenticatorType=client-secret" \
+                    -s "secret=$CONFIG_CLIENT_SECRET" || true
+                fi
+                SA_ID=$($KCADM get "clients/$CID/service-account-user" -r "$ADMIN_REALM" \
+                  | sed -n "s/.*\"id\"[[:space:]]*:[[:space:]]*\"\\([^\"]*\\)\".*/\\1/p" | head -n1)
+                if [ -n "${SA_ID:-}" ]; then
+                  $KCADM add-roles -r "$ADMIN_REALM" --uuserid "$SA_ID" \
+                    --cclientid realm-management --rolename realm-admin || true
+                fi
+              }
+
               echo "Waiting for Keycloak admin API..."
+              AUTH_MODE=""
               for i in {1..120}; do
-                if $KCADM config credentials --server "$SERVER" --realm "$ADMIN_REALM" --user "$KEYCLOAK_ADMIN" --password "$KEYCLOAK_ADMIN_PASSWORD" >/dev/null 2>&1; then
+                if login_with_client; then
+                  AUTH_MODE="client"
+                  break
+                fi
+                if login_with_admin; then
+                  AUTH_MODE="admin"
                   break
                 fi
                 sleep 2
               done
-              echo "✅ Admin API ready."
+              if [ -z "${AUTH_MODE:-}" ]; then
+                echo "❌ Unable to authenticate to Keycloak admin API"
+                exit 1
+              fi
+              if [ "$AUTH_MODE" = "admin" ]; then
+                ensure_configurator_client
+                if ! login_with_client; then
+                  echo "❌ Unable to authenticate with configurator client"
+                  exit 1
+                fi
+                AUTH_MODE="client"
+              fi
+              echo "✅ Admin API ready (auth: $AUTH_MODE)."
               
               if ! $KCADM get "realms/${REALM}" >/dev/null 2>&1; then
                 echo "Creating realm: ${REALM}"
@@ -953,11 +1025,16 @@ spec:
               
               # 1) Disable Direct Access Grants (password grant)
               DG="disabled-direct-grant"
-              if ! $KCADM get authentication/flows -r "$REALM" | grep -q "\"alias\" *: *\"$DG\""; then
-                $KCADM create authentication/flows -r "$REALM" \
-                  -s "alias=$DG" -s providerId=basic-flow -s topLevel=true -s builtIn=false
-              fi
-              $KCADM update "realms/$REALM" -s "directGrantFlow=$DG" || true
+              ensure_disabled_direct_grant_flow() {
+                local realm="$1"
+                if ! $KCADM get authentication/flows -r "$realm" | grep -q "\"alias\" *: *\"$DG\""; then
+                  $KCADM create authentication/flows -r "$realm" \
+                    -s "alias=$DG" -s providerId=basic-flow -s topLevel=true -s builtIn=false
+                fi
+                $KCADM update "realms/$realm" -s "directGrantFlow=$DG" || true
+              }
+              ensure_disabled_direct_grant_flow "$REALM"
+              ensure_disabled_direct_grant_flow "$ADMIN_REALM"
               
               # 2) Disable the bootstrap admin user in master (safer than delete; not recreated; no password logins)
               ADMIN_ID=$($KCADM get users -r "$ADMIN_REALM" -q username="$KEYCLOAK_ADMIN" \
@@ -1032,6 +1109,7 @@ spec:
               
               apply_clients_from_dir "$REALM"
               disable_direct_grants_for_clients "$REALM"
+              disable_direct_grants_for_clients "$ADMIN_REALM"
               enforce_pkce_for_client "$REALM" "openwebui"
 
               # Sample roles for mapping (edit/remove as needed)
@@ -1101,6 +1179,13 @@ spec:
               # Enforce Google-only for external apps (example clientId)
               if [ "$GOOGLE_READY" = "true" ]; then
                 set_client_flow_override "$REALM" "public-app" "$FLOW_BROWSER_GGL"
+              fi
+
+              if [ "$CONFIGURATOR_DELETE_CLIENT" = "true" ]; then
+                CID=$($KCADM get clients -r "$ADMIN_REALM" -q "clientId=$CONFIG_CLIENT_ID" --fields id --format csv | tail -n1)
+                if [ -n "${CID:-}" ]; then
+                  $KCADM delete "clients/$CID" -r "$ADMIN_REALM" || true
+                fi
               fi
 
               echo "✔ Configurator finished. Holding for logs."
