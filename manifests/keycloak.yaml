@@ -920,16 +920,19 @@ spec:
                 if [ "$ADMIN_ESCALATED" = "false" ]; then
                   echo "⚠️  Realm create failed; escalating to admin to fix permissions."
                   if login_with_admin; then
-                    ensure_configurator_client
-                    if login_with_client; then
-                      ADMIN_ESCALATED="true"
-                      if kcadm_create_realm "${realm}"; then
-                        return 0
-                      fi
-                      if $KCADM get "realms/${realm}" >/dev/null 2>&1; then
-                        return 0
-                      fi
+                    ADMIN_ESCALATED="true"
+                    if kcadm_create_realm "${realm}"; then
+                      ensure_configurator_client || true
+                      login_with_client >/dev/null 2>&1 || true
+                      return 0
                     fi
+                    if $KCADM get "realms/${realm}" >/dev/null 2>&1; then
+                      ensure_configurator_client || true
+                      login_with_client >/dev/null 2>&1 || true
+                      return 0
+                    fi
+                  else
+                    echo "❌ Admin login failed during realm creation escalation."
                   fi
                 fi
                 echo "❌ Failed to ensure realm: ${realm}"
