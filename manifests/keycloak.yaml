@@ -1110,24 +1110,28 @@ spec:
                 local requirement="$4"
                 local existing_id=""
                 EXECS=$($KCADM get "authentication/flows/$flow/executions" -r "$realm" || echo "[]")
-                existing_id=$(echo "$EXECS" \
-                      | tr -d "\n" \
-                      | sed "s/},[[:space:]]*{/}\n{/g" \
-                      | grep -E "\"providerId\"[[:space:]]*:[[:space:]]*\"$provider\"" \
-                      | sed -n "s/.*\"id\"[[:space:]]*:[[:space:]]*\"\([^\"]\+\)\".*/\1/p" \
-                      | head -n1)
+                existing_id=$(
+                      echo "$EXECS" \
+                        | tr -d "\n" \
+                        | sed "s/},[[:space:]]*{/}\n{/g" \
+                        | grep -E "\"providerId\"[[:space:]]*:[[:space:]]*\"$provider\"" \
+                        | sed -n "s/.*\"id\"[[:space:]]*:[[:space:]]*\"\([^\"]\+\)\".*/\1/p" \
+                        | head -n1 || true
+                    )
                 if [ -z "${existing_id:-}" ]; then
                   $KCADM create "authentication/flows/$flow/executions/execution" -r "$realm" -s provider="$provider" || true
                 fi
                 EID=""
                 for i in {1..40}; do
                   EXECS=$($KCADM get "authentication/flows/$flow/executions" -r "$realm" || echo "[]")
-                  EID=$(echo "$EXECS" \
-                        | tr -d "\n" \
-                        | sed "s/},[[:space:]]*{/}\n{/g" \
-                        | grep -E "\"providerId\"[[:space:]]*:[[:space:]]*\"$provider\"" \
-                        | sed -n "s/.*\"id\"[[:space:]]*:[[:space:]]*\"\([^\"]\+\)\".*/\1/p" \
-                        | head -n1)
+                  EID=$(
+                        echo "$EXECS" \
+                          | tr -d "\n" \
+                          | sed "s/},[[:space:]]*{/}\n{/g" \
+                          | grep -E "\"providerId\"[[:space:]]*:[[:space:]]*\"$provider\"" \
+                          | sed -n "s/.*\"id\"[[:space:]]*:[[:space:]]*\"\([^\"]\+\)\".*/\1/p" \
+                          | head -n1 || true
+                      )
                   [ -n "$EID" ] && break || sleep 1
                 done
                 if [ -z "${EID:-}" ]; then
@@ -1164,9 +1168,11 @@ spec:
                 REDIR_ID=""
                 for i in {1..30}; do
                   EXECS=$($KCADM get "authentication/flows/${flow}/executions" -r "$realm" || echo "[]")
-                  REDIR_ID=$(echo "$EXECS" | tr -d "\n" | sed "s/},[[:space:]]*{/}\n{/g" \
-                            | grep -E '"providerId" *: *"identity-provider-redirector"' \
-                            | sed -n "s/.*\"id\"[[:space:]]*:[[:space:]]*\"\([^\"]\+\)\".*/\1/p" | head -n1)
+                  REDIR_ID=$(
+                            echo "$EXECS" | tr -d "\n" | sed "s/},[[:space:]]*{/}\n{/g" \
+                              | grep -E '"providerId" *: *"identity-provider-redirector"' \
+                              | sed -n "s/.*\"id\"[[:space:]]*:[[:space:]]*\"\([^\"]\+\)\".*/\1/p" | head -n1 || true
+                          )
                   [ -n "$REDIR_ID" ] && break || sleep 1
                 done
                 if [ -z "$REDIR_ID" ]; then
@@ -1174,9 +1180,11 @@ spec:
                     -s provider=identity-provider-redirector || true
                   for i in {1..10}; do
                     EXECS=$($KCADM get "authentication/flows/${flow}/executions" -r "$realm" || echo "[]")
-                    REDIR_ID=$(echo "$EXECS" | tr -d "\n" | sed "s/},[[:space:]]*{/}\n{/g" \
-                              | grep -E '"providerId" *: *"identity-provider-redirector"' \
-                              | sed -n "s/.*\"id\"[[:space:]]*:[[:space:]]*\"\\([^\"]\\+\\)\".*/\\1/p" | head -n1)
+                    REDIR_ID=$(
+                              echo "$EXECS" | tr -d "\n" | sed "s/},[[:space:]]*{/}\n{/g" \
+                                | grep -E '"providerId" *: *"identity-provider-redirector"' \
+                                | sed -n "s/.*\"id\"[[:space:]]*:[[:space:]]*\"\\([^\"]\\+\\)\".*/\\1/p" | head -n1 || true
+                            )
                     [ -n "$REDIR_ID" ] && break || sleep 1
                   done
                 fi
