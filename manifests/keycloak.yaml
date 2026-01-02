@@ -897,13 +897,21 @@ spec:
               fi
               echo "✅ Admin API ready (auth: $AUTH_MODE)."
               
+              kcadm_create_realm() {
+                local realm="$1"
+                local out=""
+                out=$($KCADM create realms -s "realm=${realm}" -s enabled=true 2>&1) && return 0
+                echo "❌ kcadm create realm failed: ${out}"
+                return 1
+              }
+
               ensure_realm() {
                 local realm="$1"
                 if $KCADM get "realms/${realm}" >/dev/null 2>&1; then
                   return 0
                 fi
                 echo "Creating realm: ${realm}"
-                if $KCADM create realms -s "realm=${realm}" -s enabled=true >/dev/null 2>&1; then
+                if kcadm_create_realm "${realm}"; then
                   return 0
                 fi
                 if $KCADM get "realms/${realm}" >/dev/null 2>&1; then
@@ -915,7 +923,7 @@ spec:
                     ensure_configurator_client
                     if login_with_client; then
                       ADMIN_ESCALATED="true"
-                      if $KCADM create realms -s "realm=${realm}" -s enabled=true >/dev/null 2>&1; then
+                      if kcadm_create_realm "${realm}"; then
                         return 0
                       fi
                       if $KCADM get "realms/${realm}" >/dev/null 2>&1; then
