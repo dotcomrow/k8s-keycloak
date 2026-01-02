@@ -1654,10 +1654,6 @@ spec:
               value: "https://auth.suncoast.systems"
             - name: KC_HOSTNAME_ADMIN_URL
               value: "https://keycloak.teleport.app.suncoast.systems"
-            - name: KC_HOSTNAME
-              value: "auth.suncoast.systems"
-            - name: KC_HOSTNAME_ADMIN
-              value: "keycloak.teleport.app.suncoast.systems"
             - name: KC_HEALTH_ENABLED
               value: "true"
             - name: KC_HOSTNAME_STRICT
