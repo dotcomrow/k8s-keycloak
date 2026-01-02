@@ -757,6 +757,9 @@ spec:
               FLOW_BROWSER_GH="browser-github-only"
               FLOW_BROWSER_GGL="browser-google-only"
               KCADM="/opt/keycloak/bin/kcadm.sh"
+              KCADM_CONFIG="/tmp/kcadm.config"
+              export KCADM_CONFIG
+              kc(){ "$KCADM" --server "$SERVER" "$@"; }
               
               hold(){ echo "Configurator will stay running for logs…"; tail -f /dev/null; }
               on_err(){ code=$?; echo "Configurator error (exit $code)"; hold; }
@@ -778,32 +781,32 @@ spec:
               
               echo "Waiting for Keycloak admin API..."
               for i in {1..120}; do
-                if $KCADM config credentials --server "$SERVER" --realm "$ADMIN_REALM" --user "$KEYCLOAK_ADMIN" --password "$KEYCLOAK_ADMIN_PASSWORD" >/dev/null 2>&1; then
+                if kc config credentials --realm "$ADMIN_REALM" --user "$KEYCLOAK_ADMIN" --password "$KEYCLOAK_ADMIN_PASSWORD" >/dev/null 2>&1; then
                   break
                 fi
                 sleep 2
               done
               echo "✅ Admin API ready."
               
-              if ! $KCADM get "realms/${REALM}" >/dev/null 2>&1; then
+              if ! kc get "realms/${REALM}" >/dev/null 2>&1; then
                 echo "Creating realm: ${REALM}"
-                $KCADM create realms -s "realm=${REALM}" -s enabled=true
+                kc create realms -s "realm=${REALM}" -s enabled=true
               fi
               
               ensure_flow() {
                 local realm="$1"
                 local flow="$2"
                 local desc="$3"
-                if ! $KCADM get authentication/flows -r "$realm" | grep -q "\"alias\"[[:space:]]*:[[:space:]]*\"$flow\""; then
-                  $KCADM create authentication/flows -r "$realm" \
+                if ! kc get authentication/flows -r "$realm" | grep -q "\"alias\"[[:space:]]*:[[:space:]]*\"$flow\""; then
+                  kc create authentication/flows -r "$realm" \
                     -s "alias=$flow" -s providerId=basic-flow -s topLevel=true -s builtIn=false \
                     -s "description=$desc"
                 fi
-                EXECS=$($KCADM get "authentication/flows/$flow/executions" -r "$realm" || echo "[]")
+                EXECS=$(kc get "authentication/flows/$flow/executions" -r "$realm" || echo "[]")
                 IDS=$(echo "$EXECS" | tr -d "\n" | sed "s/},[[:space:]]*{/}\n{/g" | sed -n "s/.*\"id\"[[:space:]]*:[[:space:]]*\"\([^\"]*\)\".*/\1/p")
                 if [ -n "$IDS" ]; then
                   while read -r EID; do
-                    [ -n "$EID" ] && $KCADM delete "authentication/executions/$EID" -r "$realm" || true
+                    [ -n "$EID" ] && kc delete "authentication/executions/$EID" -r "$realm" || true
                   done <<<"$IDS"
                 fi
               }
@@ -812,10 +815,10 @@ spec:
                 local realm="$1"
                 local flow="$2"
                 local provider="$3"
-                $KCADM create "authentication/flows/$flow/executions/execution" -r "$realm" -s provider="$provider"
+                kc create "authentication/flows/$flow/executions/execution" -r "$realm" -s provider="$provider"
                 EID=""
                 for i in {1..40}; do
-                  EXECS=$($KCADM get "authentication/flows/$flow/executions" -r "$realm" || echo "[]")
+                  EXECS=$(kc get "authentication/flows/$flow/executions" -r "$realm" || echo "[]")
                   EID=$(echo "$EXECS" \
                         | tr -d "\n" \
                         | sed "s/},[[:space:]]*{/}\n{/g" \
@@ -829,9 +832,9 @@ spec:
                   echo "$EXECS"
                   exit 1
                 fi
-                if ! $KCADM update "authentication/executions/$EID" -r "$realm" -s 'requirement=REQUIRED'; then
+                if ! kc update "authentication/executions/$EID" -r "$realm" -s 'requirement=REQUIRED'; then
                   printf '{ "id":"%s", "requirement":"REQUIRED" }\n' "$EID" >/tmp/r.json
-                  $KCADM update "authentication/flows/$flow/executions" -r "$realm" -f /tmp/r.json
+                  kc update "authentication/flows/$flow/executions" -r "$realm" -f /tmp/r.json
                 fi
               }
               
@@ -841,42 +844,42 @@ spec:
                 local provider="$3"
                 local desc="$4"
               
-                if ! $KCADM get authentication/flows -r "$realm" | grep -q "\"alias\"[[:space:]]*:[[:space:]]*\"$flow\""; then
-                  $KCADM create authentication/flows -r "$realm" \
+                if ! kc get authentication/flows -r "$realm" | grep -q "\"alias\"[[:space:]]*:[[:space:]]*\"$flow\""; then
+                  kc create authentication/flows -r "$realm" \
                     -s "alias=${flow}" -s providerId=basic-flow -s topLevel=true -s builtIn=false \
                     -s "description=$desc"
-                  $KCADM create "authentication/flows/${flow}/executions/execution" -r "$realm" \
+                  kc create "authentication/flows/${flow}/executions/execution" -r "$realm" \
                     -s provider=identity-provider-redirector
                 fi
               
-                EXECS=$($KCADM get "authentication/flows/${flow}/executions" -r "$realm")
+                EXECS=$(kc get "authentication/flows/${flow}/executions" -r "$realm")
                 REDIR_ID=$(echo "$EXECS" | tr -d "\n" | sed "s/},[[:space:]]*{/}\n{/g" \
                           | grep -E '"providerId" *: *"identity-provider-redirector"' \
                           | sed -n "s/.*\"id\"[[:space:]]*:[[:space:]]*\"\([^\"]\+\)\".*/\1/p" | head -n1)
                 [ -z "$REDIR_ID" ] && { echo "❌ cannot find redirector execution for ${flow}"; exit 1; }
               
-                if ! $KCADM update "authentication/executions/${REDIR_ID}" -r "$realm" -s requirement=REQUIRED >/dev/null 2>&1; then
+                if ! kc update "authentication/executions/${REDIR_ID}" -r "$realm" -s requirement=REQUIRED >/dev/null 2>&1; then
                   printf '{ "id":"%s", "requirement":"REQUIRED" }\n' "$REDIR_ID" >/tmp/r2.json
-                  $KCADM update "authentication/flows/${flow}/executions" -r "$realm" -f /tmp/r2.json
+                  kc update "authentication/flows/${flow}/executions" -r "$realm" -f /tmp/r2.json
                 fi
               
-                CFG_ID=$($KCADM get "authentication/executions/${REDIR_ID}/config" -r "$realm" \
+                CFG_ID=$(kc get "authentication/executions/${REDIR_ID}/config" -r "$realm" \
                         | sed -n "s/.*\"id\"[[:space:]]*:[[:space:]]*\"\([^\"]*\)\".*/\1/p" | head -n1 || true)
                 if [ -n "${CFG_ID:-}" ]; then
-                  $KCADM update "authentication/executions/${REDIR_ID}/config/${CFG_ID}" -r "$realm" \
+                  kc update "authentication/executions/${REDIR_ID}/config/${CFG_ID}" -r "$realm" \
                     -s "alias=redirect-to-${provider}" -s "config.defaultProvider=${provider}"
                 else
-                  $KCADM create "authentication/executions/${REDIR_ID}/config" -r "$realm" \
+                  kc create "authentication/executions/${REDIR_ID}/config" -r "$realm" \
                     -s "alias=redirect-to-${provider}" -s "config.defaultProvider=${provider}"
                 fi
               }
               
               ensure_github_idp() {
                 local realm="$1"
-                $KCADM get identity-provider/instances/github -r "$realm" >/dev/null 2>&1 && \
-                  $KCADM delete identity-provider/instances/github -r "$realm" || true
+                kc get identity-provider/instances/github -r "$realm" >/dev/null 2>&1 && \
+                  kc delete identity-provider/instances/github -r "$realm" || true
               
-                $KCADM create identity-provider/instances -r "$realm" \
+                kc create identity-provider/instances -r "$realm" \
                   -s enabled=true -s storeToken=true -s alias=github -s providerId=github \
                   -s "config.clientId=$CLIENT_ID" \
                   -s "config.clientSecret=$CLIENT_SECRET" \
@@ -891,10 +894,10 @@ spec:
                   return 1
                 fi
               
-                $KCADM get identity-provider/instances/google -r "$realm" >/dev/null 2>&1 && \
-                  $KCADM delete identity-provider/instances/google -r "$realm" || true
+                kc get identity-provider/instances/google -r "$realm" >/dev/null 2>&1 && \
+                  kc delete identity-provider/instances/google -r "$realm" || true
               
-                $KCADM create identity-provider/instances -r "$realm" \
+                kc create identity-provider/instances -r "$realm" \
                   -s enabled=true -s storeToken=false -s alias=google -s providerId=google \
                   -s "config.clientId=$GOOGLE_CLIENT_ID" \
                   -s "config.clientSecret=$GOOGLE_CLIENT_SECRET" \
@@ -907,18 +910,18 @@ spec:
               ensure_github_idp "$ADMIN_REALM"
               ensure_flow "$ADMIN_REALM" "$FLOW_GH" "Post-broker: GitHub team admin"
               add_exec_required "$ADMIN_REALM" "$FLOW_GH" "$PROVIDER_GH"
-              $KCADM update identity-provider/instances/github -r "$ADMIN_REALM" \
+              kc update identity-provider/instances/github -r "$ADMIN_REALM" \
                 -s "postBrokerLoginFlowAlias=$FLOW_GH" || true
               
               ensure_redirect_flow "$ADMIN_REALM" "$FLOW_BROWSER_GH" "github" "Browser flow that redirects to GitHub"
-              $KCADM update "realms/${ADMIN_REALM}" -s "browserFlow=${FLOW_BROWSER_GH}"
+              kc update "realms/${ADMIN_REALM}" -s "browserFlow=${FLOW_BROWSER_GH}"
               
               echo "Configuring app realm: ${REALM}"
               ensure_github_idp "$REALM"
               ensure_flow "$REALM" "$FLOW_GH" "Post-broker: GitHub teams + Google groups"
               add_exec_required "$REALM" "$FLOW_GH" "$PROVIDER_GH"
               add_exec_required "$REALM" "$FLOW_GH" "$PROVIDER_GGL"
-              $KCADM update identity-provider/instances/github -r "$REALM" \
+              kc update identity-provider/instances/github -r "$REALM" \
                 -s "postBrokerLoginFlowAlias=$FLOW_GH" || true
               
               GOOGLE_READY="false"
@@ -926,7 +929,7 @@ spec:
                 GOOGLE_READY="true"
                 ensure_flow "$REALM" "$FLOW_GGL" "Post-broker: Google groups only"
                 add_exec_required "$REALM" "$FLOW_GGL" "$PROVIDER_GGL"
-                $KCADM update identity-provider/instances/google -r "$REALM" \
+                kc update identity-provider/instances/google -r "$REALM" \
                   -s "postBrokerLoginFlowAlias=$FLOW_GGL" || true
               else
                 echo "⚠️  Google IdP not configured (missing client id/secret)."
@@ -938,28 +941,28 @@ spec:
               fi
               
               if [ "$REALM" != "$ADMIN_REALM" ]; then
-                $KCADM update "realms/${REALM}" -s "browserFlow=browser"
+                kc update "realms/${REALM}" -s "browserFlow=browser"
               fi
               
               # Realm hygiene (unchanged)
-              $KCADM update "realms/$REALM" \
+              kc update "realms/$REALM" \
                 -s sslRequired=EXTERNAL -s loginWithEmailAllowed=true -s registrationAllowed=false \
                 -s rememberMe=true -s resetPasswordAllowed=true -s bruteForceProtected=true -s permanentLockout=false || true
               
               # 1) Disable Direct Access Grants (password grant)
               DG="disabled-direct-grant"
-              if ! $KCADM get authentication/flows -r "$REALM" | grep -q "\"alias\" *: *\"$DG\""; then
-                $KCADM create authentication/flows -r "$REALM" \
+              if ! kc get authentication/flows -r "$REALM" | grep -q "\"alias\" *: *\"$DG\""; then
+                kc create authentication/flows -r "$REALM" \
                   -s "alias=$DG" -s providerId=basic-flow -s topLevel=true -s builtIn=false
               fi
-              $KCADM update "realms/$REALM" -s "directGrantFlow=$DG" || true
+              kc update "realms/$REALM" -s "directGrantFlow=$DG" || true
               
               # 2) Disable the bootstrap admin user in master (safer than delete; not recreated; no password logins)
-              ADMIN_ID=$($KCADM get users -r "$ADMIN_REALM" -q username="$KEYCLOAK_ADMIN" \
+              ADMIN_ID=$(kc get users -r "$ADMIN_REALM" -q username="$KEYCLOAK_ADMIN" \
                 | tr -d "\n" | sed "s/},[[:space:]]*{/}\n{/g" \
                 | sed -n "s/.*\"id\"[[:space:]]*:[[:space:]]*\"\([^\"]*\)\".*/\1/p" | head -n1)
               if [ -n "$ADMIN_ID" ]; then
-                $KCADM update "users/$ADMIN_ID" -r "$ADMIN_REALM" -s enabled=false -s 'credentials=[]' || true
+                kc update "users/$ADMIN_ID" -r "$ADMIN_REALM" -s enabled=false -s 'credentials=[]' || true
               fi
               
               apply_clients_from_dir() {
@@ -974,12 +977,12 @@ spec:
                     echo "info: missing clientId in $f"
                     continue
                   fi
-                  CID=$($KCADM get clients -r "$realm" -q "clientId=$client_id" --fields id --format csv | tail -n1)
+                  CID=$(kc get clients -r "$realm" -q "clientId=$client_id" --fields id --format csv | tail -n1)
                   if [ -n "${CID:-}" ]; then
-                    $KCADM update "clients/$CID" -r "$realm" -f "$f"
+                    kc update "clients/$CID" -r "$realm" -f "$f"
                   else
-                    $KCADM create clients -r "$realm" -f "$f"
-                    CID=$($KCADM get clients -r "$realm" -q "clientId=$client_id" --fields id --format csv | tail -n1)
+                    kc create clients -r "$realm" -f "$f"
+                    CID=$(kc get clients -r "$realm" -q "clientId=$client_id" --fields id --format csv | tail -n1)
                   fi
                   if [ -n "${CID:-}" ]; then
                     secret=""
@@ -990,7 +993,7 @@ spec:
                       secret="$(awk -F= -v cid="$client_id" '$1==cid { $1=""; sub(/^=/,""); print; exit }' "$CLIENT_SECRET_MAP_FILE")"
                     fi
                     if [ -n "${secret:-}" ]; then
-                      $KCADM update "clients/$CID" -r "$realm" -s "secret=$secret"
+                      kc update "clients/$CID" -r "$realm" -s "secret=$secret"
                     fi
                   fi
                 done
@@ -1000,8 +1003,8 @@ spec:
 
               # Sample roles for mapping (edit/remove as needed)
               for role in tier_free tier_pro feature_x openwebui_access; do
-                $KCADM get "roles/$role" -r "$REALM" >/dev/null 2>&1 || \
-                  $KCADM create roles -r "$REALM" -s "name=$role" || true
+                kc get "roles/$role" -r "$REALM" >/dev/null 2>&1 || \
+                  kc create roles -r "$REALM" -s "name=$role" || true
               done
               
               ensure_roles_from_map() {
@@ -1021,8 +1024,8 @@ spec:
                     realm:*)
                       role="${spec#realm:}"
                       [ -z "${role:-}" ] && continue
-                      $KCADM get "roles/$role" -r "$realm" >/dev/null 2>&1 || \
-                        $KCADM create roles -r "$realm" -s "name=$role" || true
+                      kc get "roles/$role" -r "$realm" >/dev/null 2>&1 || \
+                        kc create roles -r "$realm" -s "name=$role" || true
                       ;;
                     client:*)
                       rest="${spec#client:}"
@@ -1031,10 +1034,10 @@ spec:
                       if [ -z "${cid:-}" ] || [ -z "${role:-}" ] || [ "$cid" = "$role" ]; then
                         continue
                       fi
-                      CLIENT_UUID=$($KCADM get clients -r "$realm" -q "clientId=$cid" --fields id --format csv | tail -n1)
+                      CLIENT_UUID=$(kc get clients -r "$realm" -q "clientId=$cid" --fields id --format csv | tail -n1)
                       if [ -n "${CLIENT_UUID:-}" ]; then
-                        $KCADM get "clients/$CLIENT_UUID/roles/$role" -r "$realm" >/dev/null 2>&1 || \
-                          $KCADM create "clients/$CLIENT_UUID/roles" -r "$realm" -s "name=$role" || true
+                        kc get "clients/$CLIENT_UUID/roles/$role" -r "$realm" >/dev/null 2>&1 || \
+                          kc create "clients/$CLIENT_UUID/roles" -r "$realm" -s "name=$role" || true
                       else
                         echo "info: client not found for role spec: $spec"
                       fi
@@ -1050,9 +1053,9 @@ spec:
                 local realm="$1"
                 local clientId="$2"
                 local flow="$3"
-                CID=$($KCADM get clients -r "$realm" -q "clientId=$clientId" --fields id --format csv | tail -n1)
+                CID=$(kc get clients -r "$realm" -q "clientId=$clientId" --fields id --format csv | tail -n1)
                 if [ -n "${CID:-}" ]; then
-                  $KCADM update "clients/$CID" -r "$realm" \
+                  kc update "clients/$CID" -r "$realm" \
                     -s "authenticationFlowBindingOverrides={\"browser\":\"$flow\"}"
                 else
                   echo "ℹ️  client not found: $clientId (skipping override)"
