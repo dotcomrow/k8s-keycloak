@@ -984,11 +984,13 @@ spec:
                 local realm="$1"
                 local provider="$2"
                 local out=""
-                out=$($KCADM get authentication/execution-providers -r "$realm" --fields id --format csv 2>/dev/null || true)
-                if [ -z "${out:-}" ]; then
-                  return 1
+                out=$($KCADM get authentication/execution-providers -r "$realm" 2>/dev/null || true)
+                [ -z "${out:-}" ] && return 1
+                if printf '%s' "$out" | grep -q "\"id\"[[:space:]]*:"; then
+                  printf '%s\n' "$out" | grep -q "\"id\"[[:space:]]*:[[:space:]]*\"$provider\""
+                  return $?
                 fi
-                printf '%s\n' "$out" | tail -n +2 | tr -d '"' | tr -d '\r' | grep -xq "$provider"
+                printf '%s\n' "$out" | tr -d '\r' | tr -d '"[],{}' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' | grep -xq "$provider"
               }
 
               flow_has_execution() {
@@ -1431,6 +1433,10 @@ spec:
                   fi
                   if ! flow_alias_exists "$realm" "$flow"; then
                     echo "ℹ️  flow not found: $flow (skipping override for $clientId)"
+                    return 0
+                  fi
+                  if ! $KCADM get "authentication/flows/$flow" -r "$realm" >/dev/null 2>&1; then
+                    echo "ℹ️  flow alias not resolvable: $flow (skipping override for $clientId)"
                     return 0
                   fi
                   if ! $KCADM update "clients/$CID" -r "$realm" \
