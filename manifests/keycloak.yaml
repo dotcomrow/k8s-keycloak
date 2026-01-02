@@ -711,20 +711,17 @@ spec:
                     if [ -n "${HAS_REALM_TABLE:-}" ] && [ "${HAS_REALM_TABLE}" != "null" ]; then
                       REALM_ID="$(psql -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDATABASE" -tAc "SELECT id FROM ${PGSCHEMA}.realm WHERE name='master' LIMIT 1;" || true)"
                       if [ -n "${REALM_ID:-}" ]; then
-                        HAS_CLIENT="$(psql -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDATABASE" -tAc "SELECT 1 FROM ${PGSCHEMA}.client WHERE client_id='keycloak-configurator' AND realm_id='${REALM_ID}' LIMIT 1;" || true)"
-                        if [ "${HAS_CLIENT:-0}" != "1" ]; then
+                        psql -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDATABASE" -v ON_ERROR_STOP=1 \
+                          -c "UPDATE ${PGSCHEMA}.user_entity SET enabled=true WHERE realm_id='${REALM_ID}' AND username='${ADMIN_USER}';"
+                        psql -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDATABASE" -v ON_ERROR_STOP=1 \
+                          -c "UPDATE ${PGSCHEMA}.client SET direct_access_grants_enabled=true WHERE realm_id='${REALM_ID}' AND client_id='admin-cli';"
+                        DG_ID="$(psql -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDATABASE" -tAc "SELECT id FROM ${PGSCHEMA}.authentication_flow WHERE realm_id='${REALM_ID}' AND lower(alias) IN ('direct grant','direct grant flow','direct-grant') LIMIT 1;" || true)"
+                        if [ -n "${DG_ID:-}" ]; then
                           psql -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDATABASE" -v ON_ERROR_STOP=1 \
-                            -c "UPDATE ${PGSCHEMA}.user_entity SET enabled=true WHERE realm_id='${REALM_ID}' AND username='${ADMIN_USER}';"
-                          psql -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDATABASE" -v ON_ERROR_STOP=1 \
-                            -c "UPDATE ${PGSCHEMA}.client SET direct_access_grants_enabled=true WHERE realm_id='${REALM_ID}' AND client_id='admin-cli';"
-                          DG_ID="$(psql -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDATABASE" -tAc "SELECT id FROM ${PGSCHEMA}.authentication_flow WHERE realm_id='${REALM_ID}' AND lower(alias) IN ('direct grant','direct grant flow','direct-grant') LIMIT 1;" || true)"
-                          if [ -n "${DG_ID:-}" ]; then
-                            psql -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDATABASE" -v ON_ERROR_STOP=1 \
-                              -c "UPDATE ${PGSCHEMA}.realm SET direct_grant_flow='${DG_ID}' WHERE id='${REALM_ID}';"
-                            echo "✅ Enabled master direct-grant flow for configurator bootstrap."
-                          else
-                            echo "⚠️  Direct-grant flow not found in master realm; bootstrap may fail."
-                          fi
+                            -c "UPDATE ${PGSCHEMA}.realm SET direct_grant_flow='${DG_ID}' WHERE id='${REALM_ID}';"
+                          echo "✅ Enabled master direct-grant flow for configurator bootstrap."
+                        else
+                          echo "⚠️  Direct-grant flow not found in master realm; bootstrap may fail."
                         fi
                       fi
                     fi
@@ -866,6 +863,7 @@ spec:
 
               echo "Waiting for Keycloak admin API..."
               AUTH_MODE=""
+              ADMIN_ESCALATED="false"
               for i in {1..120}; do
                 if login_with_client; then
                   AUTH_MODE="client"
@@ -888,6 +886,7 @@ spec:
                   exit 1
                 fi
                 AUTH_MODE="client"
+                ADMIN_ESCALATED="true"
               fi
               echo "✅ Admin API ready (auth: $AUTH_MODE)."
               
@@ -902,6 +901,21 @@ spec:
                 fi
                 if $KCADM get "realms/${realm}" >/dev/null 2>&1; then
                   return 0
+                fi
+                if [ "$ADMIN_ESCALATED" = "false" ]; then
+                  echo "⚠️  Realm create failed; escalating to admin to fix permissions."
+                  if login_with_admin; then
+                    ensure_configurator_client
+                    if login_with_client; then
+                      ADMIN_ESCALATED="true"
+                      if $KCADM create realms -s "realm=${realm}" -s enabled=true >/dev/null 2>&1; then
+                        return 0
+                      fi
+                      if $KCADM get "realms/${realm}" >/dev/null 2>&1; then
+                        return 0
+                      fi
+                    fi
+                  fi
                 fi
                 echo "❌ Failed to ensure realm: ${realm}"
                 exit 1
