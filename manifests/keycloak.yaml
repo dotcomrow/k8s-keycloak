@@ -800,6 +800,20 @@ spec:
               trap on_err ERR
               fatal(){ echo "❌ $*"; hold; }
               
+              for f in /vault/secrets/keycloak-admin \
+                       /vault/secrets/github-client-id \
+                       /vault/secrets/github-client-secret \
+                       /vault/secrets/github-org \
+                       /vault/secrets/github-admin-team; do
+                for i in {1..60}; do
+                  [ -s "$f" ] && break
+                  sleep 1
+                done
+                if [ ! -s "$f" ]; then
+                  fatal "Missing required secret file: $f"
+                fi
+              done
+
               source /vault/secrets/keycloak-admin
               CLIENT_ID="$(cat /vault/secrets/github-client-id)"
               CLIENT_SECRET="$(cat /vault/secrets/github-client-secret)"
@@ -837,7 +851,7 @@ spec:
                 CID=$($KCADM get clients -r "$ADMIN_REALM" -q "clientId=$CONFIG_CLIENT_ID" --fields id --format csv 2>/dev/null | tail -n1 || true)
                 CID="$(clean_id "$CID")"
                 if [ -z "${CID:-}" ]; then
-                  $KCADM create clients -r "$ADMIN_REALM" \
+                  if ! $KCADM create clients -r "$ADMIN_REALM" \
                     -s "clientId=$CONFIG_CLIENT_ID" \
                     -s "name=Keycloak Configurator" \
                     -s enabled=true \
@@ -847,7 +861,10 @@ spec:
                     -s implicitFlowEnabled=false \
                     -s directAccessGrantsEnabled=false \
                     -s "clientAuthenticatorType=client-secret" \
-                    -s "secret=$CONFIG_CLIENT_SECRET"
+                    -s "secret=$CONFIG_CLIENT_SECRET"; then
+                    echo "⚠️  Failed to create configurator client"
+                    return 1
+                  fi
                   CID=$($KCADM get clients -r "$ADMIN_REALM" -q "clientId=$CONFIG_CLIENT_ID" --fields id --format csv 2>/dev/null | tail -n1 || true)
                   CID="$(clean_id "$CID")"
                 else
@@ -860,6 +877,10 @@ spec:
                     -s directAccessGrantsEnabled=false \
                     -s "clientAuthenticatorType=client-secret" \
                     -s "secret=$CONFIG_CLIENT_SECRET" || true
+                fi
+                if [ -z "${CID:-}" ]; then
+                  echo "⚠️  Configurator client id not found after create/update"
+                  return 1
                 fi
                 SA_ID=$($KCADM get "clients/$CID/service-account-user" -r "$ADMIN_REALM" 2>/dev/null \
                   | sed -n "s/.*\"id\"[[:space:]]*:[[:space:]]*\"\\([^\"]*\\)\".*/\\1/p" | head -n1 || true)
@@ -904,7 +925,13 @@ spec:
               kcadm_create_realm() {
                 local realm="$1"
                 local out=""
-                out=$($KCADM create realms -s "realm=${realm}" -s enabled=true 2>&1) && return 0
+                out="$($KCADM create realms -s "realm=${realm}" -s enabled=true 2>&1 || true)"
+                if [ -z "${out:-}" ]; then
+                  return 0
+                fi
+                if ! echo "$out" | grep -qiE "Conflict|already exists|duplicate"; then
+                  echo "$out" | grep -qiE "error|exception|failed" || return 0
+                fi
                 if echo "$out" | grep -qiE "Conflict|already exists|duplicate"; then
                   echo "⚠️  Realm already exists; continuing."
                   return 0
@@ -988,11 +1015,17 @@ spec:
                 local out=""
                 for i in {1..12}; do
                   out="$($KCADM get authentication/execution-providers -r "$ADMIN_REALM" --fields id,providerId --format csv 2>/dev/null || true)"
+                  if printf '%s' "$out" | grep -qiE "Resource not found|No server specified|Try 'kcadm|error"; then
+                    out=""
+                  fi
                   if [ -n "${out:-}" ]; then
                     out="$(printf '%s\n' "$out" | tail -n +2 | tr -d '\r' | tr ',' '\n' | tr -d '"' | sed '/^$/d' | sort -u)"
                   fi
                   if [ -z "${out:-}" ]; then
                     out="$($KCADM get authentication/execution-providers -r "$ADMIN_REALM" 2>/dev/null || true)"
+                    if ! printf '%s' "$out" | grep -q '^[[:space:]]*\[\|^[[:space:]]*{' ; then
+                      out=""
+                    fi
                     out="$(printf '%s\n' "$out" | tr -d '\r' | sed -n 's/.*"\(id\|providerId\)"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\2/p' | sed '/^$/d' | sort -u)"
                   fi
                   if [ -n "${out:-}" ]; then
@@ -1015,21 +1048,30 @@ spec:
                 fi
                 out="${PROVIDER_LIST_GLOBAL:-}"
                 [ -z "${out:-}" ] && return 0
-                printf '%s\n' "$out" | grep -xq "$provider"
+                if printf '%s\n' "$out" | grep -xq "$provider"; then
+                  return 0
+                fi
+                return 1
               }
 
               flow_has_execution() {
                 local realm="$1"
                 local flow="$2"
-                $KCADM get "authentication/flows/$flow/executions" -r "$realm" 2>/dev/null \
-                  | grep -q "\"id\"[[:space:]]*:[[:space:]]*\""
+                if $KCADM get "authentication/flows/$flow/executions" -r "$realm" 2>/dev/null \
+                  | grep -q "\"id\"[[:space:]]*:[[:space:]]*\""; then
+                  return 0
+                fi
+                return 1
               }
 
               flow_alias_exists() {
                 local realm="$1"
                 local alias="$2"
-                $KCADM get authentication/flows -r "$realm" 2>/dev/null \
-                  | tr -d '\r' | grep -q "\"alias\"[[:space:]]*:[[:space:]]*\"$alias\""
+                if $KCADM get authentication/flows -r "$realm" 2>/dev/null \
+                  | tr -d '\r' | grep -q "\"alias\"[[:space:]]*:[[:space:]]*\"$alias\""; then
+                  return 0
+                fi
+                return 1
               }
 
               add_exec_with_requirement() {
