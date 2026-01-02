@@ -983,16 +983,9 @@ spec:
               }
 
               provider_exists() {
-                local realm="$1"
-                local provider="$2"
+                local provider="$1"
                 local out=""
-                if [ "$realm" = "$ADMIN_REALM" ] && [ -n "${PROVIDER_LIST_MASTER:-}" ]; then
-                  out="$PROVIDER_LIST_MASTER"
-                elif [ "$realm" = "$REALM" ] && [ -n "${PROVIDER_LIST_APPS:-}" ]; then
-                  out="$PROVIDER_LIST_APPS"
-                else
-                  out=$($KCADM get authentication/execution-providers -r "$realm" 2>/dev/null || true)
-                fi
+                out="${PROVIDER_LIST_GLOBAL:-}"
                 [ -z "${out:-}" ] && return 1
                 out="$(printf '%s' "$out" | tr -d '\r')"
                 if printf '%s' "$out" | grep -q "\"id\"[[:space:]]*:"; then
@@ -1193,11 +1186,11 @@ spec:
               }
               
               echo "Configuring admin realm: ${ADMIN_REALM}"
-              PROVIDER_LIST_MASTER="$($KCADM get authentication/execution-providers -r "$ADMIN_REALM" 2>/dev/null || true)"
+              PROVIDER_LIST_GLOBAL="$($KCADM get authentication/execution-providers -r "$ADMIN_REALM" 2>/dev/null || true)"
               ensure_github_idp "$ADMIN_REALM"
               ensure_first_broker_flow_autolink "$ADMIN_REALM"
               ensure_flow "$ADMIN_REALM" "$FLOW_GH" "Post-broker: GitHub team admin"
-              if provider_exists "$ADMIN_REALM" "$PROVIDER_GH"; then
+              if provider_exists "$PROVIDER_GH"; then
                 add_exec_required "$ADMIN_REALM" "$FLOW_GH" "$PROVIDER_GH"
               else
                 echo "⚠️  Missing provider in ${ADMIN_REALM}: ${PROVIDER_GH} (skipping execution)"
@@ -1226,16 +1219,15 @@ spec:
               fi
 
               echo "Configuring app realm: ${REALM}"
-              PROVIDER_LIST_APPS="$($KCADM get authentication/execution-providers -r "$REALM" 2>/dev/null || true)"
               ensure_github_idp "$REALM"
               ensure_first_broker_flow_autolink "$REALM"
               ensure_flow "$REALM" "$FLOW_GH" "Post-broker: GitHub teams + Google groups"
-              if provider_exists "$REALM" "$PROVIDER_GH"; then
+              if provider_exists "$PROVIDER_GH"; then
                 add_exec_required "$REALM" "$FLOW_GH" "$PROVIDER_GH"
               else
                 echo "⚠️  Missing provider in ${REALM}: ${PROVIDER_GH} (skipping execution)"
               fi
-              if provider_exists "$REALM" "$PROVIDER_GGL"; then
+              if provider_exists "$PROVIDER_GGL"; then
                 add_exec_required "$REALM" "$FLOW_GH" "$PROVIDER_GGL"
               else
                 echo "⚠️  Missing provider in ${REALM}: ${PROVIDER_GGL} (skipping execution)"
@@ -1251,7 +1243,7 @@ spec:
               if ensure_google_idp "$REALM"; then
                 GOOGLE_READY="true"
                 ensure_flow "$REALM" "$FLOW_GGL" "Post-broker: Google groups only"
-                if provider_exists "$REALM" "$PROVIDER_GGL"; then
+                if provider_exists "$PROVIDER_GGL"; then
                   add_exec_required "$REALM" "$FLOW_GGL" "$PROVIDER_GGL"
                 else
                   echo "⚠️  Missing provider in ${REALM}: ${PROVIDER_GGL} (skipping execution)"
