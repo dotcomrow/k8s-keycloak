@@ -637,7 +637,7 @@ spec:
           command: ["/bin/sh","-lc"]
           args:
             - |
-              set -euo pipefail
+              set -Eeuo pipefail
               apk add --no-cache postgresql15-client jq bind-tools busybox-extras
 
               # Wait for Vault agent to write the secret file
@@ -798,8 +798,10 @@ spec:
               export KCADM_CONFIG
                             
               hold(){ echo "Configurator will stay running for logs…"; tail -f /dev/null; }
-              on_err(){ code=$?; echo "Configurator error (exit $code)"; hold; }
+              on_err(){ code=$?; echo "Configurator error (exit $code) at line ${BASH_LINENO[0]}: ${BASH_COMMAND:-unknown}"; hold; }
+              on_exit(){ code=$?; if [ "$code" -ne 0 ]; then echo "Configurator exiting (code $code)."; hold; fi; }
               trap on_err ERR
+              trap on_exit EXIT
               fatal(){ echo "❌ $*"; hold; }
               
               for f in /vault/secrets/keycloak-admin \
