@@ -1398,6 +1398,10 @@ spec:
                 local realm="$1"
                 local clientId="$2"
                 local flow="$3"
+                if [ -z "${flow:-}" ]; then
+                  echo "ℹ️  flow not set (skipping override for $clientId)"
+                  return 0
+                fi
                 if ! $KCADM get authentication/flows -r "$realm" | grep -q "\"alias\"[[:space:]]*:[[:space:]]*\"$flow\""; then
                   echo "ℹ️  flow not found: $flow (skipping override for $clientId)"
                   return 0
@@ -1405,8 +1409,16 @@ spec:
                 CID=$($KCADM get clients -r "$realm" -q "clientId=$clientId" --fields id --format csv 2>/dev/null | tail -n1 || true)
                 CID="$(clean_id "$CID")"
                 if [ -n "${CID:-}" ]; then
-                  $KCADM update "clients/$CID" -r "$realm" \
-                    -s "authenticationFlowBindingOverrides.browser=$flow" || true
+                  for i in {1..10}; do
+                    if $KCADM get "authentication/flows/$flow" -r "$realm" >/dev/null 2>&1; then
+                      break
+                    fi
+                    sleep 1
+                  done
+                  if ! $KCADM update "clients/$CID" -r "$realm" \
+                    -s "authenticationFlowBindingOverrides.browser=$flow" >/dev/null 2>&1; then
+                    echo "⚠️  Unable to set browser flow override ($flow) for client $clientId; skipping."
+                  fi
                 else
                   echo "ℹ️  client not found: $clientId (skipping override)"
                 fi
