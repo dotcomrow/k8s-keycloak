@@ -656,6 +656,8 @@ spec:
 
               export PGUSER="${PGADMIN_USER}"
               export PGPASSWORD="$(tr -d '\r\n' < /vault/secrets/vaultadmin)"
+              ADMIN_USER="$(sed -n 's/^export KEYCLOAK_ADMIN=//p' /vault/secrets/keycloak-admin 2>/dev/null | tr -d '\r' | tail -n1)"
+              ADMIN_USER="${ADMIN_USER:-admin}"
 
               echo "🔎 DNS for ${PGHOST}"; getent hosts "${PGHOST}" || true
               echo "🔎 TCP ${PGHOST}:${PGPORT}"; nc -vz -w 3 "${PGHOST}" "${PGPORT}" || true
@@ -711,6 +713,10 @@ spec:
                       if [ -n "${REALM_ID:-}" ]; then
                         HAS_CLIENT="$(psql -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDATABASE" -tAc "SELECT 1 FROM ${PGSCHEMA}.client WHERE client_id='keycloak-configurator' AND realm_id='${REALM_ID}' LIMIT 1;" || true)"
                         if [ "${HAS_CLIENT:-0}" != "1" ]; then
+                          psql -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDATABASE" -v ON_ERROR_STOP=1 \
+                            -c "UPDATE ${PGSCHEMA}.user_entity SET enabled=true WHERE realm_id='${REALM_ID}' AND username='${ADMIN_USER}';"
+                          psql -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDATABASE" -v ON_ERROR_STOP=1 \
+                            -c "UPDATE ${PGSCHEMA}.client SET direct_access_grants_enabled=true WHERE realm_id='${REALM_ID}' AND client_id='admin-cli';"
                           DG_ID="$(psql -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDATABASE" -tAc "SELECT id FROM ${PGSCHEMA}.authentication_flow WHERE realm_id='${REALM_ID}' AND lower(alias) IN ('direct grant','direct grant flow','direct-grant') LIMIT 1;" || true)"
                           if [ -n "${DG_ID:-}" ]; then
                             psql -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDATABASE" -v ON_ERROR_STOP=1 \
@@ -1056,12 +1062,14 @@ spec:
               }
               ensure_disabled_direct_grant_flow "$REALM"
               
-              # 2) Disable the bootstrap admin user in master (safer than delete; not recreated; no password logins)
-              ADMIN_ID=$($KCADM get users -r "$ADMIN_REALM" -q username="$KEYCLOAK_ADMIN" \
-                | tr -d "\n" | sed "s/},[[:space:]]*{/}\n{/g" \
-                | sed -n "s/.*\"id\"[[:space:]]*:[[:space:]]*\"\([^\"]*\)\".*/\1/p" | head -n1)
-              if [ -n "$ADMIN_ID" ]; then
-                $KCADM update "users/$ADMIN_ID" -r "$ADMIN_REALM" -s enabled=false -s 'credentials=[]' || true
+              # 2) Disable the bootstrap admin user in master (only after configurator client auth is working)
+              if [ "${AUTH_MODE:-}" = "client" ]; then
+                ADMIN_ID=$($KCADM get users -r "$ADMIN_REALM" -q username="$KEYCLOAK_ADMIN" \
+                  | tr -d "\n" | sed "s/},[[:space:]]*{/}\n{/g" \
+                  | sed -n "s/.*\"id\"[[:space:]]*:[[:space:]]*\"\([^\"]*\)\".*/\1/p" | head -n1)
+                if [ -n "$ADMIN_ID" ]; then
+                  $KCADM update "users/$ADMIN_ID" -r "$ADMIN_REALM" -s enabled=false -s 'credentials=[]' || true
+                fi
               fi
               
               apply_clients_from_dir() {
