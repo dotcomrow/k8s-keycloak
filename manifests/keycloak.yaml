@@ -291,7 +291,6 @@ spec:
               path "secret/data/keycloak-google-client-secret"    { capabilities = ["read"] }
               path "secret/data/keycloak-google-admin-email"      { capabilities = ["read"] }
               path "secret/data/keycloak-google-sa-json"          { capabilities = ["read"] }
-              path "secret/data/keycloak-google-groups"           { capabilities = ["read"] }
               path "secret/data/keycloak-google-group-role-map"   { capabilities = ["read"] }
               path "secret/data/keycloak-client-secret-*"         { capabilities = ["read"] }
               path "secret/data/k8s-teleport-teleport-github-org" { capabilities = ["read"] }
@@ -387,7 +386,6 @@ spec:
               path "secret/data/keycloak-google-client-secret"    { capabilities = ["read"] }
               path "secret/data/keycloak-google-admin-email"      { capabilities = ["read"] }
               path "secret/data/keycloak-google-sa-json"          { capabilities = ["read"] }
-              path "secret/data/keycloak-google-groups"           { capabilities = ["read"] }
               path "secret/data/keycloak-google-group-role-map"   { capabilities = ["read"] }
               path "secret/data/keycloak-client-secret-*"         { capabilities = ["read"] }
               path "secret/data/k8s-teleport-teleport-github-org" { capabilities = ["read"] }
@@ -524,9 +522,6 @@ spec:
         vault.hashicorp.com/agent-inject-secret-google-sa-json: "secret/data/keycloak-google-sa-json"
         vault.hashicorp.com/agent-inject-template-google-sa-json: |
           {{- with secret "secret/data/keycloak-google-sa-json" -}}{{ .Data.data.value }}{{- end -}}
-        vault.hashicorp.com/agent-inject-secret-google-groups: "secret/data/keycloak-google-groups"
-        vault.hashicorp.com/agent-inject-template-google-groups: |
-          {{- with secret "secret/data/keycloak-google-groups" -}}{{ .Data.data.value }}{{- end -}}
         vault.hashicorp.com/agent-inject-secret-google-group-role-map: "secret/data/keycloak-google-group-role-map"
         vault.hashicorp.com/agent-inject-template-google-group-role-map: |
           {{- with secret "secret/data/keycloak-google-group-role-map" -}}{{ .Data.data.value }}{{- end -}}
@@ -1155,16 +1150,11 @@ spec:
               # Google Groups auth (Cloud Identity)
               export GOOGLE_ADMIN_EMAIL="$(cat /vault/secrets/google-admin-email)"
               export GOOGLE_SA_JSON_PATH="/vault/secrets/google-sa-json"
-              export GOOGLE_GROUPS="$(cat /vault/secrets/google-groups 2>/dev/null || true)"
               export GOOGLE_GROUP_ROLE_MAP="$(cat /vault/secrets/google-group-role-map 2>/dev/null || true)"
               export GOOGLE_ROLE_PREFIX="ggl:"
               export GOOGLE_AUTO_ROLES="true"
               export GOOGLE_STRICT_REVOKE="true"
               export GOOGLE_GROUPS_TTL_SECONDS="600"
-
-              if [ -z "${GOOGLE_GROUPS:-}" ]; then
-                export GOOGLE_GROUPS="tier-free@yourdomain.com,tier-pro@yourdomain.com,feature-x@yourdomain.com"
-              fi
               if [ -z "${GOOGLE_GROUP_ROLE_MAP:-}" ]; then
                 export GOOGLE_GROUP_ROLE_MAP='{"tier-pro@yourdomain.com":["realm:tier_pro"],"feature-x@yourdomain.com":["realm:feature_x"]}'
               fi
