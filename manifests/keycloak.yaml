@@ -789,6 +789,7 @@ spec:
               FIRST_BROKER_FLOW="first-broker-login-autolink"
               FIRST_BROKER_BASE="first broker login"
               PROVIDER_IDP_AUTO_LINK="idp-auto-link"
+              PROVIDER_WARN="${PROVIDER_WARN:-true}"
               ADMIN_REALM_FORCE_GITHUB_REDIRECT="${ADMIN_REALM_FORCE_GITHUB_REDIRECT:-false}"
               KCADM="/opt/keycloak/bin/kcadm.sh"
               KCADM_CONFIG="/tmp/kcadm.config"
@@ -982,17 +983,39 @@ spec:
                 fi
               }
 
+              PROVIDER_LIST_LOADED="false"
+              load_provider_list() {
+                local out=""
+                for i in {1..12}; do
+                  out="$($KCADM get authentication/execution-providers -r "$ADMIN_REALM" --fields id,providerId --format csv 2>/dev/null || true)"
+                  if [ -n "${out:-}" ]; then
+                    out="$(printf '%s\n' "$out" | tail -n +2 | tr -d '\r' | tr ',' '\n' | tr -d '"' | sed '/^$/d' | sort -u)"
+                  fi
+                  if [ -z "${out:-}" ]; then
+                    out="$($KCADM get authentication/execution-providers -r "$ADMIN_REALM" 2>/dev/null || true)"
+                    out="$(printf '%s\n' "$out" | tr -d '\r' | sed -n 's/.*"\(id\|providerId\)"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\2/p' | sed '/^$/d' | sort -u)"
+                  fi
+                  if [ -n "${out:-}" ]; then
+                    break
+                  fi
+                  sleep 1
+                done
+                PROVIDER_LIST_GLOBAL="${out:-}"
+                PROVIDER_LIST_LOADED="true"
+                if [ -z "${PROVIDER_LIST_GLOBAL:-}" ] && [ "$PROVIDER_WARN" = "true" ]; then
+                  echo "⚠️  Unable to read execution providers list; will attempt to attach executions without pre-checks."
+                fi
+              }
+
               provider_exists() {
                 local provider="$1"
                 local out=""
-                out="${PROVIDER_LIST_GLOBAL:-}"
-                [ -z "${out:-}" ] && return 1
-                out="$(printf '%s' "$out" | tr -d '\r')"
-                if printf '%s' "$out" | grep -q "\"id\"[[:space:]]*:"; then
-                  printf '%s\n' "$out" | sed -n 's/.*"id"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | grep -xq "$provider"
-                  return $?
+                if [ "${PROVIDER_LIST_LOADED:-false}" != "true" ]; then
+                  load_provider_list
                 fi
-                printf '%s\n' "$out" | tr -d '"[],{}' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' | grep -xq "$provider"
+                out="${PROVIDER_LIST_GLOBAL:-}"
+                [ -z "${out:-}" ] && return 0
+                printf '%s\n' "$out" | grep -xq "$provider"
               }
 
               flow_has_execution() {
@@ -1005,12 +1028,8 @@ spec:
               flow_alias_exists() {
                 local realm="$1"
                 local alias="$2"
-                local out=""
-                out=$($KCADM get authentication/flows -r "$realm" --fields alias --format csv 2>/dev/null || true)
-                if [ -z "${out:-}" ]; then
-                  return 1
-                fi
-                printf '%s\n' "$out" | tail -n +2 | tr -d '"' | tr -d '\r' | grep -xq "$alias"
+                $KCADM get authentication/flows -r "$realm" 2>/dev/null \
+                  | tr -d '\r' | grep -q "\"alias\"[[:space:]]*:[[:space:]]*\"$alias\""
               }
 
               add_exec_with_requirement() {
@@ -1129,7 +1148,9 @@ spec:
                 if provider_exists "$PROVIDER_IDP_AUTO_LINK"; then
                   add_exec_alternative "$realm" "$flow" "$PROVIDER_IDP_AUTO_LINK"
                 else
-                  echo "⚠️  Missing provider in ${realm}: ${PROVIDER_IDP_AUTO_LINK} (skipping auto-link)"
+                  if [ "$PROVIDER_WARN" = "true" ]; then
+                    echo "⚠️  Missing provider in ${realm}: ${PROVIDER_IDP_AUTO_LINK} (skipping auto-link)"
+                  fi
                 fi
 
                 $KCADM update "realms/${realm}" -s "firstBrokerLoginFlow=$flow" || true
@@ -1186,14 +1207,16 @@ spec:
               }
               
               echo "Configuring admin realm: ${ADMIN_REALM}"
-              PROVIDER_LIST_GLOBAL="$($KCADM get authentication/execution-providers -r "$ADMIN_REALM" 2>/dev/null || true)"
+              load_provider_list
               ensure_github_idp "$ADMIN_REALM"
               ensure_first_broker_flow_autolink "$ADMIN_REALM"
               ensure_flow "$ADMIN_REALM" "$FLOW_GH" "Post-broker: GitHub team admin"
               if provider_exists "$PROVIDER_GH"; then
                 add_exec_required "$ADMIN_REALM" "$FLOW_GH" "$PROVIDER_GH"
               else
-                echo "⚠️  Missing provider in ${ADMIN_REALM}: ${PROVIDER_GH} (skipping execution)"
+                if [ "$PROVIDER_WARN" = "true" ]; then
+                  echo "⚠️  Missing provider in ${ADMIN_REALM}: ${PROVIDER_GH} (skipping execution)"
+                fi
               fi
               if flow_has_execution "$ADMIN_REALM" "$FLOW_GH"; then
               $KCADM update identity-provider/instances/github -r "$ADMIN_REALM" \
@@ -1225,12 +1248,16 @@ spec:
               if provider_exists "$PROVIDER_GH"; then
                 add_exec_required "$REALM" "$FLOW_GH" "$PROVIDER_GH"
               else
-                echo "⚠️  Missing provider in ${REALM}: ${PROVIDER_GH} (skipping execution)"
+                if [ "$PROVIDER_WARN" = "true" ]; then
+                  echo "⚠️  Missing provider in ${REALM}: ${PROVIDER_GH} (skipping execution)"
+                fi
               fi
               if provider_exists "$PROVIDER_GGL"; then
                 add_exec_required "$REALM" "$FLOW_GH" "$PROVIDER_GGL"
               else
-                echo "⚠️  Missing provider in ${REALM}: ${PROVIDER_GGL} (skipping execution)"
+                if [ "$PROVIDER_WARN" = "true" ]; then
+                  echo "⚠️  Missing provider in ${REALM}: ${PROVIDER_GGL} (skipping execution)"
+                fi
               fi
               if flow_has_execution "$REALM" "$FLOW_GH"; then
               $KCADM update identity-provider/instances/github -r "$REALM" \
@@ -1246,7 +1273,9 @@ spec:
                 if provider_exists "$PROVIDER_GGL"; then
                   add_exec_required "$REALM" "$FLOW_GGL" "$PROVIDER_GGL"
                 else
-                  echo "⚠️  Missing provider in ${REALM}: ${PROVIDER_GGL} (skipping execution)"
+                  if [ "$PROVIDER_WARN" = "true" ]; then
+                    echo "⚠️  Missing provider in ${REALM}: ${PROVIDER_GGL} (skipping execution)"
+                  fi
                 fi
                 if flow_has_execution "$REALM" "$FLOW_GGL"; then
                   $KCADM update identity-provider/instances/google -r "$REALM" \
