@@ -795,6 +795,7 @@ spec:
               hold(){ echo "Configurator will stay running for logs…"; tail -f /dev/null; }
               on_err(){ code=$?; echo "Configurator error (exit $code)"; hold; }
               trap on_err ERR
+              fatal(){ echo "❌ $*"; hold; }
               
               source /vault/secrets/keycloak-admin
               CLIENT_ID="$(cat /vault/secrets/github-client-id)"
@@ -896,6 +897,12 @@ spec:
                 ADMIN_ESCALATED="true"
               fi
               echo "✅ Admin API ready (auth: $AUTH_MODE)."
+              # Ensure configurator client has the right roles (best-effort)
+              if login_with_admin; then
+                ADMIN_ESCALATED="true"
+                ensure_configurator_client || true
+                login_with_client >/dev/null 2>&1 || true
+              fi
 
               kcadm_create_realm() {
                 local realm="$1"
@@ -927,6 +934,28 @@ spec:
                 if realm_exists "$realm"; then
                   return 0
                 fi
+                # Prefer admin for realm creation if available (avoids permission/409 noise)
+                if login_with_admin; then
+                  ADMIN_ESCALATED="true"
+                  if realm_exists "$realm"; then
+                    ensure_configurator_client || true
+                    login_with_client >/dev/null 2>&1 || true
+                    return 0
+                  fi
+                  echo "Creating realm: ${realm}"
+                  if kcadm_create_realm "${realm}"; then
+                    ensure_configurator_client || true
+                    login_with_client >/dev/null 2>&1 || true
+                    return 0
+                  fi
+                  if realm_exists "$realm"; then
+                    ensure_configurator_client || true
+                    login_with_client >/dev/null 2>&1 || true
+                    return 0
+                  fi
+                  echo "⚠️  Realm create failed with admin; falling back to client."
+                  login_with_client >/dev/null 2>&1 || true
+                fi
                 echo "Creating realm: ${realm}"
                 if kcadm_create_realm "${realm}"; then
                   return 0
@@ -934,26 +963,7 @@ spec:
                 if realm_exists "$realm"; then
                   return 0
                 fi
-                if [ "$ADMIN_ESCALATED" = "false" ]; then
-                  echo "⚠️  Realm create failed; escalating to admin to fix permissions."
-                  if login_with_admin; then
-                    ADMIN_ESCALATED="true"
-                    if kcadm_create_realm "${realm}"; then
-                      ensure_configurator_client || true
-                      login_with_client >/dev/null 2>&1 || true
-                      return 0
-                    fi
-                    if $KCADM get "realms/${realm}" >/dev/null 2>&1; then
-                      ensure_configurator_client || true
-                      login_with_client >/dev/null 2>&1 || true
-                      return 0
-                    fi
-                  else
-                    echo "❌ Admin login failed during realm creation escalation."
-                  fi
-                fi
-                echo "❌ Failed to ensure realm: ${realm}"
-                exit 1
+                fatal "Failed to ensure realm: ${realm}"
               }
 
               ensure_realm "${REALM}"
@@ -1020,7 +1030,7 @@ spec:
                 if [ -z "${EID:-}" ]; then
                   echo "❌ Could not discover execution id for provider '$provider'. Dumping executions for debugging:"
                   echo "$EXECS"
-                  exit 1
+                  return 1
                 fi
                 printf '{ "id":"%s", "requirement":"%s" }\n' "$EID" "$requirement" >/tmp/r.json
                 $KCADM update "authentication/flows/$flow/executions" -r "$realm" -f /tmp/r.json || true
