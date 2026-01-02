@@ -493,8 +493,8 @@ spec:
         vault.hashicorp.com/agent-inject-secret-keycloak-admin: "secret/data/keycloak/admin"
         vault.hashicorp.com/agent-inject-template-keycloak-admin: |
           {{- with secret "secret/data/keycloak/admin" -}}
-          export KEYCLOAK_ADMIN='{{ .Data.data.username }}'
-          export KEYCLOAK_ADMIN_PASSWORD='{{ replace .Data.data.password "'" "'\"'\"'" }}'
+          export KEYCLOAK_ADMIN={{ printf "%q" .Data.data.username }}
+          export KEYCLOAK_ADMIN_PASSWORD={{ printf "%q" .Data.data.password }}
           {{- end -}}
 
         # GitHub OAuth + org/team for provider
@@ -652,7 +652,7 @@ spec:
 
               export PGUSER="${PGADMIN_USER}"
               export PGPASSWORD="$(tr -d '\r\n' < /vault/secrets/vaultadmin)"
-              ADMIN_USER="$(sed -n 's/^export KEYCLOAK_ADMIN=//p' /vault/secrets/keycloak-admin 2>/dev/null | tr -d '\r' | tr -d \"'\" | tail -n1)"
+              ADMIN_USER="$(sed -n 's/^export KEYCLOAK_ADMIN=//p' /vault/secrets/keycloak-admin 2>/dev/null | tr -d '\r' | tr -d \"'\\\"\" | tail -n1)"
               ADMIN_USER="${ADMIN_USER:-admin}"
 
               echo "🔎 DNS for ${PGHOST}"; getent hosts "${PGHOST}" || true
