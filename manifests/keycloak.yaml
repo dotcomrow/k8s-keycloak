@@ -1461,7 +1461,6 @@ spec:
                 ls -al "$dir" || true
                 for f in "$dir"/*.json; do
                   [ -f "$f" ] || continue
-                  echo "↳ Applying client config: $f"
                   client_id=$(sed -n "s/.*\"clientId\"[[:space:]]*:[[:space:]]*\"\\([^\"]*\\)\".*/\\1/p" "$f" | head -n1)
                   if [ -z "${client_id:-}" ]; then
                     echo "info: missing clientId in $f"
@@ -1475,6 +1474,7 @@ spec:
                       effective_id="$override_id"
                     fi
                   fi
+                  echo "↳ Applying client config: $f (clientId=$client_id, effectiveId=$effective_id)"
                   json_file="$f"
                   if [ "$effective_id" != "$client_id" ]; then
                     esc_id="$(printf '%s' "$effective_id" | sed 's/[&|]/\\&/g')"
@@ -1505,7 +1505,11 @@ spec:
                       secret="$(awk -F= -v cid="$client_id" '$1==cid { $1=""; sub(/^=/,""); print; exit }' "$CLIENT_SECRET_MAP_FILE")"
                     fi
                     if [ -n "${secret:-}" ]; then
-                      $KCADM update "clients/$CID" -r "$realm" -s "secret=$secret" || true
+                      $KCADM update "clients/$CID" -r "$realm" \
+                        -s publicClient=false \
+                        -s "clientAuthenticatorType=client-secret" \
+                        -s "secret=$secret" || true
+                      echo "🔐 Set client secret for $effective_id"
                     fi
                   fi
                   if [ "$json_file" != "$f" ] && [ -f "$json_file" ]; then
@@ -1535,7 +1539,6 @@ spec:
                 CID="$(clean_id "$CID")"
                 if [ -n "${CID:-}" ]; then
                   $KCADM update "clients/$CID" -r "$realm" \
-                    -s "publicClient=true" \
                     -s "standardFlowEnabled=true" \
                     -s "directAccessGrantsEnabled=false" \
                     -s "implicitFlowEnabled=false" \
