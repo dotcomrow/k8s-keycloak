@@ -564,10 +564,6 @@ spec:
       volumes:
         - name: keycloak-data
           emptyDir: {}
-        - name: keycloak-realm-import
-          configMap:
-            name: keycloak-realm-import
-            optional: true
         - name: keycloak-client-config
           configMap:
             name: keycloak-client-config
@@ -788,6 +784,9 @@ spec:
               PROVIDER_GGL="google-groups-authenticator"
               FLOW_BROWSER_GH="browser-github-only"
               FLOW_BROWSER_GGL="browser-google-only"
+              FIRST_BROKER_FLOW="first-broker-login-autolink"
+              FIRST_BROKER_BASE="first broker login"
+              PROVIDER_IDP_AUTO_LINK="idp-auto-link"
               ADMIN_REALM_FORCE_GITHUB_REDIRECT="${ADMIN_REALM_FORCE_GITHUB_REDIRECT:-false}"
               KCADM="/opt/keycloak/bin/kcadm.sh"
               KCADM_CONFIG="/tmp/kcadm.config"
@@ -984,10 +983,18 @@ spec:
                   | grep -q "\"id\"[[:space:]]*:[[:space:]]*\"$provider\""
               }
               
-              add_exec_required() {
+              flow_has_execution() {
+                local realm="$1"
+                local flow="$2"
+                $KCADM get "authentication/flows/$flow/executions" -r "$realm" 2>/dev/null \
+                  | grep -q "\"id\"[[:space:]]*:[[:space:]]*\""
+              }
+
+              add_exec_with_requirement() {
                 local realm="$1"
                 local flow="$2"
                 local provider="$3"
+                local requirement="$4"
                 local existing_id=""
                 EXECS=$($KCADM get "authentication/flows/$flow/executions" -r "$realm" || echo "[]")
                 existing_id=$(echo "$EXECS" \
@@ -1015,8 +1022,16 @@ spec:
                   echo "$EXECS"
                   exit 1
                 fi
-                printf '{ "id":"%s", "requirement":"REQUIRED" }\n' "$EID" >/tmp/r.json
+                printf '{ "id":"%s", "requirement":"%s" }\n' "$EID" "$requirement" >/tmp/r.json
                 $KCADM update "authentication/flows/$flow/executions" -r "$realm" -f /tmp/r.json || true
+              }
+
+              add_exec_required() {
+                add_exec_with_requirement "$1" "$2" "$3" "REQUIRED"
+              }
+
+              add_exec_alternative() {
+                add_exec_with_requirement "$1" "$2" "$3" "ALTERNATIVE"
               }
               
               ensure_redirect_flow() {
@@ -1071,8 +1086,30 @@ spec:
                   fi
                 else
                   $KCADM create "authentication/executions/${REDIR_ID}/config" -r "$realm" \
-                    -s "alias=redirect-to-${provider}" -s "config.defaultProvider=${provider}" || true
+                  -s "alias=redirect-to-${provider}" -s "config.defaultProvider=${provider}" || true
                 fi
+              }
+
+              ensure_first_broker_flow_autolink() {
+                local realm="$1"
+                local flow="$FIRST_BROKER_FLOW"
+                local base="$FIRST_BROKER_BASE"
+
+                if ! $KCADM get authentication/flows -r "$realm" | grep -q "\"alias\"[[:space:]]*:[[:space:]]*\"$flow\""; then
+                  base_path="$(printf '%s' "$base" | sed 's/ /%20/g')"
+                  if ! $KCADM create "authentication/flows/${base_path}/copy" -r "$realm" -s "newName=${flow}" >/dev/null 2>&1; then
+                    echo "⚠️  Unable to copy base broker flow in ${realm}; leaving default."
+                    return 0
+                  fi
+                fi
+
+                if provider_exists "$realm" "$PROVIDER_IDP_AUTO_LINK"; then
+                  add_exec_alternative "$realm" "$flow" "$PROVIDER_IDP_AUTO_LINK"
+                else
+                  echo "⚠️  Missing provider in ${realm}: ${PROVIDER_IDP_AUTO_LINK} (skipping auto-link)"
+                fi
+
+                $KCADM update "realms/${realm}" -s "firstBrokerLoginFlow=$flow" || true
               }
               
               ensure_github_idp() {
@@ -1085,6 +1122,7 @@ spec:
                   -s "config.clientId=$CLIENT_ID" \
                   -s "config.clientSecret=$CLIENT_SECRET" \
                   -s 'config.defaultScope=read:user user:email read:org' \
+                  -s 'config.trustEmail=true' \
                   -s 'config.guiOrder=1' -s 'config.hideOnLoginPage=false' \
                   -s 'config.syncMode=FORCE' || true
               }
@@ -1103,20 +1141,26 @@ spec:
                   -s "config.clientId=$GOOGLE_CLIENT_ID" \
                   -s "config.clientSecret=$GOOGLE_CLIENT_SECRET" \
                   -s 'config.defaultScope=openid email profile' \
+                  -s 'config.trustEmail=true' \
                   -s 'config.guiOrder=2' -s 'config.hideOnLoginPage=false' \
                   -s 'config.syncMode=FORCE' || true
               }
               
               echo "Configuring admin realm: ${ADMIN_REALM}"
               ensure_github_idp "$ADMIN_REALM"
+              ensure_first_broker_flow_autolink "$ADMIN_REALM"
               ensure_flow "$ADMIN_REALM" "$FLOW_GH" "Post-broker: GitHub team admin"
               if provider_exists "$ADMIN_REALM" "$PROVIDER_GH"; then
                 add_exec_required "$ADMIN_REALM" "$FLOW_GH" "$PROVIDER_GH"
               else
                 echo "⚠️  Missing provider in ${ADMIN_REALM}: ${PROVIDER_GH} (skipping execution)"
               fi
-              $KCADM update identity-provider/instances/github -r "$ADMIN_REALM" \
-                -s "postBrokerLoginFlowAlias=$FLOW_GH" || true
+              if flow_has_execution "$ADMIN_REALM" "$FLOW_GH"; then
+                $KCADM update identity-provider/instances/github -r "$ADMIN_REALM" \
+                  -s "postBrokerLoginFlowAlias=$FLOW_GH" || true
+              else
+                echo "⚠️  GitHub post-broker flow has no executions in ${ADMIN_REALM}; skipping postBrokerLoginFlowAlias."
+              fi
               
               if [ "$ADMIN_REALM_FORCE_GITHUB_REDIRECT" = "true" ]; then
                 ensure_redirect_flow "$ADMIN_REALM" "$FLOW_BROWSER_GH" "github" "Browser flow that redirects to GitHub"
@@ -1134,6 +1178,7 @@ spec:
 
               echo "Configuring app realm: ${REALM}"
               ensure_github_idp "$REALM"
+              ensure_first_broker_flow_autolink "$REALM"
               ensure_flow "$REALM" "$FLOW_GH" "Post-broker: GitHub teams + Google groups"
               if provider_exists "$REALM" "$PROVIDER_GH"; then
                 add_exec_required "$REALM" "$FLOW_GH" "$PROVIDER_GH"
@@ -1145,16 +1190,28 @@ spec:
               else
                 echo "⚠️  Missing provider in ${REALM}: ${PROVIDER_GGL} (skipping execution)"
               fi
-              $KCADM update identity-provider/instances/github -r "$REALM" \
-                -s "postBrokerLoginFlowAlias=$FLOW_GH" || true
+              if flow_has_execution "$REALM" "$FLOW_GH"; then
+                $KCADM update identity-provider/instances/github -r "$REALM" \
+                  -s "postBrokerLoginFlowAlias=$FLOW_GH" || true
+              else
+                echo "⚠️  GitHub post-broker flow has no executions in ${REALM}; skipping postBrokerLoginFlowAlias."
+              fi
               
               GOOGLE_READY="false"
               if ensure_google_idp "$REALM"; then
                 GOOGLE_READY="true"
                 ensure_flow "$REALM" "$FLOW_GGL" "Post-broker: Google groups only"
-                add_exec_required "$REALM" "$FLOW_GGL" "$PROVIDER_GGL"
-                $KCADM update identity-provider/instances/google -r "$REALM" \
-                  -s "postBrokerLoginFlowAlias=$FLOW_GGL" || true
+                if provider_exists "$REALM" "$PROVIDER_GGL"; then
+                  add_exec_required "$REALM" "$FLOW_GGL" "$PROVIDER_GGL"
+                else
+                  echo "⚠️  Missing provider in ${REALM}: ${PROVIDER_GGL} (skipping execution)"
+                fi
+                if flow_has_execution "$REALM" "$FLOW_GGL"; then
+                  $KCADM update identity-provider/instances/google -r "$REALM" \
+                    -s "postBrokerLoginFlowAlias=$FLOW_GGL" || true
+                else
+                  echo "⚠️  Google post-broker flow has no executions in ${REALM}; skipping postBrokerLoginFlowAlias."
+                fi
               else
                 echo "⚠️  Google IdP not configured (missing client id/secret)."
               fi
@@ -1186,7 +1243,7 @@ spec:
               ensure_disabled_direct_grant_flow "$REALM"
               
               # 2) Disable the bootstrap admin user in master (only after configurator client auth is working)
-              if [ "${AUTH_MODE:-}" = "client" ]; then
+              if [ "${DISABLE_BOOTSTRAP_ADMIN:-false}" = "true" ] && [ "${AUTH_MODE:-}" = "client" ]; then
                 ADMIN_ID=$($KCADM get users -r "$ADMIN_REALM" -q username="$KEYCLOAK_ADMIN" \
                   | tr -d "\n" | sed "s/},[[:space:]]*{/}\n{/g" \
                   | sed -n "s/.*\"id\"[[:space:]]*:[[:space:]]*\"\([^\"]*\)\".*/\1/p" | head -n1)
@@ -1443,11 +1500,7 @@ spec:
               fi
 
               echo "▶️  Starting Keycloak (image already built with provider)…"
-              IMPORT_ARGS=""
-              if ls /opt/keycloak/data/import/*.json >/dev/null 2>&1; then
-                IMPORT_ARGS="--import-realm"
-              fi
-              exec /opt/keycloak/bin/kc.sh start --optimized $IMPORT_ARGS
+              exec /opt/keycloak/bin/kc.sh start --optimized
           readinessProbe:
             httpGet:
               path: /health/ready
@@ -1458,9 +1511,6 @@ spec:
           volumeMounts:
             - name: keycloak-data
               mountPath: /opt/keycloak/data
-            - name: keycloak-realm-import
-              mountPath: /opt/keycloak/data/import
-              readOnly: true
             - name: keycloak-client-config
               mountPath: /opt/keycloak/data/clients
               readOnly: true
