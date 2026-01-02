@@ -23,12 +23,15 @@ data:
       "clientId": "openwebui",
       "name": "OpenWebUI",
       "protocol": "openid-connect",
-      "publicClient": false,
+      "publicClient": true,
       "standardFlowEnabled": true,
       "directAccessGrantsEnabled": false,
       "serviceAccountsEnabled": false,
       "redirectUris": ["https://open-webui.teleport.app.suncoast.systems/*"],
-      "webOrigins": ["https://open-webui.teleport.app.suncoast.systems"]
+      "webOrigins": ["https://open-webui.teleport.app.suncoast.systems"],
+      "attributes": {
+        "pkce.code.challenge.method": "S256"
+      }
     }
   public-app.json: |
     {
@@ -997,8 +1000,39 @@ spec:
                   fi
                 done
               }
+
+              disable_direct_grants_for_clients() {
+                local realm="$1"
+                $KCADM get clients -r "$realm" --fields id,clientId,directAccessGrantsEnabled --format csv \
+                  | tail -n +2 | while IFS=, read -r id cid dag; do
+                      [ -z "${id:-}" ] && continue
+                      if [ "$dag" = "true" ] || [ "$dag" = "TRUE" ]; then
+                        echo "🔒 Disabling direct grants for client: $cid"
+                        $KCADM update "clients/$id" -r "$realm" -s directAccessGrantsEnabled=false || true
+                      fi
+                    done
+              }
+
+              enforce_pkce_for_client() {
+                local realm="$1"
+                local clientId="$2"
+                CID=$($KCADM get clients -r "$realm" -q "clientId=$clientId" --fields id --format csv | tail -n1)
+                if [ -n "${CID:-}" ]; then
+                  $KCADM update "clients/$CID" -r "$realm" \
+                    -s "publicClient=true" \
+                    -s "standardFlowEnabled=true" \
+                    -s "directAccessGrantsEnabled=false" \
+                    -s "implicitFlowEnabled=false" \
+                    -s "serviceAccountsEnabled=false" \
+                    -s "attributes.\"pkce.code.challenge.method\"=S256"
+                else
+                  echo "ℹ️  client not found for PKCE enforcement: $clientId"
+                fi
+              }
               
               apply_clients_from_dir "$REALM"
+              disable_direct_grants_for_clients "$REALM"
+              enforce_pkce_for_client "$REALM" "openwebui"
 
               # Sample roles for mapping (edit/remove as needed)
               for role in tier_free tier_pro feature_x openwebui_access; do
