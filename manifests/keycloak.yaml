@@ -857,8 +857,10 @@ spec:
                 SA_ID=$($KCADM get "clients/$CID/service-account-user" -r "$ADMIN_REALM" \
                   | sed -n "s/.*\"id\"[[:space:]]*:[[:space:]]*\"\\([^\"]*\\)\".*/\\1/p" | head -n1)
                 if [ -n "${SA_ID:-}" ]; then
-                  $KCADM add-roles -r "$ADMIN_REALM" --uuserid "$SA_ID" \
-                    --cclientid realm-management --rolename realm-admin || true
+                  for role in realm-admin admin create-realm manage-realm view-realm manage-users manage-clients manage-identity-providers manage-authorization manage-events view-events query-realms query-users query-clients query-groups view-users view-clients view-identity-providers; do
+                    $KCADM add-roles -r "$ADMIN_REALM" --uuserid "$SA_ID" \
+                      --cclientid realm-management --rolename "$role" >/dev/null 2>&1 || true
+                  done
                 fi
               }
 
@@ -889,10 +891,23 @@ spec:
               fi
               echo "✅ Admin API ready (auth: $AUTH_MODE)."
               
-              if ! $KCADM get "realms/${REALM}" >/dev/null 2>&1; then
-                echo "Creating realm: ${REALM}"
-                $KCADM create realms -s "realm=${REALM}" -s enabled=true
-              fi
+              ensure_realm() {
+                local realm="$1"
+                if $KCADM get "realms/${realm}" >/dev/null 2>&1; then
+                  return 0
+                fi
+                echo "Creating realm: ${realm}"
+                if $KCADM create realms -s "realm=${realm}" -s enabled=true >/dev/null 2>&1; then
+                  return 0
+                fi
+                if $KCADM get "realms/${realm}" >/dev/null 2>&1; then
+                  return 0
+                fi
+                echo "❌ Failed to ensure realm: ${realm}"
+                exit 1
+              }
+
+              ensure_realm "${REALM}"
               
               ensure_flow() {
                 local realm="$1"
