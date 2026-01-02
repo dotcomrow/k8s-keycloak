@@ -830,7 +830,7 @@ spec:
               }
 
               ensure_configurator_client() {
-                [ -n "${CONFIG_CLIENT_SECRET:-}" ] || { echo "❌ Missing configurator client secret"; exit 1; }
+                [ -n "${CONFIG_CLIENT_SECRET:-}" ] || { echo "⚠️  Missing configurator client secret (skipping client auth)"; return 1; }
                 CID=$($KCADM get clients -r "$ADMIN_REALM" -q "clientId=$CONFIG_CLIENT_ID" --fields id --format csv 2>/dev/null | tail -n1 || true)
                 CID="$(clean_id "$CID")"
                 if [ -z "${CID:-}" ]; then
@@ -885,24 +885,18 @@ spec:
               done
               if [ -z "${AUTH_MODE:-}" ]; then
                 echo "❌ Unable to authenticate to Keycloak admin API"
-                exit 1
+                fatal "Unable to authenticate to Keycloak admin API"
               fi
               if [ "$AUTH_MODE" = "admin" ]; then
-                ensure_configurator_client
-                if ! login_with_client; then
-                  echo "❌ Unable to authenticate with configurator client"
-                  exit 1
-                fi
-                AUTH_MODE="client"
-                ADMIN_ESCALATED="true"
-              fi
-              echo "✅ Admin API ready (auth: $AUTH_MODE)."
-              # Ensure configurator client has the right roles (best-effort)
-              if login_with_admin; then
                 ADMIN_ESCALATED="true"
                 ensure_configurator_client || true
-                login_with_client >/dev/null 2>&1 || true
+                if [ "${PREFER_CLIENT_AUTH:-false}" = "true" ] && login_with_client; then
+                  AUTH_MODE="client"
+                else
+                  AUTH_MODE="admin"
+                fi
               fi
+              echo "✅ Admin API ready (auth: $AUTH_MODE)."
 
               kcadm_create_realm() {
                 local realm="$1"
@@ -1195,11 +1189,13 @@ spec:
                 $KCADM update "realms/${ADMIN_REALM}" -s "browserFlow=browser" || true
               fi
               
-              # Switch back to client creds for app realm config
-              if login_with_client; then
-                AUTH_MODE="client"
-              else
-                echo "⚠️  Unable to switch back to client creds; continuing with admin."
+              # Prefer admin for app realm config unless explicitly forced to client
+              if [ "${PREFER_CLIENT_AUTH:-false}" = "true" ]; then
+                if login_with_client; then
+                  AUTH_MODE="client"
+                else
+                  echo "⚠️  Unable to switch to client creds; continuing with admin."
+                fi
               fi
 
               echo "Configuring app realm: ${REALM}"
@@ -1348,11 +1344,7 @@ spec:
               
               apply_clients_from_dir "$REALM"
               disable_direct_grants_for_clients "$REALM"
-              disable_direct_grants_for_clients "$ADMIN_REALM"
               enforce_pkce_for_client "$REALM" "openwebui"
-              if [ "${AUTH_MODE:-}" = "client" ]; then
-                ensure_disabled_direct_grant_flow "$ADMIN_REALM"
-              fi
 
               # Sample roles for mapping (edit/remove as needed)
               for role in tier_free tier_pro feature_x openwebui_access; do
