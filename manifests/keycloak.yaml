@@ -307,7 +307,7 @@ spec:
               path "secret/data/keycloak-client-id-*"             { capabilities = ["read"] }
               path "secret/data/k8s-teleport-teleport-github-org" { capabilities = ["read"] }
               path "secret/data/k8s-teleport-teleport-github-admin-team" { capabilities = ["read"] }
-EOF
+              EOF
 
               vault write auth/kubernetes/role/keycloak \
                 bound_service_account_names="keycloak" \
@@ -404,7 +404,7 @@ spec:
               path "secret/data/keycloak-client-id-*"             { capabilities = ["read"] }
               path "secret/data/k8s-teleport-teleport-github-org" { capabilities = ["read"] }
               path "secret/data/k8s-teleport-teleport-github-admin-team" { capabilities = ["read"] }
-EOF
+              EOF
 
               vault write auth/kubernetes/role/keycloak \
                 bound_service_account_names="keycloak" \
