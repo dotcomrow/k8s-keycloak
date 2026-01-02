@@ -652,8 +652,10 @@ spec:
 
               export PGUSER="${PGADMIN_USER}"
               export PGPASSWORD="$(tr -d '\r\n' < /vault/secrets/vaultadmin)"
-              ADMIN_USER="$(sed -n 's/^export KEYCLOAK_ADMIN=//p' /vault/secrets/keycloak-admin 2>/dev/null | tr -d '\r' | tr -d \"'\\\"\" | tail -n1)"
-              ADMIN_USER="${ADMIN_USER:-admin}"
+              if [ -s /vault/secrets/keycloak-admin ]; then
+                . /vault/secrets/keycloak-admin
+              fi
+              ADMIN_USER="${KEYCLOAK_ADMIN:-admin}"
 
               echo "🔎 DNS for ${PGHOST}"; getent hosts "${PGHOST}" || true
               echo "🔎 TCP ${PGHOST}:${PGPORT}"; nc -vz -w 3 "${PGHOST}" "${PGPORT}" || true
