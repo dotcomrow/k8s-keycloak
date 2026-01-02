@@ -941,6 +941,13 @@ spec:
 
               ensure_realm "${REALM}"
               
+              # Use admin creds for master realm config to avoid permission edge cases
+              if login_with_admin; then
+                AUTH_MODE="admin"
+              else
+                echo "⚠️  Unable to login with admin; continuing with client creds for master realm."
+              fi
+
               ensure_flow() {
                 local realm="$1"
                 local flow="$2"
@@ -1064,6 +1071,13 @@ spec:
               ensure_redirect_flow "$ADMIN_REALM" "$FLOW_BROWSER_GH" "github" "Browser flow that redirects to GitHub"
               $KCADM update "realms/${ADMIN_REALM}" -s "browserFlow=${FLOW_BROWSER_GH}"
               
+              # Switch back to client creds for app realm config
+              if login_with_client; then
+                AUTH_MODE="client"
+              else
+                echo "⚠️  Unable to switch back to client creds; continuing with admin."
+              fi
+
               echo "Configuring app realm: ${REALM}"
               ensure_github_idp "$REALM"
               ensure_flow "$REALM" "$FLOW_GH" "Post-broker: GitHub teams + Google groups"
