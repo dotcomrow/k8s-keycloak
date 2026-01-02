@@ -12,6 +12,37 @@ metadata:
   name: keycloak
   namespace: keycloak
 ---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: keycloak-client-config
+  namespace: keycloak
+data:
+  openwebui.json: |
+    {
+      "clientId": "openwebui",
+      "name": "OpenWebUI",
+      "protocol": "openid-connect",
+      "publicClient": false,
+      "standardFlowEnabled": true,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": false,
+      "redirectUris": ["https://open-webui.teleport.app.suncoast.systems/*"],
+      "webOrigins": ["https://open-webui.teleport.app.suncoast.systems"]
+    }
+  public-app.json: |
+    {
+      "clientId": "public-app",
+      "name": "Public App",
+      "protocol": "openid-connect",
+      "publicClient": false,
+      "standardFlowEnabled": true,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": false,
+      "redirectUris": ["https://app.example.com/*"],
+      "webOrigins": ["https://app.example.com"]
+    }
+---
 apiVersion: batch/v1
 kind: Job
 metadata:
@@ -444,6 +475,29 @@ spec:
         vault.hashicorp.com/agent-inject-secret-github-admin-team: "secret/data/k8s-teleport-teleport-github-admin-team"
         vault.hashicorp.com/agent-inject-template-github-admin-team: |
           {{- with secret "secret/data/k8s-teleport-teleport-github-admin-team" -}}{{ .Data.data.value }}{{- end -}}
+        vault.hashicorp.com/agent-inject-secret-github-role-map: "secret/data/keycloak-github-role-map"
+        vault.hashicorp.com/agent-inject-template-github-role-map: |
+          {{- with secret "secret/data/keycloak-github-role-map" -}}{{ .Data.data.value }}{{- end -}}
+
+        # Google OIDC + Groups (Cloud Identity)
+        vault.hashicorp.com/agent-inject-secret-google-client-id: "secret/data/keycloak-google-client-id"
+        vault.hashicorp.com/agent-inject-template-google-client-id: |
+          {{- with secret "secret/data/keycloak-google-client-id" -}}{{ .Data.data.value }}{{- end -}}
+        vault.hashicorp.com/agent-inject-secret-google-client-secret: "secret/data/keycloak-google-client-secret"
+        vault.hashicorp.com/agent-inject-template-google-client-secret: |
+          {{- with secret "secret/data/keycloak-google-client-secret" -}}{{ .Data.data.value }}{{- end -}}
+        vault.hashicorp.com/agent-inject-secret-google-admin-email: "secret/data/keycloak-google-admin-email"
+        vault.hashicorp.com/agent-inject-template-google-admin-email: |
+          {{- with secret "secret/data/keycloak-google-admin-email" -}}{{ .Data.data.value }}{{- end -}}
+        vault.hashicorp.com/agent-inject-secret-google-sa-json: "secret/data/keycloak-google-sa-json"
+        vault.hashicorp.com/agent-inject-template-google-sa-json: |
+          {{- with secret "secret/data/keycloak-google-sa-json" -}}{{ .Data.data.value }}{{- end -}}
+        vault.hashicorp.com/agent-inject-secret-google-groups: "secret/data/keycloak-google-groups"
+        vault.hashicorp.com/agent-inject-template-google-groups: |
+          {{- with secret "secret/data/keycloak-google-groups" -}}{{ .Data.data.value }}{{- end -}}
+        vault.hashicorp.com/agent-inject-secret-google-group-role-map: "secret/data/keycloak-google-group-role-map"
+        vault.hashicorp.com/agent-inject-template-google-group-role-map: |
+          {{- with secret "secret/data/keycloak-google-group-role-map" -}}{{ .Data.data.value }}{{- end -}}
 
         # Linkerd: allow direct Postgres/Vault egress from this pod
         config.linkerd.io/skip-outbound-ports: "8200,5433"
@@ -475,6 +529,14 @@ spec:
       volumes:
         - name: keycloak-data
           emptyDir: {}
+        - name: keycloak-realm-import
+          configMap:
+            name: keycloak-realm-import
+            optional: true
+        - name: keycloak-client-config
+          configMap:
+            name: keycloak-client-config
+            optional: true
 
       initContainers:
         - name: wait-for-config-job
@@ -646,163 +708,344 @@ spec:
               echo "✅ Preflight complete."
 
       containers:
-        # --- One-time configuration sidecar (GitHub IdP + flow + attach provider) ---
+        # --- One-time configuration sidecar (IdPs + flows + attach providers) ---
         - name: keycloak-configurator
           image: ghcr.io/dotcomrow/keycloak-image:24.0.5
           imagePullPolicy: Always
+          env:
+            - name: KEYCLOAK_REALM
+              value: "apps"
           command: ["/bin/bash","-lc"]
           args:
             - |
               set -euo pipefail
-
-              REALM="master"
+              
+              ADMIN_REALM="master"
+              REALM="${KEYCLOAK_REALM:-apps}"
               SERVER="http://127.0.0.1:8080"
-              FLOW="GitHub-PostLogin"
-              PROVIDER_ID="github-team-admin"
-
+              FLOW_GH="GitHub-PostLogin"
+              FLOW_GGL="Google-PostLogin"
+              PROVIDER_GH="github-team-admin"
+              PROVIDER_GGL="google-groups-authenticator"
+              FLOW_BROWSER_GH="browser-github-only"
+              FLOW_BROWSER_GGL="browser-google-only"
+              KCADM="/opt/keycloak/bin/kcadm.sh"
+              
               hold(){ echo "Configurator will stay running for logs…"; tail -f /dev/null; }
               on_err(){ code=$?; echo "Configurator error (exit $code)"; hold; }
               trap on_err ERR
-
+              
               source /vault/secrets/keycloak-admin
               CLIENT_ID="$(cat /vault/secrets/github-client-id)"
               CLIENT_SECRET="$(cat /vault/secrets/github-client-secret)"
               GITHUB_ORG="$(cat /vault/secrets/github-org)"
               GITHUB_TEAM="$(cat /vault/secrets/github-admin-team)"
-
+              GOOGLE_CLIENT_ID="$(cat /vault/secrets/google-client-id 2>/dev/null || true)"
+              GOOGLE_CLIENT_SECRET="$(cat /vault/secrets/google-client-secret 2>/dev/null || true)"
+              GITHUB_ROLE_MAP_JSON="$(cat /vault/secrets/github-role-map 2>/dev/null || true)"
+              GOOGLE_GROUP_ROLE_MAP_JSON="$(cat /vault/secrets/google-group-role-map 2>/dev/null || true)"
+              CLIENT_SECRET_MAP_FILE="/vault/secrets/client-secrets"
+              CLIENT_SECRET_DIR="/vault/secrets"
+              CLIENT_SECRET_PREFIX="client-secret-"
+              CLIENT_CONFIG_DIR="/opt/keycloak/data/clients"
+              
               echo "Waiting for Keycloak admin API..."
               for i in {1..120}; do
-                if /opt/keycloak/bin/kcadm.sh config credentials --server "$SERVER" --realm "$REALM" --user "$KEYCLOAK_ADMIN" --password "$KEYCLOAK_ADMIN_PASSWORD" >/dev/null 2>&1; then
+                if $KCADM config credentials --server "$SERVER" --realm "$ADMIN_REALM" --user "$KEYCLOAK_ADMIN" --password "$KEYCLOAK_ADMIN_PASSWORD" >/dev/null 2>&1; then
                   break
                 fi
                 sleep 2
               done
               echo "✅ Admin API ready."
-
-              # GitHub IdP (OIDC)
-              /opt/keycloak/bin/kcadm.sh get identity-provider/instances/github -r "$REALM" >/dev/null 2>&1 && \
-                /opt/keycloak/bin/kcadm.sh delete identity-provider/instances/github -r "$REALM" || true
-
-              /opt/keycloak/bin/kcadm.sh create identity-provider/instances -r "$REALM" \
-                -s enabled=true -s storeToken=true -s alias=github -s providerId=github \
-                -s "config.clientId=$CLIENT_ID" \
-                -s "config.clientSecret=$CLIENT_SECRET" \
-                -s 'config.defaultScope=read:user user:email read:org' \
-                -s 'config.guiOrder=1' -s 'config.hideOnLoginPage=false' \
-                -s 'config.syncMode=FORCE' || true
-
-              # Flow create/reset
-              if ! /opt/keycloak/bin/kcadm.sh get authentication/flows -r "$REALM" | grep -q "\"alias\"[[:space:]]*:[[:space:]]*\"$FLOW\""; then
-                /opt/keycloak/bin/kcadm.sh create authentication/flows -r "$REALM" \
-                  -s "alias=$FLOW" -s providerId=basic-flow -s topLevel=true -s builtIn=false \
-                  -s 'description=Grant realm-admin to members of a GitHub team'
+              
+              if ! $KCADM get "realms/${REALM}" >/dev/null 2>&1; then
+                echo "Creating realm: ${REALM}"
+                $KCADM create realms -s "realm=${REALM}" -s enabled=true
               fi
-
-              # Purge executions
-              EXECS=$(/opt/keycloak/bin/kcadm.sh get "authentication/flows/$FLOW/executions" -r "$REALM" || echo "[]")
-              IDS=$(echo "$EXECS" | tr -d '\n' | sed 's/},[[:space:]]*{/}\n{/g' | sed -n 's/.*"id"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')
-              if [ -n "$IDS" ]; then
-                while read -r EID; do
-                  [ -n "$EID" ] && /opt/keycloak/bin/kcadm.sh delete "authentication/executions/$EID" -r "$REALM" || true
-                done <<<"$IDS"
-              fi
-
-              # Add our provider and set REQUIRED (with fallback path)
-              /opt/keycloak/bin/kcadm.sh create "authentication/flows/$FLOW/executions/execution" -r "$REALM" -s provider="$PROVIDER_ID"
-
-              EID=""
-              for i in {1..40}; do
-                EXECS=$(/opt/keycloak/bin/kcadm.sh get "authentication/flows/$FLOW/executions" -r "$REALM" || echo "[]")
-                EID=$(echo "$EXECS" \
-                      | tr -d '\n' \
-                      | sed 's/},[[:space:]]*{/}\n{/g' \
-                      | grep -E "\"providerId\"[[:space:]]*:[[:space:]]*\"$PROVIDER_ID\"" \
-                      | sed -n 's/.*"id"[[:space:]]*:[[:space:]]*"\([^"]\+\)".*/\1/p' \
-                      | head -n1)
-                [ -n "$EID" ] && break || sleep 1
-              done
-
-              if [ -z "${EID:-}" ]; then
-                echo "❌ Could not discover execution id for provider '$PROVIDER_ID'. Dumping executions for debugging:"
-                echo "$EXECS"
-                exit 1
-              fi
-
-              ok=""
-              for i in {1..10}; do
-                if /opt/keycloak/bin/kcadm.sh update "authentication/executions/$EID" -r "$REALM" -s 'requirement=REQUIRED'; then
-                  ok="yes"; break
-                else
-                  sleep 1
+              
+              ensure_flow() {
+                local realm="$1"
+                local flow="$2"
+                local desc="$3"
+                if ! $KCADM get authentication/flows -r "$realm" | grep -q "\"alias\"[[:space:]]*:[[:space:]]*\"$flow\""; then
+                  $KCADM create authentication/flows -r "$realm" \
+                    -s "alias=$flow" -s providerId=basic-flow -s topLevel=true -s builtIn=false \
+                    -s "description=$desc"
                 fi
-              done
-
-              if [ -z "$ok" ]; then
-                echo "Falling back to flow-level update…"
-                printf '{ "id":"%s", "requirement":"REQUIRED" }\n' "$EID" >/tmp/r.json
-                /opt/keycloak/bin/kcadm.sh update "authentication/flows/$FLOW/executions" -r "$REALM" -f /tmp/r.json
-              fi
-
-              /opt/keycloak/bin/kcadm.sh update identity-provider/instances/github -r "$REALM" \
-                -s "postBrokerLoginFlowAlias=$FLOW" || true
-
-              # --- GitHub-only Browser flow (forces redirect; hides local username/password form) ---
-              FLOW_BROWSER="browser-github-only"
-
-              if ! /opt/keycloak/bin/kcadm.sh get authentication/flows -r "$REALM" | grep -q "\"alias\"[[:space:]]*:[[:space:]]*\"$FLOW_BROWSER\""; then
-                /opt/keycloak/bin/kcadm.sh create authentication/flows -r "$REALM" \
-                  -s "alias=${FLOW_BROWSER}" -s providerId=basic-flow -s topLevel=true -s builtIn=false \
-                  -s 'description=Browser flow that redirects to GitHub'
-                /opt/keycloak/bin/kcadm.sh create "authentication/flows/${FLOW_BROWSER}/executions/execution" -r "$REALM" \
-                  -s provider=identity-provider-redirector
-              fi
-
-              EXECS=$(/opt/keycloak/bin/kcadm.sh get "authentication/flows/${FLOW_BROWSER}/executions" -r "$REALM")
-              REDIR_ID=$(echo "$EXECS" | tr -d '\n' | sed 's/},[[:space:]]*{/}\n{/g' \
-                        | grep -E '"providerId" *: *"identity-provider-redirector"' \
-                        | sed -n 's/.*"id"[[:space:]]*:[[:space:]]*"\([^"]\+\)".*/\1/p' | head -n1)
-              [ -z "$REDIR_ID" ] && { echo "❌ cannot find redirector execution"; exit 1; }
-
-              if ! /opt/keycloak/bin/kcadm.sh update "authentication/executions/${REDIR_ID}" -r "$REALM" -s requirement=REQUIRED >/dev/null 2>&1; then
-                printf '{ "id":"%s", "requirement":"REQUIRED" }\n' "$REDIR_ID" >/tmp/r2.json
-                /opt/keycloak/bin/kcadm.sh update "authentication/flows/${FLOW_BROWSER}/executions" -r "$REALM" -f /tmp/r2.json
-              fi
-
-              CFG_ID=$(/opt/keycloak/bin/kcadm.sh get "authentication/executions/${REDIR_ID}/config" -r "$REALM" \
-                      | sed -n 's/.*"id"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -n1 || true)
-              if [ -n "${CFG_ID:-}" ]; then
-                /opt/keycloak/bin/kcadm.sh update "authentication/executions/${REDIR_ID}/config/${CFG_ID}" -r "$REALM" \
-                  -s alias=redirect-to-github -s 'config.defaultProvider=github'
+                EXECS=$($KCADM get "authentication/flows/$flow/executions" -r "$realm" || echo "[]")
+                IDS=$(echo "$EXECS" | tr -d "\n" | sed "s/},[[:space:]]*{/}\n{/g" | sed -n "s/.*\"id\"[[:space:]]*:[[:space:]]*\"\([^\"]*\)\".*/\1/p")
+                if [ -n "$IDS" ]; then
+                  while read -r EID; do
+                    [ -n "$EID" ] && $KCADM delete "authentication/executions/$EID" -r "$realm" || true
+                  done <<<"$IDS"
+                fi
+              }
+              
+              add_exec_required() {
+                local realm="$1"
+                local flow="$2"
+                local provider="$3"
+                $KCADM create "authentication/flows/$flow/executions/execution" -r "$realm" -s provider="$provider"
+                EID=""
+                for i in {1..40}; do
+                  EXECS=$($KCADM get "authentication/flows/$flow/executions" -r "$realm" || echo "[]")
+                  EID=$(echo "$EXECS" \
+                        | tr -d "\n" \
+                        | sed "s/},[[:space:]]*{/}\n{/g" \
+                        | grep -E "\"providerId\"[[:space:]]*:[[:space:]]*\"$provider\"" \
+                        | sed -n "s/.*\"id\"[[:space:]]*:[[:space:]]*\"\([^\"]\+\)\".*/\1/p" \
+                        | head -n1)
+                  [ -n "$EID" ] && break || sleep 1
+                done
+                if [ -z "${EID:-}" ]; then
+                  echo "❌ Could not discover execution id for provider '$provider'. Dumping executions for debugging:"
+                  echo "$EXECS"
+                  exit 1
+                fi
+                if ! $KCADM update "authentication/executions/$EID" -r "$realm" -s 'requirement=REQUIRED'; then
+                  printf '{ "id":"%s", "requirement":"REQUIRED" }\n' "$EID" >/tmp/r.json
+                  $KCADM update "authentication/flows/$flow/executions" -r "$realm" -f /tmp/r.json
+                fi
+              }
+              
+              ensure_redirect_flow() {
+                local realm="$1"
+                local flow="$2"
+                local provider="$3"
+                local desc="$4"
+              
+                if ! $KCADM get authentication/flows -r "$realm" | grep -q "\"alias\"[[:space:]]*:[[:space:]]*\"$flow\""; then
+                  $KCADM create authentication/flows -r "$realm" \
+                    -s "alias=${flow}" -s providerId=basic-flow -s topLevel=true -s builtIn=false \
+                    -s "description=$desc"
+                  $KCADM create "authentication/flows/${flow}/executions/execution" -r "$realm" \
+                    -s provider=identity-provider-redirector
+                fi
+              
+                EXECS=$($KCADM get "authentication/flows/${flow}/executions" -r "$realm")
+                REDIR_ID=$(echo "$EXECS" | tr -d "\n" | sed "s/},[[:space:]]*{/}\n{/g" \
+                          | grep -E '"providerId" *: *"identity-provider-redirector"' \
+                          | sed -n "s/.*\"id\"[[:space:]]*:[[:space:]]*\"\([^\"]\+\)\".*/\1/p" | head -n1)
+                [ -z "$REDIR_ID" ] && { echo "❌ cannot find redirector execution for ${flow}"; exit 1; }
+              
+                if ! $KCADM update "authentication/executions/${REDIR_ID}" -r "$realm" -s requirement=REQUIRED >/dev/null 2>&1; then
+                  printf '{ "id":"%s", "requirement":"REQUIRED" }\n' "$REDIR_ID" >/tmp/r2.json
+                  $KCADM update "authentication/flows/${flow}/executions" -r "$realm" -f /tmp/r2.json
+                fi
+              
+                CFG_ID=$($KCADM get "authentication/executions/${REDIR_ID}/config" -r "$realm" \
+                        | sed -n "s/.*\"id\"[[:space:]]*:[[:space:]]*\"\([^\"]*\)\".*/\1/p" | head -n1 || true)
+                if [ -n "${CFG_ID:-}" ]; then
+                  $KCADM update "authentication/executions/${REDIR_ID}/config/${CFG_ID}" -r "$realm" \
+                    -s "alias=redirect-to-${provider}" -s "config.defaultProvider=${provider}"
+                else
+                  $KCADM create "authentication/executions/${REDIR_ID}/config" -r "$realm" \
+                    -s "alias=redirect-to-${provider}" -s "config.defaultProvider=${provider}"
+                fi
+              }
+              
+              ensure_github_idp() {
+                local realm="$1"
+                $KCADM get identity-provider/instances/github -r "$realm" >/dev/null 2>&1 && \
+                  $KCADM delete identity-provider/instances/github -r "$realm" || true
+              
+                $KCADM create identity-provider/instances -r "$realm" \
+                  -s enabled=true -s storeToken=true -s alias=github -s providerId=github \
+                  -s "config.clientId=$CLIENT_ID" \
+                  -s "config.clientSecret=$CLIENT_SECRET" \
+                  -s 'config.defaultScope=read:user user:email read:org' \
+                  -s 'config.guiOrder=1' -s 'config.hideOnLoginPage=false' \
+                  -s 'config.syncMode=FORCE' || true
+              }
+              
+              ensure_google_idp() {
+                local realm="$1"
+                if [ -z "${GOOGLE_CLIENT_ID:-}" ] || [ -z "${GOOGLE_CLIENT_SECRET:-}" ]; then
+                  return 1
+                fi
+              
+                $KCADM get identity-provider/instances/google -r "$realm" >/dev/null 2>&1 && \
+                  $KCADM delete identity-provider/instances/google -r "$realm" || true
+              
+                $KCADM create identity-provider/instances -r "$realm" \
+                  -s enabled=true -s storeToken=false -s alias=google -s providerId=google \
+                  -s "config.clientId=$GOOGLE_CLIENT_ID" \
+                  -s "config.clientSecret=$GOOGLE_CLIENT_SECRET" \
+                  -s 'config.defaultScope=openid email profile' \
+                  -s 'config.guiOrder=2' -s 'config.hideOnLoginPage=false' \
+                  -s 'config.syncMode=FORCE' || true
+              }
+              
+              echo "Configuring admin realm: ${ADMIN_REALM}"
+              ensure_github_idp "$ADMIN_REALM"
+              ensure_flow "$ADMIN_REALM" "$FLOW_GH" "Post-broker: GitHub team admin"
+              add_exec_required "$ADMIN_REALM" "$FLOW_GH" "$PROVIDER_GH"
+              $KCADM update identity-provider/instances/github -r "$ADMIN_REALM" \
+                -s "postBrokerLoginFlowAlias=$FLOW_GH" || true
+              
+              ensure_redirect_flow "$ADMIN_REALM" "$FLOW_BROWSER_GH" "github" "Browser flow that redirects to GitHub"
+              $KCADM update "realms/${ADMIN_REALM}" -s "browserFlow=${FLOW_BROWSER_GH}"
+              
+              echo "Configuring app realm: ${REALM}"
+              ensure_github_idp "$REALM"
+              ensure_flow "$REALM" "$FLOW_GH" "Post-broker: GitHub teams + Google groups"
+              add_exec_required "$REALM" "$FLOW_GH" "$PROVIDER_GH"
+              add_exec_required "$REALM" "$FLOW_GH" "$PROVIDER_GGL"
+              $KCADM update identity-provider/instances/github -r "$REALM" \
+                -s "postBrokerLoginFlowAlias=$FLOW_GH" || true
+              
+              GOOGLE_READY="false"
+              if ensure_google_idp "$REALM"; then
+                GOOGLE_READY="true"
+                ensure_flow "$REALM" "$FLOW_GGL" "Post-broker: Google groups only"
+                add_exec_required "$REALM" "$FLOW_GGL" "$PROVIDER_GGL"
+                $KCADM update identity-provider/instances/google -r "$REALM" \
+                  -s "postBrokerLoginFlowAlias=$FLOW_GGL" || true
               else
-                /opt/keycloak/bin/kcadm.sh create "authentication/executions/${REDIR_ID}/config" -r "$REALM" \
-                  -s alias=redirect-to-github -s 'config.defaultProvider=github'
+                echo "⚠️  Google IdP not configured (missing client id/secret)."
               fi
-
-              /opt/keycloak/bin/kcadm.sh update "realms/${REALM}" -s "browserFlow=${FLOW_BROWSER}"
-
+              
+              ensure_redirect_flow "$REALM" "$FLOW_BROWSER_GH" "github" "Browser flow that redirects to GitHub"
+              if [ "$GOOGLE_READY" = "true" ]; then
+                ensure_redirect_flow "$REALM" "$FLOW_BROWSER_GGL" "google" "Browser flow that redirects to Google"
+              fi
+              
+              if [ "$REALM" != "$ADMIN_REALM" ]; then
+                $KCADM update "realms/${REALM}" -s "browserFlow=browser"
+              fi
+              
               # Realm hygiene (unchanged)
-              /opt/keycloak/bin/kcadm.sh update "realms/$REALM" \
+              $KCADM update "realms/$REALM" \
                 -s sslRequired=EXTERNAL -s loginWithEmailAllowed=true -s registrationAllowed=false \
                 -s rememberMe=true -s resetPasswordAllowed=true -s bruteForceProtected=true -s permanentLockout=false || true
-
+              
               # 1) Disable Direct Access Grants (password grant)
               DG="disabled-direct-grant"
-              if ! /opt/keycloak/bin/kcadm.sh get authentication/flows -r "$REALM" | grep -q "\"alias\" *: *\"$DG\""; then
-                /opt/keycloak/bin/kcadm.sh create authentication/flows -r "$REALM" \
+              if ! $KCADM get authentication/flows -r "$REALM" | grep -q "\"alias\" *: *\"$DG\""; then
+                $KCADM create authentication/flows -r "$REALM" \
                   -s "alias=$DG" -s providerId=basic-flow -s topLevel=true -s builtIn=false
               fi
-              /opt/keycloak/bin/kcadm.sh update "realms/$REALM" -s "directGrantFlow=$DG" || true
-
-              # 2) Disable the bootstrap admin user (safer than delete; not recreated; no password logins)
-              ADMIN_ID=$(/opt/keycloak/bin/kcadm.sh get users -r "$REALM" -q username="$KEYCLOAK_ADMIN" \
-                | tr -d '\n' | sed 's/},[[:space:]]*{/}\n{/g' \
-                | sed -n 's/.*"id"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -n1)
+              $KCADM update "realms/$REALM" -s "directGrantFlow=$DG" || true
+              
+              # 2) Disable the bootstrap admin user in master (safer than delete; not recreated; no password logins)
+              ADMIN_ID=$($KCADM get users -r "$ADMIN_REALM" -q username="$KEYCLOAK_ADMIN" \
+                | tr -d "\n" | sed "s/},[[:space:]]*{/}\n{/g" \
+                | sed -n "s/.*\"id\"[[:space:]]*:[[:space:]]*\"\([^\"]*\)\".*/\1/p" | head -n1)
               if [ -n "$ADMIN_ID" ]; then
-                /opt/keycloak/bin/kcadm.sh update "users/$ADMIN_ID" -r "$REALM" -s enabled=false -s 'credentials=[]' || true
+                $KCADM update "users/$ADMIN_ID" -r "$ADMIN_REALM" -s enabled=false -s 'credentials=[]' || true
+              fi
+              
+              apply_clients_from_dir() {
+                local realm="$1"
+                if [ ! -d "$CLIENT_CONFIG_DIR" ]; then
+                  return 0
+                fi
+                for f in "$CLIENT_CONFIG_DIR"/*.json; do
+                  [ -f "$f" ] || continue
+                  client_id=$(sed -n "s/.*\"clientId\"[[:space:]]*:[[:space:]]*\"\\([^\"]*\\)\".*/\\1/p" "$f" | head -n1)
+                  if [ -z "${client_id:-}" ]; then
+                    echo "info: missing clientId in $f"
+                    continue
+                  fi
+                  CID=$($KCADM get clients -r "$realm" -q "clientId=$client_id" --fields id --format csv | tail -n1)
+                  if [ -n "${CID:-}" ]; then
+                    $KCADM update "clients/$CID" -r "$realm" -f "$f"
+                  else
+                    $KCADM create clients -r "$realm" -f "$f"
+                    CID=$($KCADM get clients -r "$realm" -q "clientId=$client_id" --fields id --format csv | tail -n1)
+                  fi
+                  if [ -n "${CID:-}" ]; then
+                    secret=""
+                    secret_file="${CLIENT_SECRET_DIR}/${CLIENT_SECRET_PREFIX}${client_id}"
+                    if [ -s "$secret_file" ]; then
+                      secret="$(tr -d '\r\n' < "$secret_file")"
+                    elif [ -s "$CLIENT_SECRET_MAP_FILE" ]; then
+                      secret="$(awk -F= -v cid="$client_id" '$1==cid { $1=""; sub(/^=/,""); print; exit }' "$CLIENT_SECRET_MAP_FILE")"
+                    fi
+                    if [ -n "${secret:-}" ]; then
+                      $KCADM update "clients/$CID" -r "$realm" -s "secret=$secret"
+                    fi
+                  fi
+                done
+              }
+              
+              apply_clients_from_dir "$REALM"
+
+              # Sample roles for mapping (edit/remove as needed)
+              for role in tier_free tier_pro feature_x openwebui_access; do
+                $KCADM get "roles/$role" -r "$REALM" >/dev/null 2>&1 || \
+                  $KCADM create roles -r "$REALM" -s "name=$role" || true
+              done
+              
+              ensure_roles_from_map() {
+                local realm="$1"
+                local json="$2"
+                if [ -z "${json:-}" ]; then
+                  return 0
+                fi
+                local specs
+                specs=$(printf '%s' "$json" | tr -d '\n' | grep -o '"\\(realm\\|client\\):[^"]*"' | tr -d '"' || true)
+                if [ -z "${specs:-}" ]; then
+                  return 0
+                fi
+                while read -r spec; do
+                  [ -z "${spec:-}" ] && continue
+                  case "$spec" in
+                    realm:*)
+                      role="${spec#realm:}"
+                      [ -z "${role:-}" ] && continue
+                      $KCADM get "roles/$role" -r "$realm" >/dev/null 2>&1 || \
+                        $KCADM create roles -r "$realm" -s "name=$role" || true
+                      ;;
+                    client:*)
+                      rest="${spec#client:}"
+                      cid="${rest%%:*}"
+                      role="${rest#*:}"
+                      if [ -z "${cid:-}" ] || [ -z "${role:-}" ] || [ "$cid" = "$role" ]; then
+                        continue
+                      fi
+                      CLIENT_UUID=$($KCADM get clients -r "$realm" -q "clientId=$cid" --fields id --format csv | tail -n1)
+                      if [ -n "${CLIENT_UUID:-}" ]; then
+                        $KCADM get "clients/$CLIENT_UUID/roles/$role" -r "$realm" >/dev/null 2>&1 || \
+                          $KCADM create "clients/$CLIENT_UUID/roles" -r "$realm" -s "name=$role" || true
+                      else
+                        echo "info: client not found for role spec: $spec"
+                      fi
+                      ;;
+                  esac
+                done <<<"$specs"
+              }
+              
+              ensure_roles_from_map "$REALM" "$GITHUB_ROLE_MAP_JSON"
+              ensure_roles_from_map "$REALM" "$GOOGLE_GROUP_ROLE_MAP_JSON"
+
+              set_client_flow_override() {
+                local realm="$1"
+                local clientId="$2"
+                local flow="$3"
+                CID=$($KCADM get clients -r "$realm" -q "clientId=$clientId" --fields id --format csv | tail -n1)
+                if [ -n "${CID:-}" ]; then
+                  $KCADM update "clients/$CID" -r "$realm" \
+                    -s "authenticationFlowBindingOverrides={\"browser\":\"$flow\"}"
+                else
+                  echo "ℹ️  client not found: $clientId (skipping override)"
+                fi
+              }
+              
+              # Enforce GitHub-only for internal apps
+              set_client_flow_override "$REALM" "openwebui" "$FLOW_BROWSER_GH"
+              
+              # Enforce Google-only for external apps (example clientId)
+              if [ "$GOOGLE_READY" = "true" ]; then
+                set_client_flow_override "$REALM" "public-app" "$FLOW_BROWSER_GGL"
               fi
 
               echo "✔ Configurator finished. Holding for logs."
               hold
+          volumeMounts:
+            - name: keycloak-client-config
+              mountPath: /opt/keycloak/data/clients
+              readOnly: true
 
         # --- Keycloak runtime ---
         - name: keycloak
@@ -812,6 +1055,8 @@ spec:
             - containerPort: 8080
               name: http
           env:
+            - name: KEYCLOAK_REALM
+              value: "apps"
             # DB
             - name: KC_DB
               value: "postgres"
@@ -869,9 +1114,35 @@ spec:
               # Export org/team for the custom provider
               export GITHUB_ORG="$(cat /vault/secrets/github-org)"
               export GITHUB_TEAM="$(cat /vault/secrets/github-admin-team)"
+              if [ -s /vault/secrets/github-role-map ]; then
+                export GITHUB_ROLE_MAP="$(cat /vault/secrets/github-role-map)"
+              else
+                export GITHUB_ROLE_MAP='{"myorg/openwebui":["realm:openwebui_access"]}'
+              fi
+
+              # Google Groups auth (Cloud Identity)
+              export GOOGLE_ADMIN_EMAIL="$(cat /vault/secrets/google-admin-email)"
+              export GOOGLE_SA_JSON_PATH="/vault/secrets/google-sa-json"
+              export GOOGLE_GROUPS="$(cat /vault/secrets/google-groups 2>/dev/null || true)"
+              export GOOGLE_GROUP_ROLE_MAP="$(cat /vault/secrets/google-group-role-map 2>/dev/null || true)"
+              export GOOGLE_ROLE_PREFIX="ggl:"
+              export GOOGLE_AUTO_ROLES="true"
+              export GOOGLE_STRICT_REVOKE="true"
+              export GOOGLE_GROUPS_TTL_SECONDS="600"
+
+              if [ -z "${GOOGLE_GROUPS:-}" ]; then
+                export GOOGLE_GROUPS="tier-free@yourdomain.com,tier-pro@yourdomain.com,feature-x@yourdomain.com"
+              fi
+              if [ -z "${GOOGLE_GROUP_ROLE_MAP:-}" ]; then
+                export GOOGLE_GROUP_ROLE_MAP='{"tier-pro@yourdomain.com":["realm:tier_pro"],"feature-x@yourdomain.com":["realm:feature_x"]}'
+              fi
 
               echo "▶️  Starting Keycloak (image already built with provider)…"
-              exec /opt/keycloak/bin/kc.sh start --optimized
+              IMPORT_ARGS=""
+              if ls /opt/keycloak/data/import/*.json >/dev/null 2>&1; then
+                IMPORT_ARGS="--import-realm"
+              fi
+              exec /opt/keycloak/bin/kc.sh start --optimized $IMPORT_ARGS
           readinessProbe:
             httpGet:
               path: /health/ready
@@ -882,3 +1153,9 @@ spec:
           volumeMounts:
             - name: keycloak-data
               mountPath: /opt/keycloak/data
+            - name: keycloak-realm-import
+              mountPath: /opt/keycloak/data/import
+              readOnly: true
+            - name: keycloak-client-config
+              mountPath: /opt/keycloak/data/clients
+              readOnly: true
