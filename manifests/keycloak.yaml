@@ -983,15 +983,30 @@ spec:
               provider_exists() {
                 local realm="$1"
                 local provider="$2"
-                $KCADM get authentication/execution-providers -r "$realm" 2>/dev/null \
-                  | grep -q "\"id\"[[:space:]]*:[[:space:]]*\"$provider\""
+                local out=""
+                out=$($KCADM get authentication/execution-providers -r "$realm" --fields id --format csv 2>/dev/null || true)
+                if [ -z "${out:-}" ]; then
+                  return 1
+                fi
+                printf '%s\n' "$out" | tail -n +2 | tr -d '"' | tr -d '\r' | grep -xq "$provider"
               }
-              
+
               flow_has_execution() {
                 local realm="$1"
                 local flow="$2"
                 $KCADM get "authentication/flows/$flow/executions" -r "$realm" 2>/dev/null \
                   | grep -q "\"id\"[[:space:]]*:[[:space:]]*\""
+              }
+
+              flow_alias_exists() {
+                local realm="$1"
+                local alias="$2"
+                local out=""
+                out=$($KCADM get authentication/flows -r "$realm" --fields alias --format csv 2>/dev/null || true)
+                if [ -z "${out:-}" ]; then
+                  return 1
+                fi
+                printf '%s\n' "$out" | tail -n +2 | tr -d '"' | tr -d '\r' | grep -xq "$alias"
               }
 
               add_exec_with_requirement() {
@@ -1410,20 +1425,14 @@ spec:
                     | tr -d "\n" \
                     | sed -n "s/.*\"authenticationFlowBindingOverrides\"[[:space:]]*:[[:space:]]*{[^}]*\"browser\"[[:space:]]*:[[:space:]]*\"\\([^\"]*\\)\".*/\\1/p" \
                     | head -n1 || true)
-                  if [ -n "${override:-}" ] && ! $KCADM get "authentication/flows/${override}" -r "$realm" >/dev/null 2>&1; then
+                  if [ -n "${override:-}" ] && ! flow_alias_exists "$realm" "$override"; then
                     $KCADM update "clients/$CID" -r "$realm" -s "authenticationFlowBindingOverrides={}" >/dev/null 2>&1 || true
                     echo "ℹ️  cleared invalid browser flow override '$override' for $clientId"
                   fi
-                  if ! $KCADM get authentication/flows -r "$realm" | grep -q "\"alias\"[[:space:]]*:[[:space:]]*\"$flow\""; then
+                  if ! flow_alias_exists "$realm" "$flow"; then
                     echo "ℹ️  flow not found: $flow (skipping override for $clientId)"
                     return 0
                   fi
-                  for i in {1..10}; do
-                    if $KCADM get "authentication/flows/$flow" -r "$realm" >/dev/null 2>&1; then
-                      break
-                    fi
-                    sleep 1
-                  done
                   if ! $KCADM update "clients/$CID" -r "$realm" \
                     -s "authenticationFlowBindingOverrides.browser=$flow" >/dev/null 2>&1; then
                     echo "⚠️  Unable to set browser flow override ($flow) for client $clientId; skipping."
