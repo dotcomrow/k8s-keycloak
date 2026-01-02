@@ -869,6 +869,14 @@ spec:
               CLIENT_ID_DIR="/vault/secrets"
               CLIENT_CONFIG_DIR_INTERNAL="/opt/keycloak/data/clients/internal"
               CLIENT_CONFIG_DIR_EXTERNAL="/opt/keycloak/data/clients/external"
+              OPENWEBUI_CLIENT_ID="openwebui"
+              PUBLIC_APP_CLIENT_ID="public-app"
+              if [ -s "${CLIENT_ID_DIR}/client-id-openwebui" ]; then
+                OPENWEBUI_CLIENT_ID="$(tr -d '\r\n' < "${CLIENT_ID_DIR}/client-id-openwebui")"
+              fi
+              if [ -s "${CLIENT_ID_DIR}/client-id-public-app" ]; then
+                PUBLIC_APP_CLIENT_ID="$(tr -d '\r\n' < "${CLIENT_ID_DIR}/client-id-public-app")"
+              fi
               
               login_with_client() {
                 [ -n "${CONFIG_CLIENT_SECRET:-}" ] || return 1
@@ -1540,8 +1548,8 @@ spec:
               
               apply_clients_from_dir "$INTERNAL_REALM" "$CLIENT_CONFIG_DIR_INTERNAL"
               disable_direct_grants_for_clients "$INTERNAL_REALM"
-              enforce_pkce_for_client "$INTERNAL_REALM" "openwebui"
-              if ! $KCADM get clients -r "$INTERNAL_REALM" -q "clientId=openwebui" --fields id --format csv 2>/dev/null | tail -n1 | grep -q .; then
+              enforce_pkce_for_client "$INTERNAL_REALM" "$OPENWEBUI_CLIENT_ID"
+              if ! $KCADM get clients -r "$INTERNAL_REALM" -q "clientId=$OPENWEBUI_CLIENT_ID" --fields id --format csv 2>/dev/null | tail -n1 | grep -q .; then
                 echo "⚠️  openwebui client not present in internal realm (${INTERNAL_REALM})"
               fi
 
@@ -1639,12 +1647,12 @@ spec:
               
               # Enforce GitHub-only for internal apps
               if [ "$INTERNAL_GITHUB_ENABLED" = "true" ]; then
-                set_client_flow_override "$INTERNAL_REALM" "openwebui" "$FLOW_BROWSER_GH"
+                set_client_flow_override "$INTERNAL_REALM" "$OPENWEBUI_CLIENT_ID" "$FLOW_BROWSER_GH"
               fi
               
               # Enforce Google-only for external apps (example clientId)
               if [ "$EXTERNAL_GOOGLE_READY" = "true" ]; then
-                set_client_flow_override "$EXTERNAL_REALM" "public-app" "$FLOW_BROWSER_GGL"
+                set_client_flow_override "$EXTERNAL_REALM" "$PUBLIC_APP_CLIENT_ID" "$FLOW_BROWSER_GGL"
               fi
 
               if [ "$CONFIGURATOR_DELETE_CLIENT" = "true" ]; then
