@@ -976,6 +976,13 @@ spec:
                     -s "description=$desc"
                 fi
               }
+
+              provider_exists() {
+                local realm="$1"
+                local provider="$2"
+                $KCADM get authentication/execution-providers -r "$realm" 2>/dev/null \
+                  | grep -q "\"id\"[[:space:]]*:[[:space:]]*\"$provider\""
+              }
               
               add_exec_required() {
                 local realm="$1"
@@ -1103,7 +1110,11 @@ spec:
               echo "Configuring admin realm: ${ADMIN_REALM}"
               ensure_github_idp "$ADMIN_REALM"
               ensure_flow "$ADMIN_REALM" "$FLOW_GH" "Post-broker: GitHub team admin"
-              add_exec_required "$ADMIN_REALM" "$FLOW_GH" "$PROVIDER_GH"
+              if provider_exists "$ADMIN_REALM" "$PROVIDER_GH"; then
+                add_exec_required "$ADMIN_REALM" "$FLOW_GH" "$PROVIDER_GH"
+              else
+                echo "⚠️  Missing provider in ${ADMIN_REALM}: ${PROVIDER_GH} (skipping execution)"
+              fi
               $KCADM update identity-provider/instances/github -r "$ADMIN_REALM" \
                 -s "postBrokerLoginFlowAlias=$FLOW_GH" || true
               
@@ -1124,8 +1135,16 @@ spec:
               echo "Configuring app realm: ${REALM}"
               ensure_github_idp "$REALM"
               ensure_flow "$REALM" "$FLOW_GH" "Post-broker: GitHub teams + Google groups"
-              add_exec_required "$REALM" "$FLOW_GH" "$PROVIDER_GH"
-              add_exec_required "$REALM" "$FLOW_GH" "$PROVIDER_GGL"
+              if provider_exists "$REALM" "$PROVIDER_GH"; then
+                add_exec_required "$REALM" "$FLOW_GH" "$PROVIDER_GH"
+              else
+                echo "⚠️  Missing provider in ${REALM}: ${PROVIDER_GH} (skipping execution)"
+              fi
+              if provider_exists "$REALM" "$PROVIDER_GGL"; then
+                add_exec_required "$REALM" "$FLOW_GH" "$PROVIDER_GGL"
+              else
+                echo "⚠️  Missing provider in ${REALM}: ${PROVIDER_GGL} (skipping execution)"
+              fi
               $KCADM update identity-provider/instances/github -r "$REALM" \
                 -s "postBrokerLoginFlowAlias=$FLOW_GH" || true
               
@@ -1366,7 +1385,7 @@ spec:
             - name: KC_LOG_FILE
               value: "/opt/keycloak/data/log/keycloak.log"
             - name: KC_LOG_LEVEL
-              value: "INFO,com.example.kc.github:DEBUG,org.keycloak.authentication:DEBUG,org.keycloak.events:INFO"
+              value: "INFO,systems.suncoast.kc.github:DEBUG,systems.suncoast.kc.google:DEBUG,org.keycloak.authentication:DEBUG,org.keycloak.events:INFO"
             - name: KC_PROXY
               value: "edge" 
 
@@ -1403,6 +1422,8 @@ spec:
               # Export org/team for the custom provider
               export GITHUB_ORG="$(cat /vault/secrets/github-org)"
               export GITHUB_TEAM="$(cat /vault/secrets/github-admin-team)"
+              export DEBUG_ALWAYS_GRANT="${DEBUG_ALWAYS_GRANT:-false}"
+              export GITHUB_ADMIN_USERNAMES="${GITHUB_ADMIN_USERNAMES:-}"
               if [ -s /vault/secrets/github-role-map ]; then
                 export GITHUB_ROLE_MAP="$(cat /vault/secrets/github-role-map)"
               else
