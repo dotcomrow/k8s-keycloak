@@ -75,13 +75,19 @@ metadata:
   name: keycloak-yugabyte-config
   namespace: vault
   annotations:
-    argocd.argoproj.io/sync-options: Replace=true
+    argocd.argoproj.io/sync-options: Replace=true,Force=true
 spec:
+  selector:
+    matchLabels:
+      job-name: keycloak-yugabyte-config
   backoffLimit: 0
   template:
     metadata:
       annotations:
         linkerd.io/inject: "disabled"
+      labels:
+        job-name: keycloak-yugabyte-config
+        app: keycloak-bootstrap
     spec:
       restartPolicy: Never
       serviceAccountName: default
@@ -327,13 +333,19 @@ metadata:
   name: keycloak-vault-k8s-role
   namespace: vault
   annotations:
-    argocd.argoproj.io/sync-options: Replace=true
+    argocd.argoproj.io/sync-options: Replace=true,Force=true
 spec:
+  selector:
+    matchLabels:
+      job-name: keycloak-vault-k8s-role
   backoffLimit: 0
   template:
     metadata:
       annotations:
         linkerd.io/inject: "disabled"
+      labels:
+        job-name: keycloak-vault-k8s-role
+        app: keycloak-bootstrap
     spec:
       restartPolicy: Never
       serviceAccountName: default
