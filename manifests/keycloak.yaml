@@ -1021,14 +1021,14 @@ spec:
                     out=""
                   fi
                   if [ -n "${out:-}" ]; then
-                    out="$(printf '%s\n' "$out" | tail -n +2 | tr -d '\r' | tr ',' '\n' | tr -d '"' | sed '/^$/d' | sort -u)"
+                    out="$(printf '%s\n' "$out" | sed '1d' | tr -d '\r' | tr ',' '\n' | tr -d '"' | sed '/^$/d' || true)"
                   fi
                   if [ -z "${out:-}" ]; then
                     out="$($KCADM get authentication/execution-providers -r "$ADMIN_REALM" 2>/dev/null || true)"
                     if ! printf '%s' "$out" | grep -q '^[[:space:]]*\[\|^[[:space:]]*{' ; then
                       out=""
                     fi
-                    out="$(printf '%s\n' "$out" | tr -d '\r' | sed -n 's/.*"\(id\|providerId\)"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\2/p' | sed '/^$/d' | sort -u)"
+                    out="$(printf '%s\n' "$out" | tr -d '\r' | sed -n 's/.*"\(id\|providerId\)"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\2/p' | sed '/^$/d' || true)"
                   fi
                   if [ -n "${out:-}" ]; then
                     break
