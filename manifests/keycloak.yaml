@@ -1126,7 +1126,7 @@ spec:
                   fi
                 fi
 
-                if provider_exists "$realm" "$PROVIDER_IDP_AUTO_LINK"; then
+                if provider_exists "$PROVIDER_IDP_AUTO_LINK"; then
                   add_exec_alternative "$realm" "$flow" "$PROVIDER_IDP_AUTO_LINK"
                 else
                   echo "⚠️  Missing provider in ${realm}: ${PROVIDER_IDP_AUTO_LINK} (skipping auto-link)"
