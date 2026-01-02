@@ -765,7 +765,7 @@ spec:
       containers:
         # --- One-time configuration sidecar (IdPs + flows + attach providers) ---
         - name: keycloak-configurator
-          image: ghcr.io/dotcomrow/keycloak-image:b871ed8003562147ec20aa898e20b9b67466ed7c564222256ec44b333b213115
+          image: ghcr.io/dotcomrow/keycloak-image:sha-8aac993
           imagePullPolicy: Always
           env:
             - name: KEYCLOAK_REALM
@@ -1398,17 +1398,26 @@ spec:
                 local realm="$1"
                 local clientId="$2"
                 local flow="$3"
+                local override=""
                 if [ -z "${flow:-}" ]; then
                   echo "ℹ️  flow not set (skipping override for $clientId)"
-                  return 0
-                fi
-                if ! $KCADM get authentication/flows -r "$realm" | grep -q "\"alias\"[[:space:]]*:[[:space:]]*\"$flow\""; then
-                  echo "ℹ️  flow not found: $flow (skipping override for $clientId)"
                   return 0
                 fi
                 CID=$($KCADM get clients -r "$realm" -q "clientId=$clientId" --fields id --format csv 2>/dev/null | tail -n1 || true)
                 CID="$(clean_id "$CID")"
                 if [ -n "${CID:-}" ]; then
+                  override=$($KCADM get "clients/$CID" -r "$realm" 2>/dev/null \
+                    | tr -d "\n" \
+                    | sed -n "s/.*\"authenticationFlowBindingOverrides\"[[:space:]]*:[[:space:]]*{[^}]*\"browser\"[[:space:]]*:[[:space:]]*\"\\([^\"]*\\)\".*/\\1/p" \
+                    | head -n1 || true)
+                  if [ -n "${override:-}" ] && ! $KCADM get "authentication/flows/${override}" -r "$realm" >/dev/null 2>&1; then
+                    $KCADM update "clients/$CID" -r "$realm" -s "authenticationFlowBindingOverrides={}" >/dev/null 2>&1 || true
+                    echo "ℹ️  cleared invalid browser flow override '$override' for $clientId"
+                  fi
+                  if ! $KCADM get authentication/flows -r "$realm" | grep -q "\"alias\"[[:space:]]*:[[:space:]]*\"$flow\""; then
+                    echo "ℹ️  flow not found: $flow (skipping override for $clientId)"
+                    return 0
+                  fi
                   for i in {1..10}; do
                     if $KCADM get "authentication/flows/$flow" -r "$realm" >/dev/null 2>&1; then
                       break
