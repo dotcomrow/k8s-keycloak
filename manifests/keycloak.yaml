@@ -1672,13 +1672,12 @@ spec:
 
               # Sample roles for mapping (edit/remove as needed)
               if [ -n "${INTERNAL_REALM_ROLES_RAW:-}" ]; then
-                echo "$INTERNAL_REALM_ROLES_RAW" \
-                  | tr ',\n' ' ' \
-                  | while read -r role; do
-                      [ -z "${role:-}" ] && continue
-                      $KCADM get "roles/$role" -r "$INTERNAL_REALM" >/dev/null 2>&1 || \
-                        $KCADM create roles -r "$INTERNAL_REALM" -s "name=$role" || true
-                    done
+                roles_list="$(echo "$INTERNAL_REALM_ROLES_RAW" | tr ',\n' ' ')"
+                for role in $roles_list; do
+                  [ -z "${role:-}" ] && continue
+                  $KCADM get "roles/$role" -r "$INTERNAL_REALM" >/dev/null 2>&1 || \
+                    $KCADM create roles -r "$INTERNAL_REALM" -s "name=$role" || true
+                done
               else
                 for role in openwebui_access ollama_access ollama_service_access; do
                   $KCADM get "roles/$role" -r "$INTERNAL_REALM" >/dev/null 2>&1 || \
