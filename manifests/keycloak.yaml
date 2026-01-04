@@ -34,6 +34,25 @@ data:
         "pkce.code.challenge.method": "S256"
       }
     }
+  ollama-service.json: |
+    {
+      "clientId": "ollama-service",
+      "name": "Ollama Service",
+      "protocol": "openid-connect",
+      "publicClient": false,
+      "clientAuthenticatorType": "client-secret",
+      "standardFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": true
+    }
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: keycloak-role-config-internal
+  namespace: keycloak
+data:
+  internal-realm-roles: "openwebui_access,ollama_access,ollama_service_access"
 ---
 apiVersion: v1
 kind: ConfigMap
@@ -545,12 +564,24 @@ spec:
         vault.hashicorp.com/agent-inject-secret-keycloak-configurator-client-secret: "secret/data/keycloak-configurator-client-secret"
         vault.hashicorp.com/agent-inject-template-keycloak-configurator-client-secret: |
           {{- with secret "secret/data/keycloak-configurator-client-secret" -}}{{ .Data.data.value }}{{- end -}}
+        vault.hashicorp.com/agent-inject-secret-client-id-gravitee-introspection: "secret/data/keycloak-client-id-gravitee-introspection"
+        vault.hashicorp.com/agent-inject-template-client-id-gravitee-introspection: |
+          {{- with secret "secret/data/keycloak-client-id-gravitee-introspection" -}}{{ .Data.data.value }}{{- end -}}
+        vault.hashicorp.com/agent-inject-secret-client-secret-gravitee-introspection: "secret/data/keycloak-client-secret-gravitee-introspection"
+        vault.hashicorp.com/agent-inject-template-client-secret-gravitee-introspection: |
+          {{- with secret "secret/data/keycloak-client-secret-gravitee-introspection" -}}{{ .Data.data.value }}{{- end -}}
         vault.hashicorp.com/agent-inject-secret-client-id-openwebui: "secret/data/keycloak-client-id-openwebui"
         vault.hashicorp.com/agent-inject-template-client-id-openwebui: |
           {{- with secret "secret/data/keycloak-client-id-openwebui" -}}{{ .Data.data.value }}{{- end -}}
         vault.hashicorp.com/agent-inject-secret-client-secret-openwebui: "secret/data/keycloak-client-secret-openwebui"
         vault.hashicorp.com/agent-inject-template-client-secret-openwebui: |
           {{- with secret "secret/data/keycloak-client-secret-openwebui" -}}{{ .Data.data.value }}{{- end -}}
+        vault.hashicorp.com/agent-inject-secret-client-id-ollama-service: "secret/data/keycloak-client-id-ollama-service"
+        vault.hashicorp.com/agent-inject-template-client-id-ollama-service: |
+          {{- with secret "secret/data/keycloak-client-id-ollama-service" -}}{{ .Data.data.value }}{{- end -}}
+        vault.hashicorp.com/agent-inject-secret-client-secret-ollama-service: "secret/data/keycloak-client-secret-ollama-service"
+        vault.hashicorp.com/agent-inject-template-client-secret-ollama-service: |
+          {{- with secret "secret/data/keycloak-client-secret-ollama-service" -}}{{ .Data.data.value }}{{- end -}}
 
         # Linkerd: allow direct Postgres/Vault egress from this pod
         config.linkerd.io/skip-outbound-ports: "8200,5433"
@@ -797,6 +828,11 @@ spec:
               value: "master"
             - name: KEYCLOAK_EXTERNAL_REALM
               value: "apps"
+            - name: KEYCLOAK_INTERNAL_REALM_ROLES
+              valueFrom:
+                configMapKeyRef:
+                  name: keycloak-role-config-internal
+                  key: internal-realm-roles
             - name: APPS_GITHUB_ENABLED
               value: "true"
             - name: EXTERNAL_GITHUB_ENABLED
@@ -860,6 +896,7 @@ spec:
               GOOGLE_CLIENT_SECRET="$(cat /vault/secrets/google-client-secret 2>/dev/null || true)"
               GITHUB_ROLE_MAP_JSON="$(cat /vault/secrets/github-role-map 2>/dev/null || true)"
               GOOGLE_GROUP_ROLE_MAP_JSON="$(cat /vault/secrets/google-group-role-map 2>/dev/null || true)"
+              INTERNAL_REALM_ROLES_RAW="${KEYCLOAK_INTERNAL_REALM_ROLES:-}"
               CONFIG_CLIENT_ID="keycloak-configurator"
               CONFIG_CLIENT_SECRET="$(cat /vault/secrets/keycloak-configurator-client-secret 2>/dev/null || true)"
               CONFIGURATOR_DELETE_CLIENT="${CONFIGURATOR_DELETE_CLIENT:-false}"
@@ -871,12 +908,21 @@ spec:
               CLIENT_CONFIG_DIR_EXTERNAL="/opt/keycloak/data/clients/external"
               EXTERNAL_DISABLE_LOCAL_LOGIN="${EXTERNAL_DISABLE_LOCAL_LOGIN:-true}"
               OPENWEBUI_CLIENT_ID="openwebui"
+              OLLAMA_SERVICE_CLIENT_ID="ollama-service"
               PUBLIC_APP_CLIENT_ID="public-app"
+              GRAVITEE_INTROSPECT_CLIENT_ID="gravitee-introspection"
+              GRAVITEE_INTROSPECT_CLIENT_SECRET="$(cat /vault/secrets/client-secret-gravitee-introspection 2>/dev/null || true)"
               if [ -s "${CLIENT_ID_DIR}/client-id-openwebui" ]; then
                 OPENWEBUI_CLIENT_ID="$(tr -d '\r\n' < "${CLIENT_ID_DIR}/client-id-openwebui")"
               fi
+              if [ -s "${CLIENT_ID_DIR}/client-id-ollama-service" ]; then
+                OLLAMA_SERVICE_CLIENT_ID="$(tr -d '\r\n' < "${CLIENT_ID_DIR}/client-id-ollama-service")"
+              fi
               if [ -s "${CLIENT_ID_DIR}/client-id-public-app" ]; then
                 PUBLIC_APP_CLIENT_ID="$(tr -d '\r\n' < "${CLIENT_ID_DIR}/client-id-public-app")"
+              fi
+              if [ -s "${CLIENT_ID_DIR}/client-id-gravitee-introspection" ]; then
+                GRAVITEE_INTROSPECT_CLIENT_ID="$(tr -d '\r\n' < "${CLIENT_ID_DIR}/client-id-gravitee-introspection")"
               fi
               
               login_with_client() {
@@ -938,6 +984,40 @@ spec:
                     $KCADM add-roles -r "$ADMIN_REALM" --uuserid "$SA_ID" \
                       --cclientid realm-management --rolename "$role" >/dev/null 2>&1 || true
                   done
+                fi
+              }
+
+              ensure_confidential_service_client() {
+                local realm="$1"
+                local client_id="$2"
+                local client_secret="$3"
+                if [ -z "${client_id:-}" ] || [ -z "${client_secret:-}" ]; then
+                  return 0
+                fi
+                local cid
+                cid=$($KCADM get clients -r "$realm" -q "clientId=$client_id" --fields id --format csv 2>/dev/null | tail -n1 || true)
+                cid="$(clean_id "$cid")"
+                if [ -z "${cid:-}" ]; then
+                  $KCADM create clients -r "$realm" \
+                    -s "clientId=$client_id" \
+                    -s enabled=true \
+                    -s serviceAccountsEnabled=true \
+                    -s publicClient=false \
+                    -s standardFlowEnabled=false \
+                    -s implicitFlowEnabled=false \
+                    -s directAccessGrantsEnabled=false \
+                    -s "clientAuthenticatorType=client-secret" \
+                    -s "secret=$client_secret" >/dev/null 2>&1 || true
+                else
+                  $KCADM update "clients/$cid" -r "$realm" \
+                    -s enabled=true \
+                    -s serviceAccountsEnabled=true \
+                    -s publicClient=false \
+                    -s standardFlowEnabled=false \
+                    -s implicitFlowEnabled=false \
+                    -s directAccessGrantsEnabled=false \
+                    -s "clientAuthenticatorType=client-secret" \
+                    -s "secret=$client_secret" >/dev/null 2>&1 || true
                 fi
               }
 
@@ -1047,6 +1127,8 @@ spec:
               else
                 echo "⚠️  Unable to login with admin; continuing with client creds for master realm."
               fi
+
+              ensure_confidential_service_client "$INTERNAL_REALM" "$GRAVITEE_INTROSPECT_CLIENT_ID" "$GRAVITEE_INTROSPECT_CLIENT_SECRET"
 
               ensure_flow() {
                 local realm="$1"
@@ -1553,10 +1635,34 @@ spec:
                   echo "ℹ️  client not found for PKCE enforcement: $clientId"
                 fi
               }
+
+              ensure_realm_roles_in_scope_mapper() {
+                local realm="$1"
+                local clientId="$2"
+                local mapper_name="realm-roles-as-scope"
+                CID=$($KCADM get clients -r "$realm" -q "clientId=$clientId" --fields id --format csv 2>/dev/null | tail -n1 || true)
+                CID="$(clean_id "$CID")"
+                [ -z "${CID:-}" ] && return 0
+                if $KCADM get "clients/$CID/protocol-mappers/models" -r "$realm" 2>/dev/null \
+                  | grep -q "\"name\"[[:space:]]*:[[:space:]]*\"${mapper_name}\""; then
+                  return 0
+                fi
+                $KCADM create "clients/$CID/protocol-mappers/models" -r "$realm" \
+                  -s "name=${mapper_name}" \
+                  -s "protocol=openid-connect" \
+                  -s "protocolMapper=oidc-usermodel-realm-role-mapper" \
+                  -s "config.\"claim.name\"=scope" \
+                  -s "config.\"jsonType.label\"=String" \
+                  -s "config.\"access.token.claim\"=true" \
+                  -s "config.\"id.token.claim\"=false" \
+                  -s "config.\"userinfo.token.claim\"=false" \
+                  -s "config.\"multivalued\"=true" || true
+              }
               
               apply_clients_from_dir "$INTERNAL_REALM" "$CLIENT_CONFIG_DIR_INTERNAL"
               disable_direct_grants_for_clients "$INTERNAL_REALM"
               enforce_pkce_for_client "$INTERNAL_REALM" "$OPENWEBUI_CLIENT_ID"
+              ensure_realm_roles_in_scope_mapper "$INTERNAL_REALM" "$OPENWEBUI_CLIENT_ID"
               if ! $KCADM get clients -r "$INTERNAL_REALM" -q "clientId=$OPENWEBUI_CLIENT_ID" --fields id --format csv 2>/dev/null | tail -n1 | grep -q .; then
                 echo "⚠️  openwebui client not present in internal realm (${INTERNAL_REALM})"
               fi
@@ -1565,10 +1671,20 @@ spec:
               disable_direct_grants_for_clients "$EXTERNAL_REALM"
 
               # Sample roles for mapping (edit/remove as needed)
-              for role in openwebui_access; do
-                $KCADM get "roles/$role" -r "$INTERNAL_REALM" >/dev/null 2>&1 || \
-                  $KCADM create roles -r "$INTERNAL_REALM" -s "name=$role" || true
-              done
+              if [ -n "${INTERNAL_REALM_ROLES_RAW:-}" ]; then
+                echo "$INTERNAL_REALM_ROLES_RAW" \
+                  | tr ',\n' ' ' \
+                  | while read -r role; do
+                      [ -z "${role:-}" ] && continue
+                      $KCADM get "roles/$role" -r "$INTERNAL_REALM" >/dev/null 2>&1 || \
+                        $KCADM create roles -r "$INTERNAL_REALM" -s "name=$role" || true
+                    done
+              else
+                for role in openwebui_access ollama_access ollama_service_access; do
+                  $KCADM get "roles/$role" -r "$INTERNAL_REALM" >/dev/null 2>&1 || \
+                    $KCADM create roles -r "$INTERNAL_REALM" -s "name=$role" || true
+                done
+              fi
               for role in tier_free tier_pro feature_x; do
                 $KCADM get "roles/$role" -r "$EXTERNAL_REALM" >/dev/null 2>&1 || \
                   $KCADM create roles -r "$EXTERNAL_REALM" -s "name=$role" || true
@@ -1615,6 +1731,23 @@ spec:
               
               ensure_roles_from_map "$INTERNAL_REALM" "$GITHUB_ROLE_MAP_JSON"
               ensure_roles_from_map "$EXTERNAL_REALM" "$GOOGLE_GROUP_ROLE_MAP_JSON"
+
+              assign_realm_role_to_service_account() {
+                local realm="$1"
+                local clientId="$2"
+                local role="$3"
+                CLIENT_UUID=$($KCADM get clients -r "$realm" -q "clientId=$clientId" --fields id --format csv 2>/dev/null | tail -n1 || true)
+                CLIENT_UUID="$(clean_id "$CLIENT_UUID")"
+                [ -z "${CLIENT_UUID:-}" ] && return 0
+                SA_ID=$($KCADM get "clients/$CLIENT_UUID/service-account-user" -r "$realm" 2>/dev/null \
+                  | sed -n "s/.*\"id\"[[:space:]]*:[[:space:]]*\"\\([^\"]*\\)\".*/\\1/p" | head -n1 || true)
+                SA_ID="$(clean_id "$SA_ID")"
+                [ -z "${SA_ID:-}" ] && return 0
+                $KCADM add-roles -r "$realm" --uuserid "$SA_ID" --rolename "$role" >/dev/null 2>&1 || true
+              }
+
+              assign_realm_role_to_service_account "$INTERNAL_REALM" "$OLLAMA_SERVICE_CLIENT_ID" "ollama_service_access"
+
 
               set_client_flow_override() {
                 local realm="$1"
