@@ -445,20 +445,63 @@ kind: Service
 metadata:
   name: keycloak
   namespace: keycloak
+  labels:
+    app: keycloak
+    app.kubernetes.io/name: keycloak
+    app.kubernetes.io/component: authentication
+spec:
+  type: LoadBalancer
+  loadBalancerIP: 10.0.0.114
+  selector:
+    app: keycloak
+  ports:
+    - name: http
+      port: 8080
+      targetPort: 8080
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: keycloak-admin-internal
+  namespace: keycloak
   annotations:
-    teleport.dev/name: "keycloak"
+    teleport.dev/name: "keycloak-admin-internal"
     teleport.dev/protocol: "http"
-    teleport.dev/public-addr: "keycloak.teleport.app.suncoast.systems"
-    teleport.dev/description: "Keycloak Service"
-    teleport.dev/path: "realms/internal/account"
+    teleport.dev/public-addr: "keycloak-admin-internal.teleport.app.suncoast.systems"
+    teleport.dev/description: "Keycloak Internal Admin Console"
+    teleport.dev/path: "admin/internal/console"
   labels:
     app: keycloak
     app.kubernetes.io/name: keycloak
     app.kubernetes.io/component: authentication
     teleport.dev/enroll: "true"
 spec:
-  type: LoadBalancer
-  loadBalancerIP: 10.0.0.114
+  type: ClusterIP
+  selector:
+    app: keycloak
+  ports:
+    - name: http
+      port: 8080
+      targetPort: 8080
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: keycloak-admin-external
+  namespace: keycloak
+  annotations:
+    teleport.dev/name: "keycloak-admin-external"
+    teleport.dev/protocol: "http"
+    teleport.dev/public-addr: "keycloak-admin-external.teleport.app.suncoast.systems"
+    teleport.dev/description: "Keycloak External Admin Console"
+    teleport.dev/path: "admin/external/console"
+  labels:
+    app: keycloak
+    app.kubernetes.io/name: keycloak
+    app.kubernetes.io/component: authentication
+    teleport.dev/enroll: "true"
+spec:
+  type: ClusterIP
   selector:
     app: keycloak
   ports:
@@ -920,6 +963,10 @@ spec:
               GOOGLE_CLIENT_SECRET="$(cat /vault/secrets/google-client-secret 2>/dev/null || true)"
               GITHUB_ROLE_MAP_JSON="$(cat /vault/secrets/github-role-map 2>/dev/null || true)"
               GOOGLE_GROUP_ROLE_MAP_JSON="$(cat /vault/secrets/google-group-role-map 2>/dev/null || true)"
+              EXTERNAL_ADMIN_EMAIL=""
+              if [ -s /vault/secrets/google-admin-email ]; then
+                EXTERNAL_ADMIN_EMAIL="$(tr -d '\r\n' < /vault/secrets/google-admin-email)"
+              fi
               INTERNAL_REALM_ROLES_RAW="${KEYCLOAK_INTERNAL_REALM_ROLES:-}"
               CONFIG_CLIENT_ID="keycloak-configurator"
               CONFIG_CLIENT_SECRET="$(cat /vault/secrets/keycloak-configurator-client-secret 2>/dev/null || true)"
@@ -963,6 +1010,42 @@ spec:
               clean_id() {
                 printf '%s' "$1" | tr -d '"' | tr -d '[:space:]'
               }
+
+              append_role_map_entry() {
+                local json="$1"
+                local key="$2"
+                local role="$3"
+                local trimmed=""
+                if [ -z "${key:-}" ] || [ -z "${role:-}" ]; then
+                  printf '%s' "$json"
+                  return 0
+                fi
+                if [ -z "${json:-}" ]; then
+                  printf '{"%s":["%s"]}' "$key" "$role"
+                  return 0
+                fi
+                if printf '%s' "$json" | grep -q "\"${key}\""; then
+                  printf '%s' "$json"
+                  return 0
+                fi
+                trimmed="$(printf '%s' "$json" | tr -d '\n' | sed 's/[[:space:]]*$//')"
+                if printf '%s' "$trimmed" | grep -q '^{' && printf '%s' "$trimmed" | grep -q '}$'; then
+                  local inner="${trimmed#\{}"
+                  inner="${inner%\}}"
+                  if [ -z "${inner//[[:space:]]/}" ]; then
+                    printf '{"%s":["%s"]}' "$key" "$role"
+                  else
+                    printf '%s' "${trimmed%}},"\"${key}\":[\"${role}\"]}"
+                  fi
+                  return 0
+                fi
+                printf '%s' "$json"
+              }
+
+              if [ -n "${GITHUB_ORG:-}" ] && [ -n "${GITHUB_TEAM:-}" ]; then
+                admin_key="${GITHUB_ORG}/${GITHUB_TEAM}"
+                GITHUB_ROLE_MAP_JSON="$(append_role_map_entry "$GITHUB_ROLE_MAP_JSON" "$admin_key" "client:realm-management:realm-admin")"
+              fi
 
               ensure_configurator_client() {
                 [ -n "${CONFIG_CLIENT_SECRET:-}" ] || { echo "⚠️  Missing configurator client secret (skipping client auth)"; return 1; }
@@ -1043,6 +1126,38 @@ spec:
                     -s "clientAuthenticatorType=client-secret" \
                     -s "secret=$client_secret" >/dev/null 2>&1 || true
                 fi
+              }
+
+              ensure_user_admin() {
+                local realm="$1"
+                local email="$2"
+                local username="${3:-}"
+                local uid=""
+                if [ -z "${realm:-}" ] || [ -z "${email:-}" ]; then
+                  return 0
+                fi
+                uid=$($KCADM get users -r "$realm" -q email="$email" --fields id --format csv 2>/dev/null | tail -n1 || true)
+                uid="$(clean_id "$uid")"
+                if [ -z "${uid:-}" ] && [ -n "${username:-}" ]; then
+                  uid=$($KCADM get users -r "$realm" -q username="$username" --fields id --format csv 2>/dev/null | tail -n1 || true)
+                  uid="$(clean_id "$uid")"
+                fi
+                if [ -z "${uid:-}" ]; then
+                  local uname="${username:-$email}"
+                  $KCADM create users -r "$realm" \
+                    -s "username=$uname" \
+                    -s "email=$email" \
+                    -s enabled=true \
+                    -s emailVerified=true >/dev/null 2>&1 || true
+                  uid=$($KCADM get users -r "$realm" -q email="$email" --fields id --format csv 2>/dev/null | tail -n1 || true)
+                  uid="$(clean_id "$uid")"
+                fi
+                if [ -z "${uid:-}" ]; then
+                  echo "⚠️  Unable to ensure admin user in realm ${realm} for ${email}"
+                  return 1
+                fi
+                $KCADM add-roles -r "$realm" --uuserid "$uid" \
+                  --cclientid realm-management --rolename realm-admin >/dev/null 2>&1 || true
               }
 
               echo "Waiting for Keycloak admin API..."
@@ -1273,6 +1388,7 @@ spec:
 
               ensure_realm "${INTERNAL_REALM}"
               ensure_realm "${EXTERNAL_REALM}"
+              ensure_user_admin "$EXTERNAL_REALM" "$EXTERNAL_ADMIN_EMAIL"
               
               # Use admin creds for master realm config to avoid permission edge cases
               if login_with_admin; then
@@ -2120,10 +2236,44 @@ spec:
               export GITHUB_TEAM="$(cat /vault/secrets/keycloak-admin-team)"
               export DEBUG_ALWAYS_GRANT="${DEBUG_ALWAYS_GRANT:-false}"
               export GITHUB_ADMIN_USERNAMES="${GITHUB_ADMIN_USERNAMES:-}"
+              append_role_map_entry() {
+                local json="$1"
+                local key="$2"
+                local role="$3"
+                local trimmed=""
+                if [ -z "${key:-}" ] || [ -z "${role:-}" ]; then
+                  printf '%s' "$json"
+                  return 0
+                fi
+                if [ -z "${json:-}" ]; then
+                  printf '{"%s":["%s"]}' "$key" "$role"
+                  return 0
+                fi
+                if printf '%s' "$json" | grep -q "\"${key}\""; then
+                  printf '%s' "$json"
+                  return 0
+                fi
+                trimmed="$(printf '%s' "$json" | tr -d '\n' | sed 's/[[:space:]]*$//')"
+                if printf '%s' "$trimmed" | grep -q '^{' && printf '%s' "$trimmed" | grep -q '}$'; then
+                  local inner="${trimmed#\{}"
+                  inner="${inner%\}}"
+                  if [ -z "${inner//[[:space:]]/}" ]; then
+                    printf '{"%s":["%s"]}' "$key" "$role"
+                  else
+                    printf '%s' "${trimmed%}},"\"${key}\":[\"${role}\"]}"
+                  fi
+                  return 0
+                fi
+                printf '%s' "$json"
+              }
               if [ -s /vault/secrets/github-role-map ]; then
                 export GITHUB_ROLE_MAP="$(cat /vault/secrets/github-role-map)"
               else
                 export GITHUB_ROLE_MAP='{"myorg/openwebui":["realm:openwebui_access"]}'
+              fi
+              if [ -n "${GITHUB_ORG:-}" ] && [ -n "${GITHUB_TEAM:-}" ]; then
+                admin_key="${GITHUB_ORG}/${GITHUB_TEAM}"
+                export GITHUB_ROLE_MAP="$(append_role_map_entry "$GITHUB_ROLE_MAP" "$admin_key" "client:realm-management:realm-admin")"
               fi
 
               # Google Groups auth (Cloud Identity)
