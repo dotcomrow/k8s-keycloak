@@ -1035,7 +1035,8 @@ spec:
                   if [ -z "${inner//[[:space:]]/}" ]; then
                     printf '{"%s":["%s"]}' "$key" "$role"
                   else
-                    printf '%s' "${trimmed%}},"\"${key}\":[\"${role}\"]}"
+                    printf '%s' "${trimmed%\}}"
+                    printf ',\"%s\":[\"%s\"]}' "$key" "$role"
                   fi
                   return 0
                 fi
@@ -2260,7 +2261,8 @@ spec:
                   if [ -z "${inner//[[:space:]]/}" ]; then
                     printf '{"%s":["%s"]}' "$key" "$role"
                   else
-                    printf '%s' "${trimmed%}},"\"${key}\":[\"${role}\"]}"
+                    printf '%s' "${trimmed%\}}"
+                    printf ',\"%s\":[\"%s\"]}' "$key" "$role"
                   fi
                   return 0
                 fi
