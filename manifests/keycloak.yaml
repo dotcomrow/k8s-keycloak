@@ -1390,6 +1390,29 @@ spec:
                     -s 'config.syncMode=FORCE' || true
                 fi
               }
+
+              ensure_github_user_attribute_mapper() {
+                local realm="$1"
+                local mapper_name="$2"
+                local json_field="$3"
+                local user_attribute="$4"
+                local sync_mode="${5:-INHERIT}"
+
+                if ! $KCADM get identity-provider/instances/github -r "$realm" >/dev/null 2>&1; then
+                  return 0
+                fi
+                if $KCADM get "identity-provider/instances/github/mappers" -r "$realm" 2>/dev/null \
+                  | grep -q "\"name\"[[:space:]]*:[[:space:]]*\"${mapper_name}\""; then
+                  return 0
+                fi
+                $KCADM create "identity-provider/instances/github/mappers" -r "$realm" \
+                  -s "name=${mapper_name}" \
+                  -s "identityProviderAlias=github" \
+                  -s "identityProviderMapper=github-user-attribute-mapper" \
+                  -s "config.\"jsonField\"=${json_field}" \
+                  -s "config.\"userAttribute\"=${user_attribute}" \
+                  -s "config.\"syncMode\"=${sync_mode}" || true
+              }
               
               echo "Configuring admin realm: ${ADMIN_REALM}"
               echo "admin: load providers"
@@ -1436,6 +1459,7 @@ spec:
               echo "Configuring internal realm: ${INTERNAL_REALM}"
               if [ "$INTERNAL_GITHUB_ENABLED" = "true" ]; then
                 ensure_github_idp "$INTERNAL_REALM" "$INTERNAL_GITHUB_HIDE_ON_LOGIN"
+                ensure_github_user_attribute_mapper "$INTERNAL_REALM" "github-avatar-url" "avatar_url" "picture" "INHERIT"
               else
                 echo "ℹ️  GitHub IdP disabled in internal realm by config."
                 if $KCADM get identity-provider/instances/github -r "$INTERNAL_REALM" >/dev/null 2>&1; then
@@ -1658,11 +1682,37 @@ spec:
                   -s "config.\"userinfo.token.claim\"=false" \
                   -s "config.\"multivalued\"=true" || true
               }
+
+              ensure_client_attribute_mapper() {
+                local realm="$1"
+                local clientId="$2"
+                local mapper_name="$3"
+                local user_attribute="$4"
+                local claim_name="$5"
+                CID=$($KCADM get clients -r "$realm" -q "clientId=$clientId" --fields id --format csv 2>/dev/null | tail -n1 || true)
+                CID="$(clean_id "$CID")"
+                [ -z "${CID:-}" ] && return 0
+                if $KCADM get "clients/$CID/protocol-mappers/models" -r "$realm" 2>/dev/null \
+                  | grep -q "\"name\"[[:space:]]*:[[:space:]]*\"${mapper_name}\""; then
+                  return 0
+                fi
+                $KCADM create "clients/$CID/protocol-mappers/models" -r "$realm" \
+                  -s "name=${mapper_name}" \
+                  -s "protocol=openid-connect" \
+                  -s "protocolMapper=oidc-usermodel-attribute-mapper" \
+                  -s "config.\"user.attribute\"=${user_attribute}" \
+                  -s "config.\"claim.name\"=${claim_name}" \
+                  -s "config.\"jsonType.label\"=String" \
+                  -s "config.\"access.token.claim\"=true" \
+                  -s "config.\"id.token.claim\"=true" \
+                  -s "config.\"userinfo.token.claim\"=true" || true
+              }
               
               apply_clients_from_dir "$INTERNAL_REALM" "$CLIENT_CONFIG_DIR_INTERNAL"
               disable_direct_grants_for_clients "$INTERNAL_REALM"
               enforce_pkce_for_client "$INTERNAL_REALM" "$OPENWEBUI_CLIENT_ID"
               ensure_realm_roles_in_scope_mapper "$INTERNAL_REALM" "$OPENWEBUI_CLIENT_ID"
+              ensure_client_attribute_mapper "$INTERNAL_REALM" "$OPENWEBUI_CLIENT_ID" "openwebui-picture" "picture" "picture"
               if ! $KCADM get clients -r "$INTERNAL_REALM" -q "clientId=$OPENWEBUI_CLIENT_ID" --fields id --format csv 2>/dev/null | tail -n1 | grep -q .; then
                 echo "⚠️  openwebui client not present in internal realm (${INTERNAL_REALM})"
               fi
