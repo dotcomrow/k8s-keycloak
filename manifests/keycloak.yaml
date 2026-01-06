@@ -450,6 +450,7 @@ metadata:
     teleport.dev/protocol: "http"
     teleport.dev/public-addr: "keycloak.teleport.app.suncoast.systems"
     teleport.dev/description: "Keycloak Service"
+    teleport.dev/path: "realms/internal/account"
   labels:
     app: keycloak
     app.kubernetes.io/name: keycloak
@@ -846,11 +847,13 @@ spec:
             - name: APPS_GITHUB_ENABLED
               value: "true"
             - name: APPS_GITHUB_ONLY
-              value: "false"
+              value: "true"
             - name: EXTERNAL_GITHUB_ENABLED
               value: "false"
             - name: EXTERNAL_DISABLE_LOCAL_LOGIN
               value: "true"
+            - name: ADMIN_GITHUB_ENABLED
+              value: "false"
             - name: PROVIDER_WARN
               value: "false"
           command: ["/bin/bash","-lc"]
@@ -878,6 +881,7 @@ spec:
               PROVIDER_IDP_AUTO_LINK="idp-auto-link"
               PROVIDER_WARN="${PROVIDER_WARN:-false}"
               ADMIN_REALM_FORCE_GITHUB_REDIRECT="${ADMIN_REALM_FORCE_GITHUB_REDIRECT:-false}"
+              ADMIN_GITHUB_ENABLED="${ADMIN_GITHUB_ENABLED:-false}"
               INTERNAL_GITHUB_ENABLED="${APPS_GITHUB_ENABLED:-true}"
               INTERNAL_GITHUB_HIDE_ON_LOGIN="${APPS_GITHUB_HIDE_ON_LOGIN:-false}"
               INTERNAL_GITHUB_ONLY="${APPS_GITHUB_ONLY:-false}"
@@ -1566,33 +1570,39 @@ spec:
               echo "Configuring admin realm: ${ADMIN_REALM}"
               echo "admin: load providers"
               load_provider_list || true
-              echo "admin: ensure github idp"
-              ensure_github_idp "$ADMIN_REALM" "false" || true
-              echo "admin: ensure first-broker flow"
-              ensure_first_broker_flow_autolink "$ADMIN_REALM" || true
-              echo "admin: ensure post-broker flow"
-              ensure_flow "$ADMIN_REALM" "$FLOW_GH" "Post-broker: GitHub team admin" || true
-              if provider_exists "$PROVIDER_GH"; then
-                echo "admin: add github-team-admin execution"
-                add_exec_required "$ADMIN_REALM" "$FLOW_GH" "$PROVIDER_GH" || true
-              else
-                if [ "$PROVIDER_WARN" = "true" ]; then
-                  echo "⚠️  Missing provider in ${ADMIN_REALM}: ${PROVIDER_GH} (skipping execution)"
+              if [ "$ADMIN_GITHUB_ENABLED" = "true" ]; then
+                echo "admin: ensure github idp"
+                ensure_github_idp "$ADMIN_REALM" "false" || true
+                echo "admin: ensure first-broker flow"
+                ensure_first_broker_flow_autolink "$ADMIN_REALM" || true
+                echo "admin: ensure post-broker flow"
+                ensure_flow "$ADMIN_REALM" "$FLOW_GH" "Post-broker: GitHub team admin" || true
+                if provider_exists "$PROVIDER_GH"; then
+                  echo "admin: add github-team-admin execution"
+                  add_exec_required "$ADMIN_REALM" "$FLOW_GH" "$PROVIDER_GH" || true
+                else
+                  if [ "$PROVIDER_WARN" = "true" ]; then
+                    echo "⚠️  Missing provider in ${ADMIN_REALM}: ${PROVIDER_GH} (skipping execution)"
+                  fi
                 fi
-              fi
-              if flow_has_execution "$ADMIN_REALM" "$FLOW_GH"; then
-              echo "admin: set postBrokerLoginFlowAlias"
-              $KCADM update identity-provider/instances/github -r "$ADMIN_REALM" \
-                -s "postBrokerLoginFlowAlias=$FLOW_GH" || true
+                if flow_has_execution "$ADMIN_REALM" "$FLOW_GH"; then
+                echo "admin: set postBrokerLoginFlowAlias"
+                $KCADM update identity-provider/instances/github -r "$ADMIN_REALM" \
+                  -s "postBrokerLoginFlowAlias=$FLOW_GH" || true
+                else
+                  echo "⚠️  GitHub post-broker flow has no executions in ${ADMIN_REALM}; skipping postBrokerLoginFlowAlias."
+                fi
+                if [ "$ADMIN_REALM_FORCE_GITHUB_REDIRECT" = "true" ]; then
+                  echo "admin: ensure github-only browser flow"
+                  ensure_redirect_flow "$ADMIN_REALM" "$FLOW_BROWSER_GH" "github" "Browser flow that redirects to GitHub"
+                  $KCADM update "realms/${ADMIN_REALM}" -s "browserFlow=${FLOW_BROWSER_GH}" || true
+                else
+                  $KCADM update "realms/${ADMIN_REALM}" -s "browserFlow=browser" || true
+                fi
               else
-                echo "⚠️  GitHub post-broker flow has no executions in ${ADMIN_REALM}; skipping postBrokerLoginFlowAlias."
-              fi
-              
-              if [ "$ADMIN_REALM_FORCE_GITHUB_REDIRECT" = "true" ]; then
-                echo "admin: ensure github-only browser flow"
-                ensure_redirect_flow "$ADMIN_REALM" "$FLOW_BROWSER_GH" "github" "Browser flow that redirects to GitHub"
-                $KCADM update "realms/${ADMIN_REALM}" -s "browserFlow=${FLOW_BROWSER_GH}" || true
-              else
+                if $KCADM get identity-provider/instances/github -r "$ADMIN_REALM" >/dev/null 2>&1; then
+                  $KCADM delete identity-provider/instances/github -r "$ADMIN_REALM" || true
+                fi
                 $KCADM update "realms/${ADMIN_REALM}" -s "browserFlow=browser" || true
               fi
               
@@ -1669,7 +1679,11 @@ spec:
               fi
               
               if [ "$INTERNAL_REALM" != "$ADMIN_REALM" ]; then
-                $KCADM update "realms/${INTERNAL_REALM}" -s "browserFlow=browser" || true
+                if [ "$INTERNAL_GITHUB_ONLY" = "true" ]; then
+                  $KCADM update "realms/${INTERNAL_REALM}" -s "browserFlow=${FLOW_BROWSER_GH}" || true
+                else
+                  $KCADM update "realms/${INTERNAL_REALM}" -s "browserFlow=browser" || true
+                fi
               fi
               if [ "$EXTERNAL_REALM" != "$ADMIN_REALM" ]; then
                 if [ "$EXTERNAL_DISABLE_LOCAL_LOGIN" = "true" ] && [ "$EXTERNAL_GOOGLE_READY" = "true" ]; then
