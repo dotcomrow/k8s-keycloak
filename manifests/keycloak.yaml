@@ -2206,11 +2206,11 @@ spec:
             - name: KC_HOSTNAME_URL
               value: "https://auth.suncoast.systems"
             - name: KC_HOSTNAME_ADMIN_URL
-              value: "https://keycloak.teleport.app.suncoast.systems"
+              value: "https://keycloak-admin-internal.teleport.app.suncoast.systems"
             - name: KC_HEALTH_ENABLED
               value: "true"
             - name: KC_HOSTNAME_STRICT
-              value: "true"
+              value: "false"
             - name: KC_HTTP_ENABLED
               value: "true"
             - name: KC_TRANSACTION_XA_ENABLED
