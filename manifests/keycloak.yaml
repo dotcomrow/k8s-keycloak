@@ -327,7 +327,7 @@ spec:
               path "secret/data/keycloak-client-secret-*"         { capabilities = ["read"] }
               path "secret/data/keycloak-client-id-*"             { capabilities = ["read"] }
               path "secret/data/k8s-teleport-teleport-github-org" { capabilities = ["read"] }
-              path "secret/data/k8s-teleport-teleport-github-admin-team" { capabilities = ["read"] }
+              path "secret/data/keycloak-admin-team" { capabilities = ["read"] }
               EOF
 
               vault write auth/kubernetes/role/keycloak \
@@ -424,7 +424,7 @@ spec:
               path "secret/data/keycloak-client-secret-*"         { capabilities = ["read"] }
               path "secret/data/keycloak-client-id-*"             { capabilities = ["read"] }
               path "secret/data/k8s-teleport-teleport-github-org" { capabilities = ["read"] }
-              path "secret/data/k8s-teleport-teleport-github-admin-team" { capabilities = ["read"] }
+              path "secret/data/keycloak-admin-team" { capabilities = ["read"] }
               EOF
 
               vault write auth/kubernetes/role/keycloak \
@@ -538,9 +538,9 @@ spec:
         vault.hashicorp.com/agent-inject-secret-github-org: "secret/data/k8s-teleport-teleport-github-org"
         vault.hashicorp.com/agent-inject-template-github-org: |
           {{- with secret "secret/data/k8s-teleport-teleport-github-org" -}}{{ .Data.data.value }}{{- end -}}
-        vault.hashicorp.com/agent-inject-secret-github-admin-team: "secret/data/k8s-teleport-teleport-github-admin-team"
-        vault.hashicorp.com/agent-inject-template-github-admin-team: |
-          {{- with secret "secret/data/k8s-teleport-teleport-github-admin-team" -}}{{ .Data.data.value }}{{- end -}}
+        vault.hashicorp.com/agent-inject-secret-keycloak-admin-team: "secret/data/keycloak-admin-team"
+        vault.hashicorp.com/agent-inject-template-keycloak-admin-team: |
+          {{- with secret "secret/data/keycloak-admin-team" -}}{{ .Data.data.value }}{{- end -}}
         vault.hashicorp.com/agent-inject-secret-github-role-map: "secret/data/keycloak-github-role-map"
         vault.hashicorp.com/agent-inject-template-github-role-map: |
           {{- with secret "secret/data/keycloak-github-role-map" -}}{{ .Data.data.value }}{{- end -}}
@@ -823,11 +823,21 @@ spec:
           imagePullPolicy: Always
           env:
             - name: KEYCLOAK_REALM
-              value: "apps"
+              value: "external"
             - name: KEYCLOAK_INTERNAL_REALM
-              value: "master"
+              value: "internal"
             - name: KEYCLOAK_EXTERNAL_REALM
+              value: "external"
+            - name: KEYCLOAK_LEGACY_EXTERNAL_REALM
               value: "apps"
+            - name: KEYCLOAK_MIGRATE_APPS_REALM
+              value: "true"
+            - name: KEYCLOAK_MIGRATE_APPS_REALM_MODE
+              value: "auto"
+            - name: KEYCLOAK_MIGRATE_APPS_REALM_DELETE_SOURCE
+              value: "true"
+            - name: KEYCLOAK_MIGRATE_APPS_REALM_FORCE_DELETE
+              value: "false"
             - name: KEYCLOAK_INTERNAL_REALM_ROLES
               valueFrom:
                 configMapKeyRef:
@@ -835,8 +845,12 @@ spec:
                   key: internal-realm-roles
             - name: APPS_GITHUB_ENABLED
               value: "true"
+            - name: APPS_GITHUB_ONLY
+              value: "false"
             - name: EXTERNAL_GITHUB_ENABLED
               value: "false"
+            - name: EXTERNAL_DISABLE_LOCAL_LOGIN
+              value: "true"
             - name: PROVIDER_WARN
               value: "false"
           command: ["/bin/bash","-lc"]
@@ -847,6 +861,11 @@ spec:
               ADMIN_REALM="master"
               INTERNAL_REALM="${KEYCLOAK_INTERNAL_REALM:-internal}"
               EXTERNAL_REALM="${KEYCLOAK_EXTERNAL_REALM:-${KEYCLOAK_REALM:-apps}}"
+              LEGACY_EXTERNAL_REALM="${KEYCLOAK_LEGACY_EXTERNAL_REALM:-apps}"
+              MIGRATE_APPS_REALM="${KEYCLOAK_MIGRATE_APPS_REALM:-false}"
+              MIGRATE_APPS_REALM_MODE="${KEYCLOAK_MIGRATE_APPS_REALM_MODE:-auto}"
+              MIGRATE_APPS_REALM_DELETE_SOURCE="${KEYCLOAK_MIGRATE_APPS_REALM_DELETE_SOURCE:-false}"
+              MIGRATE_APPS_REALM_FORCE_DELETE="${KEYCLOAK_MIGRATE_APPS_REALM_FORCE_DELETE:-false}"
               SERVER="http://127.0.0.1:8080"
               FLOW_GH="GitHub-PostLogin"
               FLOW_GGL="Google-PostLogin"
@@ -861,6 +880,7 @@ spec:
               ADMIN_REALM_FORCE_GITHUB_REDIRECT="${ADMIN_REALM_FORCE_GITHUB_REDIRECT:-false}"
               INTERNAL_GITHUB_ENABLED="${APPS_GITHUB_ENABLED:-true}"
               INTERNAL_GITHUB_HIDE_ON_LOGIN="${APPS_GITHUB_HIDE_ON_LOGIN:-false}"
+              INTERNAL_GITHUB_ONLY="${APPS_GITHUB_ONLY:-false}"
               EXTERNAL_GITHUB_ENABLED="${EXTERNAL_GITHUB_ENABLED:-false}"
               KCADM="/opt/keycloak/bin/kcadm.sh"
               KCADM_CONFIG="/tmp/kcadm.config"
@@ -877,7 +897,7 @@ spec:
                        /vault/secrets/github-client-id \
                        /vault/secrets/github-client-secret \
                        /vault/secrets/github-org \
-                       /vault/secrets/github-admin-team; do
+                       /vault/secrets/keycloak-admin-team; do
                 for i in {1..60}; do
                   [ -s "$f" ] && break
                   sleep 1
@@ -891,7 +911,7 @@ spec:
               CLIENT_ID="$(cat /vault/secrets/github-client-id)"
               CLIENT_SECRET="$(cat /vault/secrets/github-client-secret)"
               GITHUB_ORG="$(cat /vault/secrets/github-org)"
-              GITHUB_TEAM="$(cat /vault/secrets/github-admin-team)"
+              GITHUB_TEAM="$(cat /vault/secrets/keycloak-admin-team)"
               GOOGLE_CLIENT_ID="$(cat /vault/secrets/google-client-id 2>/dev/null || true)"
               GOOGLE_CLIENT_SECRET="$(cat /vault/secrets/google-client-secret 2>/dev/null || true)"
               GITHUB_ROLE_MAP_JSON="$(cat /vault/secrets/github-role-map 2>/dev/null || true)"
@@ -1117,6 +1137,135 @@ spec:
                 fi
                 fatal "Failed to ensure realm: ${realm}"
               }
+
+              export_partial_realm() {
+                local realm="$1"
+                local outfile="$2"
+                local errfile="${outfile}.err"
+                if ! $KCADM create "realms/${realm}/partial-export" \
+                  -s exportClients=true \
+                  -s exportGroupsAndRoles=true \
+                  -s exportUsers=true \
+                  > "$outfile" 2> "$errfile"; then
+                  echo "⚠️  Partial export failed for realm ${realm}: $(tail -n1 "$errfile" 2>/dev/null || true)"
+                  return 1
+                fi
+                if ! grep -q '^[[:space:]]*[{[]' "$outfile"; then
+                  echo "⚠️  Partial export output missing JSON for realm ${realm}"
+                  if [ -s "$errfile" ]; then
+                    echo "⚠️  Partial export stderr: $(tail -n1 "$errfile")"
+                  fi
+                  return 1
+                fi
+                return 0
+              }
+
+              import_partial_realm() {
+                local realm="$1"
+                local infile="$2"
+                local out=""
+                out="$($KCADM create "realms/${realm}/partialImport" \
+                  -s ifResourceExists=OVERWRITE -f "$infile" 2>&1 || true)"
+                if echo "$out" | grep -qiE "error|exception|failed"; then
+                  echo "⚠️  Partial import failed for realm ${realm}: ${out}"
+                  return 1
+                fi
+                return 0
+              }
+
+              try_rename_realm() {
+                local from="$1"
+                local to="$2"
+                local out=""
+                out="$($KCADM update "realms/${from}" -s "realm=${to}" -s enabled=true 2>&1 || true)"
+                if [ -z "${out:-}" ]; then
+                  return 0
+                fi
+                if echo "$out" | grep -qiE "error|exception|failed"; then
+                  echo "⚠️  Rename realm failed (${from} -> ${to}): ${out}"
+                  return 1
+                fi
+                return 0
+              }
+
+              delete_realm() {
+                local realm="$1"
+                if ! realm_exists "$realm"; then
+                  return 0
+                fi
+                $KCADM delete "realms/${realm}" >/dev/null 2>&1 || true
+                if realm_exists "$realm"; then
+                  echo "⚠️  Failed to delete realm: ${realm}"
+                  return 1
+                fi
+                echo "✅ Deleted realm: ${realm}"
+                return 0
+              }
+
+              migrate_apps_realm() {
+                if [ "${MIGRATE_APPS_REALM}" != "true" ]; then
+                  return 0
+                fi
+                local source="${LEGACY_EXTERNAL_REALM}"
+                local target="${EXTERNAL_REALM}"
+                if [ -z "${source:-}" ] || [ -z "${target:-}" ]; then
+                  echo "⚠️  Migration skipped: missing source/target realm names."
+                  return 0
+                fi
+                if [ "$source" = "$target" ]; then
+                  echo "ℹ️  Legacy realm matches target (${target}); no migration needed."
+                  return 0
+                fi
+                if ! realm_exists "$source"; then
+                  echo "ℹ️  Legacy realm not found (${source}); skipping migration."
+                  return 0
+                fi
+                if realm_exists "$target"; then
+                  echo "⚠️  Both legacy (${source}) and target (${target}) realms exist; skipping migration to avoid overwrite."
+                  if [ "$MIGRATE_APPS_REALM_DELETE_SOURCE" = "true" ] && [ "$MIGRATE_APPS_REALM_FORCE_DELETE" = "true" ]; then
+                    delete_realm "$source" || true
+                  fi
+                  return 0
+                fi
+
+                echo "🔁 Migrating realm '${source}' -> '${target}' (mode: ${MIGRATE_APPS_REALM_MODE})"
+
+                if [ "$MIGRATE_APPS_REALM_MODE" != "export-import" ]; then
+                  if try_rename_realm "$source" "$target"; then
+                    if realm_exists "$target" && ! realm_exists "$source"; then
+                      echo "✅ Realm renamed: ${source} -> ${target}"
+                      return 0
+                    fi
+                  fi
+                  if [ "$MIGRATE_APPS_REALM_MODE" = "rename" ]; then
+                    fatal "Realm rename failed; set KEYCLOAK_MIGRATE_APPS_REALM_MODE=export-import to fallback."
+                  fi
+                  echo "⚠️  Realm rename failed; falling back to export/import."
+                fi
+
+                ensure_realm "$target"
+
+                local tmp_dir="/tmp/keycloak-migrations"
+                local export_file=""
+                mkdir -p "$tmp_dir"
+                export_file="${tmp_dir}/realm-${source}-partial-export.json"
+
+                if ! export_partial_realm "$source" "$export_file"; then
+                  fatal "Partial export failed for realm '${source}'"
+                fi
+
+                if ! import_partial_realm "$target" "$export_file"; then
+                  fatal "Partial import failed for realm '${target}'"
+                fi
+
+                echo "✅ Partial export/import completed for '${source}' -> '${target}'"
+
+                if [ "$MIGRATE_APPS_REALM_DELETE_SOURCE" = "true" ]; then
+                  delete_realm "$source" || true
+                fi
+              }
+
+              migrate_apps_realm
 
               ensure_realm "${INTERNAL_REALM}"
               ensure_realm "${EXTERNAL_REALM}"
@@ -1834,10 +1983,36 @@ spec:
                   echo "ℹ️  client not found: $clientId (skipping override)"
                 fi
               }
+
+              clear_client_flow_override() {
+                local realm="$1"
+                local clientId="$2"
+                local expected_flow="${3:-}"
+                local override=""
+                CID=$($KCADM get clients -r "$realm" -q "clientId=$clientId" --fields id --format csv 2>/dev/null | tail -n1 || true)
+                CID="$(clean_id "$CID")"
+                if [ -z "${CID:-}" ]; then
+                  return 0
+                fi
+                override=$($KCADM get "clients/$CID" -r "$realm" 2>/dev/null \
+                  | tr -d "\n" \
+                  | sed -n "s/.*\"authenticationFlowBindingOverrides\"[[:space:]]*:[[:space:]]*{[^}]*\"browser\"[[:space:]]*:[[:space:]]*\"\\([^\"]*\\)\".*/\\1/p" \
+                  | head -n1 || true)
+                if [ -z "${override:-}" ]; then
+                  return 0
+                fi
+                if [ -n "${expected_flow:-}" ] && [ "$override" != "$expected_flow" ]; then
+                  return 0
+                fi
+                $KCADM update "clients/$CID" -r "$realm" -s "authenticationFlowBindingOverrides={}" >/dev/null 2>&1 || true
+                echo "ℹ️  cleared browser flow override '$override' for $clientId"
+              }
               
-              # Enforce GitHub-only for internal apps
-              if [ "$INTERNAL_GITHUB_ENABLED" = "true" ]; then
+              # Optionally enforce GitHub-only for internal apps
+              if [ "$INTERNAL_GITHUB_ONLY" = "true" ]; then
                 set_client_flow_override "$INTERNAL_REALM" "$OPENWEBUI_CLIENT_ID" "$FLOW_BROWSER_GH"
+              else
+                clear_client_flow_override "$INTERNAL_REALM" "$OPENWEBUI_CLIENT_ID" "$FLOW_BROWSER_GH"
               fi
               
               # Enforce Google-only for external apps (example clientId)
@@ -1871,7 +2046,7 @@ spec:
               name: http
           env:
             - name: KEYCLOAK_REALM
-              value: "apps"
+              value: "external"
             # DB
             - name: KC_DB
               value: "postgres"
@@ -1928,7 +2103,7 @@ spec:
 
               # Export org/team for the custom provider
               export GITHUB_ORG="$(cat /vault/secrets/github-org)"
-              export GITHUB_TEAM="$(cat /vault/secrets/github-admin-team)"
+              export GITHUB_TEAM="$(cat /vault/secrets/keycloak-admin-team)"
               export DEBUG_ALWAYS_GRANT="${DEBUG_ALWAYS_GRANT:-false}"
               export GITHUB_ADMIN_USERNAMES="${GITHUB_ADMIN_USERNAMES:-}"
               if [ -s /vault/secrets/github-role-map ]; then
