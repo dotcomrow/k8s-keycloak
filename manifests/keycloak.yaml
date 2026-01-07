@@ -2207,36 +2207,7 @@ spec:
             - name: keycloak-client-config-external
               mountPath: /opt/keycloak/data/clients/external
               readOnly: true
----
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: keycloak-admin-redirect
-  namespace: keycloak
-spec:
-  replicas: 1
-  selector:
-    matchLabels:
-      app: keycloak-admin-redirect
-  template:
-    metadata:
-      labels:
-        app: keycloak-admin-redirect
-    spec:
-      containers:
-        - name: redirect
-          image: nginx:1.25-alpine
-          ports:
-            - containerPort: 8080
-              name: http
-          volumeMounts:
-            - name: redirect-config
-              mountPath: /etc/nginx/conf.d/default.conf
-              subPath: default.conf
-      volumes:
-        - name: redirect-config
-          configMap:
-            name: keycloak-admin-redirect-config
+
         # --- Keycloak runtime ---
         - name: keycloak
           image: ghcr.io/dotcomrow/keycloak-image:24.0.5
@@ -2269,7 +2240,7 @@ spec:
             - name: KC_LOG_LEVEL
               value: "INFO,systems.suncoast.kc.github:DEBUG,systems.suncoast.kc.google:DEBUG,org.keycloak.authentication:DEBUG,org.keycloak.events:INFO"
             - name: KC_PROXY
-              value: "edge" 
+              value: "edge"
 
             # Hostname & HTTP
             - name: KC_HOSTNAME_URL
@@ -2377,3 +2348,33 @@ spec:
             - name: keycloak-client-config-external
               mountPath: /opt/keycloak/data/clients/external
               readOnly: true
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: keycloak-admin-redirect
+  namespace: keycloak
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: keycloak-admin-redirect
+  template:
+    metadata:
+      labels:
+        app: keycloak-admin-redirect
+    spec:
+      containers:
+        - name: redirect
+          image: nginx:1.25-alpine
+          ports:
+            - containerPort: 8080
+              name: http
+          volumeMounts:
+            - name: redirect-config
+              mountPath: /etc/nginx/conf.d/default.conf
+              subPath: default.conf
+      volumes:
+        - name: redirect-config
+          configMap:
+            name: keycloak-admin-redirect-config
