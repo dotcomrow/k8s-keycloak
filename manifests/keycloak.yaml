@@ -74,6 +74,21 @@ data:
       "webOrigins": ["https://app.example.com"]
     }
 ---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: keycloak-admin-redirect-config
+  namespace: keycloak
+data:
+  default.conf: |
+    server {
+      listen 8080;
+      server_name _;
+      location / {
+        return 302 https://keycloak-admin.teleport.app.suncoast.systems$request_uri;
+      }
+    }
+---
 apiVersion: batch/v1
 kind: Job
 metadata:
@@ -462,14 +477,14 @@ spec:
 apiVersion: v1
 kind: Service
 metadata:
-  name: keycloak-admin-internal
+  name: keycloak-admin
   namespace: keycloak
   annotations:
-    teleport.dev/name: "keycloak-admin-internal"
+    teleport.dev/name: "keycloak-admin"
     teleport.dev/protocol: "http"
-    teleport.dev/public-addr: "keycloak-admin-internal.teleport.app.suncoast.systems"
-    teleport.dev/description: "Keycloak Internal Admin Console"
-    teleport.dev/path: "admin/internal/console"
+    teleport.dev/public-addr: "keycloak-admin.teleport.app.suncoast.systems"
+    teleport.dev/description: "Keycloak Admin Console"
+    teleport.dev/path: "admin"
   labels:
     app: keycloak
     app.kubernetes.io/name: keycloak
@@ -487,23 +502,48 @@ spec:
 apiVersion: v1
 kind: Service
 metadata:
-  name: keycloak-admin-external
+  name: keycloak-admin-internal-link
   namespace: keycloak
   annotations:
-    teleport.dev/name: "keycloak-admin-external"
+    teleport.dev/name: "keycloak-admin-internal"
     teleport.dev/protocol: "http"
-    teleport.dev/public-addr: "keycloak-admin-external.teleport.app.suncoast.systems"
-    teleport.dev/description: "Keycloak External Admin Console"
-    teleport.dev/path: "admin/external/console"
+    teleport.dev/public-addr: "keycloak-admin-internal.teleport.app.suncoast.systems"
+    teleport.dev/description: "Keycloak Admin Console (Internal)"
+    teleport.dev/path: "admin/internal/console"
   labels:
-    app: keycloak
-    app.kubernetes.io/name: keycloak
+    app: keycloak-admin-redirect
+    app.kubernetes.io/name: keycloak-admin-redirect
     app.kubernetes.io/component: authentication
     teleport.dev/enroll: "true"
 spec:
   type: ClusterIP
   selector:
-    app: keycloak
+    app: keycloak-admin-redirect
+  ports:
+    - name: http
+      port: 8080
+      targetPort: 8080
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: keycloak-admin-external-link
+  namespace: keycloak
+  annotations:
+    teleport.dev/name: "keycloak-admin-external"
+    teleport.dev/protocol: "http"
+    teleport.dev/public-addr: "keycloak-admin-external.teleport.app.suncoast.systems"
+    teleport.dev/description: "Keycloak Admin Console (External)"
+    teleport.dev/path: "admin/external/console"
+  labels:
+    app: keycloak-admin-redirect
+    app.kubernetes.io/name: keycloak-admin-redirect
+    app.kubernetes.io/component: authentication
+    teleport.dev/enroll: "true"
+spec:
+  type: ClusterIP
+  selector:
+    app: keycloak-admin-redirect
   ports:
     - name: http
       port: 8080
@@ -2167,6 +2207,36 @@ spec:
             - name: keycloak-client-config-external
               mountPath: /opt/keycloak/data/clients/external
               readOnly: true
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: keycloak-admin-redirect
+  namespace: keycloak
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: keycloak-admin-redirect
+  template:
+    metadata:
+      labels:
+        app: keycloak-admin-redirect
+    spec:
+      containers:
+        - name: redirect
+          image: nginx:1.25-alpine
+          ports:
+            - containerPort: 8080
+              name: http
+          volumeMounts:
+            - name: redirect-config
+              mountPath: /etc/nginx/conf.d/default.conf
+              subPath: default.conf
+      volumes:
+        - name: redirect-config
+          configMap:
+            name: keycloak-admin-redirect-config
 
         # --- Keycloak runtime ---
         - name: keycloak
@@ -2205,6 +2275,8 @@ spec:
             # Hostname & HTTP
             - name: KC_HOSTNAME_URL
               value: "https://auth.suncoast.systems"
+            - name: KC_HOSTNAME_ADMIN_URL
+              value: "https://keycloak-admin.teleport.app.suncoast.systems"
             - name: KC_HEALTH_ENABLED
               value: "true"
             - name: KC_HOSTNAME_STRICT
