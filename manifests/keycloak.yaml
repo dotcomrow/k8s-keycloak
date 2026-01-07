@@ -336,6 +336,7 @@ spec:
               path "secret/data/keycloak-google-client-id"        { capabilities = ["read"] }
               path "secret/data/keycloak-google-client-secret"    { capabilities = ["read"] }
               path "secret/data/keycloak-google-admin-email"      { capabilities = ["read"] }
+              path "secret/data/keycloak-google-admin-group"      { capabilities = ["read"] }
               path "secret/data/keycloak-google-sa-json"          { capabilities = ["read"] }
               path "secret/data/keycloak-google-group-role-map"   { capabilities = ["read"] }
               path "secret/data/keycloak-configurator-client-secret" { capabilities = ["read"] }
@@ -433,6 +434,7 @@ spec:
               path "secret/data/keycloak-google-client-id"        { capabilities = ["read"] }
               path "secret/data/keycloak-google-client-secret"    { capabilities = ["read"] }
               path "secret/data/keycloak-google-admin-email"      { capabilities = ["read"] }
+              path "secret/data/keycloak-google-admin-group"      { capabilities = ["read"] }
               path "secret/data/keycloak-google-sa-json"          { capabilities = ["read"] }
               path "secret/data/keycloak-google-group-role-map"   { capabilities = ["read"] }
               path "secret/data/keycloak-configurator-client-secret" { capabilities = ["read"] }
@@ -639,6 +641,9 @@ spec:
         vault.hashicorp.com/agent-inject-secret-google-admin-email: "secret/data/keycloak-google-admin-email"
         vault.hashicorp.com/agent-inject-template-google-admin-email: |
           {{- with secret "secret/data/keycloak-google-admin-email" -}}{{ .Data.data.value }}{{- end -}}
+        vault.hashicorp.com/agent-inject-secret-google-admin-group: "secret/data/keycloak-google-admin-group"
+        vault.hashicorp.com/agent-inject-template-google-admin-group: |
+          {{- with secret "secret/data/keycloak-google-admin-group" -}}{{ .Data.data.value }}{{- end -}}
         vault.hashicorp.com/agent-inject-secret-google-sa-json: "secret/data/keycloak-google-sa-json"
         vault.hashicorp.com/agent-inject-template-google-sa-json: |
           {{- with secret "secret/data/keycloak-google-sa-json" -}}{{ .Data.data.value }}{{- end -}}
@@ -935,6 +940,8 @@ spec:
               value: "false"
             - name: EXTERNAL_DISABLE_LOCAL_LOGIN
               value: "true"
+            - name: KEYCLOAK_EXTERNAL_ADMIN_MODE
+              value: "group"
             - name: ADMIN_GITHUB_ENABLED
               value: "false"
             - name: PROVIDER_WARN
@@ -1007,6 +1014,11 @@ spec:
               if [ -s /vault/secrets/google-admin-email ]; then
                 EXTERNAL_ADMIN_EMAIL="$(tr -d '\r\n' < /vault/secrets/google-admin-email)"
               fi
+              EXTERNAL_ADMIN_GROUP=""
+              if [ -s /vault/secrets/google-admin-group ]; then
+                EXTERNAL_ADMIN_GROUP="$(tr -d '\r\n' < /vault/secrets/google-admin-group)"
+              fi
+              EXTERNAL_ADMIN_MODE="${KEYCLOAK_EXTERNAL_ADMIN_MODE:-user}"
               INTERNAL_REALM_ROLES_RAW="${KEYCLOAK_INTERNAL_REALM_ROLES:-}"
               CONFIG_CLIENT_ID="keycloak-configurator"
               CONFIG_CLIENT_SECRET="$(cat /vault/secrets/keycloak-configurator-client-secret 2>/dev/null || true)"
@@ -1086,6 +1098,9 @@ spec:
               if [ -n "${GITHUB_ORG:-}" ] && [ -n "${GITHUB_TEAM:-}" ]; then
                 admin_key="${GITHUB_ORG}/${GITHUB_TEAM}"
                 GITHUB_ROLE_MAP_JSON="$(append_role_map_entry "$GITHUB_ROLE_MAP_JSON" "$admin_key" "client:realm-management:realm-admin")"
+              fi
+              if [ "$EXTERNAL_ADMIN_MODE" = "group" ] && [ -n "${EXTERNAL_ADMIN_GROUP:-}" ]; then
+                GOOGLE_GROUP_ROLE_MAP_JSON="$(append_role_map_entry "$GOOGLE_GROUP_ROLE_MAP_JSON" "$EXTERNAL_ADMIN_GROUP" "client:realm-management:realm-admin")"
               fi
 
               ensure_configurator_client() {
@@ -1429,7 +1444,9 @@ spec:
 
               ensure_realm "${INTERNAL_REALM}"
               ensure_realm "${EXTERNAL_REALM}"
-              ensure_user_admin "$EXTERNAL_REALM" "$EXTERNAL_ADMIN_EMAIL"
+              if [ "$EXTERNAL_ADMIN_MODE" = "user" ]; then
+                ensure_user_admin "$EXTERNAL_REALM" "$EXTERNAL_ADMIN_EMAIL"
+              fi
               
               # Use admin creds for master realm config to avoid permission edge cases
               if login_with_admin; then
@@ -2320,6 +2337,10 @@ spec:
 
               # Google Groups auth (Cloud Identity)
               export GOOGLE_ADMIN_EMAIL="$(cat /vault/secrets/google-admin-email)"
+              EXTERNAL_ADMIN_GROUP=""
+              if [ -s /vault/secrets/google-admin-group ]; then
+                EXTERNAL_ADMIN_GROUP="$(tr -d '\r\n' < /vault/secrets/google-admin-group)"
+              fi
               export GOOGLE_SA_JSON_PATH="/vault/secrets/google-sa-json"
               export GOOGLE_GROUP_ROLE_MAP="$(cat /vault/secrets/google-group-role-map 2>/dev/null || true)"
               export GOOGLE_ROLE_PREFIX="ggl:"
@@ -2328,6 +2349,9 @@ spec:
               export GOOGLE_GROUPS_TTL_SECONDS="600"
               if [ -z "${GOOGLE_GROUP_ROLE_MAP:-}" ]; then
                 export GOOGLE_GROUP_ROLE_MAP='{"tier-pro@yourdomain.com":["realm:tier_pro"],"feature-x@yourdomain.com":["realm:feature_x"]}'
+              fi
+              if [ -n "${EXTERNAL_ADMIN_GROUP:-}" ]; then
+                export GOOGLE_GROUP_ROLE_MAP="$(append_role_map_entry "$GOOGLE_GROUP_ROLE_MAP" "$EXTERNAL_ADMIN_GROUP" "client:realm-management:realm-admin")"
               fi
 
               echo "▶️  Starting Keycloak (image already built with provider)…"
