@@ -2237,7 +2237,6 @@ spec:
         - name: redirect-config
           configMap:
             name: keycloak-admin-redirect-config
-
         # --- Keycloak runtime ---
         - name: keycloak
           image: ghcr.io/dotcomrow/keycloak-image:24.0.5
