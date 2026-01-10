@@ -2270,8 +2270,28 @@ spec:
                 $KCADM add-roles -r "$realm" --rname "$default_role" --cclientid "$clientId" --rolename "$role" >/dev/null 2>&1 || true
               }
 
+              ensure_client_scope() {
+                local realm="$1"
+                local clientId="$2"
+                local scopeName="$3"
+                local CLIENT_UUID=""
+                local SCOPE_UUID=""
+                CLIENT_UUID=$($KCADM get clients -r "$realm" -q "clientId=$clientId" --fields id --format csv 2>/dev/null | tail -n1 || true)
+                CLIENT_UUID="$(clean_id "$CLIENT_UUID")"
+                [ -z "${CLIENT_UUID:-}" ] && return 0
+                SCOPE_UUID=$($KCADM get client-scopes -r "$realm" -q "name=$scopeName" --fields id --format csv 2>/dev/null | tail -n1 || true)
+                SCOPE_UUID="$(clean_id "$SCOPE_UUID")"
+                [ -z "${SCOPE_UUID:-}" ] && return 0
+                if $KCADM get "clients/$CLIENT_UUID/default-client-scopes" -r "$realm" 2>/dev/null \
+                  | grep -q "\"name\"[[:space:]]*:[[:space:]]*\"${scopeName}\""; then
+                  return 0
+                fi
+                $KCADM create "clients/$CLIENT_UUID/default-client-scopes/$SCOPE_UUID" -r "$realm" >/dev/null 2>&1 || true
+              }
+
               ensure_client_roles "$INTERNAL_REALM" "$DROOLS_WORKBENCH_CLIENT_ID" \
                 admin analyst developer user manager process-admin rest-all rest-project
+              ensure_client_scope "$INTERNAL_REALM" "$DROOLS_WORKBENCH_CLIENT_ID" "roles"
               ensure_default_client_role_member "$INTERNAL_REALM" "$DROOLS_WORKBENCH_CLIENT_ID" "user"
 
               assign_realm_role_to_service_account() {
