@@ -90,7 +90,7 @@ metadata:
   name: keycloak-role-config-internal
   namespace: keycloak
 data:
-  internal-realm-roles: "openwebui_access,ollama_access,ollama_service_access,drools_access,drools_service_access"
+  internal-realm-roles: "openwebui_access,ollama_access,ollama_service_access,drools_access,drools_service_access,drools_admin,admin,analyst,developer,user,rest-all,rest-user,kie-server"
 ---
 apiVersion: v1
 kind: ConfigMap
@@ -1056,6 +1056,7 @@ spec:
               CLIENT_SECRET="$(cat /vault/secrets/github-client-secret)"
               GITHUB_ORG="$(cat /vault/secrets/github-org)"
               GITHUB_TEAM="$(cat /vault/secrets/keycloak-admin-team)"
+              RULES_ADMIN_TEAM="${KEYCLOAK_RULES_ADMIN_TEAM:-rules_admin}"
               GOOGLE_CLIENT_ID="$(cat /vault/secrets/google-client-id 2>/dev/null || true)"
               GOOGLE_CLIENT_SECRET="$(cat /vault/secrets/google-client-secret 2>/dev/null || true)"
               GITHUB_ROLE_MAP_JSON="$(cat /vault/secrets/github-role-map 2>/dev/null || true)"
@@ -1156,6 +1157,10 @@ spec:
               if [ -n "${GITHUB_ORG:-}" ] && [ -n "${GITHUB_TEAM:-}" ]; then
                 admin_key="${GITHUB_ORG}/${GITHUB_TEAM}"
                 GITHUB_ROLE_MAP_JSON="$(append_role_map_entry "$GITHUB_ROLE_MAP_JSON" "$admin_key" "client:realm-management:realm-admin")"
+              fi
+              if [ -n "${GITHUB_ORG:-}" ] && [ -n "${RULES_ADMIN_TEAM:-}" ]; then
+                rules_admin_key="${GITHUB_ORG}/${RULES_ADMIN_TEAM}"
+                GITHUB_ROLE_MAP_JSON="$(append_role_map_entry "$GITHUB_ROLE_MAP_JSON" "$rules_admin_key" "client:realm-management:realm-admin")"
               fi
               if [ "$EXTERNAL_ADMIN_MODE" = "group" ] && [ -n "${EXTERNAL_ADMIN_GROUP:-}" ]; then
                 GOOGLE_GROUP_ROLE_MAP_JSON="$(append_role_map_entry "$GOOGLE_GROUP_ROLE_MAP_JSON" "$EXTERNAL_ADMIN_GROUP" "client:realm-management:realm-admin")"
@@ -2163,6 +2168,7 @@ spec:
               }
 
               ensure_default_role_member "$INTERNAL_REALM" "drools_access"
+              ensure_default_role_member "$INTERNAL_REALM" "user"
               ensure_default_role_member "$EXTERNAL_REALM" "drools_access"
 
               ensure_roles_from_map() {
@@ -2223,6 +2229,8 @@ spec:
 
               assign_realm_role_to_service_account "$INTERNAL_REALM" "$OLLAMA_SERVICE_CLIENT_ID" "ollama_service_access"
               assign_realm_role_to_service_account "$INTERNAL_REALM" "$DROOLS_SERVICE_CLIENT_ID" "drools_service_access"
+              assign_realm_role_to_service_account "$INTERNAL_REALM" "$DROOLS_SERVICE_CLIENT_ID" "kie-server"
+              assign_realm_role_to_service_account "$INTERNAL_REALM" "$DROOLS_SERVICE_CLIENT_ID" "rest-all"
 
               enable_token_exchange_for_client() {
                 local realm="$1"
@@ -2441,6 +2449,7 @@ spec:
               # Export org/team for the custom provider
               export GITHUB_ORG="$(cat /vault/secrets/github-org)"
               export GITHUB_TEAM="$(cat /vault/secrets/keycloak-admin-team)"
+              export RULES_ADMIN_TEAM="${KEYCLOAK_RULES_ADMIN_TEAM:-rules_admin}"
               export DEBUG_ALWAYS_GRANT="${DEBUG_ALWAYS_GRANT:-false}"
               export GITHUB_ADMIN_USERNAMES="${GITHUB_ADMIN_USERNAMES:-}"
               append_role_map_entry() {
@@ -2482,6 +2491,10 @@ spec:
               if [ -n "${GITHUB_ORG:-}" ] && [ -n "${GITHUB_TEAM:-}" ]; then
                 admin_key="${GITHUB_ORG}/${GITHUB_TEAM}"
                 export GITHUB_ROLE_MAP="$(append_role_map_entry "$GITHUB_ROLE_MAP" "$admin_key" "client:realm-management:realm-admin")"
+              fi
+              if [ -n "${GITHUB_ORG:-}" ] && [ -n "${RULES_ADMIN_TEAM:-}" ]; then
+                rules_admin_key="${GITHUB_ORG}/${RULES_ADMIN_TEAM}"
+                export GITHUB_ROLE_MAP="$(append_role_map_entry "$GITHUB_ROLE_MAP" "$rules_admin_key" "client:realm-management:realm-admin")"
               fi
 
               # Google Groups auth (Cloud Identity)
