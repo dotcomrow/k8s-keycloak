@@ -1161,6 +1161,7 @@ spec:
               if [ -n "${GITHUB_ORG:-}" ] && [ -n "${RULES_ADMIN_TEAM:-}" ]; then
                 rules_admin_key="${GITHUB_ORG}/${RULES_ADMIN_TEAM}"
                 GITHUB_ROLE_MAP_JSON="$(append_role_map_entry "$GITHUB_ROLE_MAP_JSON" "$rules_admin_key" "client:realm-management:realm-admin")"
+                GITHUB_ROLE_MAP_JSON="$(append_role_map_entry "$GITHUB_ROLE_MAP_JSON" "$rules_admin_key" "client:${DROOLS_WORKBENCH_CLIENT_ID}:admin")"
               fi
               if [ "$EXTERNAL_ADMIN_MODE" = "group" ] && [ -n "${EXTERNAL_ADMIN_GROUP:-}" ]; then
                 GOOGLE_GROUP_ROLE_MAP_JSON="$(append_role_map_entry "$GOOGLE_GROUP_ROLE_MAP_JSON" "$EXTERNAL_ADMIN_GROUP" "client:realm-management:realm-admin")"
@@ -2213,6 +2214,34 @@ spec:
               ensure_roles_from_map "$INTERNAL_REALM" "$GITHUB_ROLE_MAP_JSON"
               ensure_roles_from_map "$EXTERNAL_REALM" "$GOOGLE_GROUP_ROLE_MAP_JSON"
 
+              ensure_client_roles() {
+                local realm="$1"
+                local clientId="$2"
+                shift 2
+                local CLIENT_UUID=""
+                CLIENT_UUID=$($KCADM get clients -r "$realm" -q "clientId=$clientId" --fields id --format csv 2>/dev/null | tail -n1 || true)
+                CLIENT_UUID="$(clean_id "$CLIENT_UUID")"
+                [ -z "${CLIENT_UUID:-}" ] && return 0
+                for role in "$@"; do
+                  [ -z "${role:-}" ] && continue
+                  $KCADM get "clients/$CLIENT_UUID/roles/$role" -r "$realm" >/dev/null 2>&1 || \
+                    $KCADM create "clients/$CLIENT_UUID/roles" -r "$realm" -s "name=$role" >/dev/null 2>&1 || true
+                done
+              }
+
+              ensure_default_client_role_member() {
+                local realm="$1"
+                local clientId="$2"
+                local role="$3"
+                local default_role="default-roles-${realm}"
+                [ -z "${role:-}" ] && return 0
+                $KCADM add-roles -r "$realm" --rname "$default_role" --cclientid "$clientId" --rolename "$role" >/dev/null 2>&1 || true
+              }
+
+              ensure_client_roles "$INTERNAL_REALM" "$DROOLS_WORKBENCH_CLIENT_ID" \
+                admin analyst developer user manager process-admin rest-all rest-project
+              ensure_default_client_role_member "$INTERNAL_REALM" "$DROOLS_WORKBENCH_CLIENT_ID" "user"
+
               assign_realm_role_to_service_account() {
                 local realm="$1"
                 local clientId="$2"
@@ -2450,6 +2479,11 @@ spec:
               export GITHUB_ORG="$(cat /vault/secrets/github-org)"
               export GITHUB_TEAM="$(cat /vault/secrets/keycloak-admin-team)"
               export RULES_ADMIN_TEAM="${KEYCLOAK_RULES_ADMIN_TEAM:-rules_admin}"
+              DROOLS_WORKBENCH_CLIENT_ID="drools-workbench"
+              if [ -s /vault/secrets/client-id-drools-workbench ]; then
+                DROOLS_WORKBENCH_CLIENT_ID="$(tr -d '\r\n' < /vault/secrets/client-id-drools-workbench)"
+              fi
+              export DROOLS_WORKBENCH_CLIENT_ID
               export DEBUG_ALWAYS_GRANT="${DEBUG_ALWAYS_GRANT:-false}"
               export GITHUB_ADMIN_USERNAMES="${GITHUB_ADMIN_USERNAMES:-}"
               append_role_map_entry() {
@@ -2495,6 +2529,7 @@ spec:
               if [ -n "${GITHUB_ORG:-}" ] && [ -n "${RULES_ADMIN_TEAM:-}" ]; then
                 rules_admin_key="${GITHUB_ORG}/${RULES_ADMIN_TEAM}"
                 export GITHUB_ROLE_MAP="$(append_role_map_entry "$GITHUB_ROLE_MAP" "$rules_admin_key" "client:realm-management:realm-admin")"
+                export GITHUB_ROLE_MAP="$(append_role_map_entry "$GITHUB_ROLE_MAP" "$rules_admin_key" "client:${DROOLS_WORKBENCH_CLIENT_ID}:admin")"
               fi
 
               # Google Groups auth (Cloud Identity)
