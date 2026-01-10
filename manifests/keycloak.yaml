@@ -59,10 +59,7 @@ data:
         "https://workbench-drools.teleport.app.suncoast.systems/*",
         "https://workbench-drools.teleport.app.suncoast.systems/business-central/*"
       ],
-      "webOrigins": ["https://workbench-drools.teleport.app.suncoast.systems"],
-      "attributes": {
-        "pkce.code.challenge.method": "S256"
-      }
+      "webOrigins": ["https://workbench-drools.teleport.app.suncoast.systems"]
     }
   drools-kie-server.json: |
     {
