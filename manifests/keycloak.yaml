@@ -1174,6 +1174,8 @@ spec:
               fi
               if [ -n "${GITHUB_ORG:-}" ] && [ -n "${RULES_ADMIN_TEAM:-}" ]; then
                 rules_admin_key="${GITHUB_ORG}/${RULES_ADMIN_TEAM}"
+                GITHUB_ROLE_MAP_JSON="$(append_role_map_entry "$GITHUB_ROLE_MAP_JSON" "$rules_admin_key" "realm:admin")"
+                GITHUB_ROLE_MAP_JSON="$(append_role_map_entry "$GITHUB_ROLE_MAP_JSON" "$rules_admin_key" "realm:rest-all")"
                 GITHUB_ROLE_MAP_JSON="$(append_role_map_entry "$GITHUB_ROLE_MAP_JSON" "$rules_admin_key" "client:realm-management:realm-admin")"
                 GITHUB_ROLE_MAP_JSON="$(append_role_map_entry "$GITHUB_ROLE_MAP_JSON" "$rules_admin_key" "client:${DROOLS_WORKBENCH_CLIENT_ID}:admin")"
               fi
@@ -2556,6 +2558,8 @@ spec:
               fi
               if [ -n "${GITHUB_ORG:-}" ] && [ -n "${RULES_ADMIN_TEAM:-}" ]; then
                 rules_admin_key="${GITHUB_ORG}/${RULES_ADMIN_TEAM}"
+                export GITHUB_ROLE_MAP="$(append_role_map_entry "$GITHUB_ROLE_MAP" "$rules_admin_key" "realm:admin")"
+                export GITHUB_ROLE_MAP="$(append_role_map_entry "$GITHUB_ROLE_MAP" "$rules_admin_key" "realm:rest-all")"
                 export GITHUB_ROLE_MAP="$(append_role_map_entry "$GITHUB_ROLE_MAP" "$rules_admin_key" "client:realm-management:realm-admin")"
                 export GITHUB_ROLE_MAP="$(append_role_map_entry "$GITHUB_ROLE_MAP" "$rules_admin_key" "client:${DROOLS_WORKBENCH_CLIENT_ID}:admin")"
               fi
