@@ -2272,10 +2272,33 @@ spec:
                 $KCADM add-roles -r "$realm" --uuserid "$SA_ID" --rolename "$role" >/dev/null 2>&1 || true
               }
 
+              assign_client_role_to_service_account() {
+                local realm="$1"
+                local serviceClientId="$2"
+                local targetClientId="$3"
+                local role="$4"
+                local service_uuid=""
+                local target_uuid=""
+                local sa_id=""
+                service_uuid=$($KCADM get clients -r "$realm" -q "clientId=$serviceClientId" --fields id --format csv 2>/dev/null | tail -n1 || true)
+                service_uuid="$(clean_id "$service_uuid")"
+                [ -z "${service_uuid:-}" ] && return 0
+                target_uuid=$($KCADM get clients -r "$realm" -q "clientId=$targetClientId" --fields id --format csv 2>/dev/null | tail -n1 || true)
+                target_uuid="$(clean_id "$target_uuid")"
+                [ -z "${target_uuid:-}" ] && return 0
+                sa_id=$($KCADM get "clients/$service_uuid/service-account-user" -r "$realm" 2>/dev/null \
+                  | sed -n "s/.*\"id\"[[:space:]]*:[[:space:]]*\"\\([^\"]*\\)\".*/\\1/p" | head -n1 || true)
+                sa_id="$(clean_id "$sa_id")"
+                [ -z "${sa_id:-}" ] && return 0
+                $KCADM add-roles -r "$realm" --uuserid "$sa_id" --cclientid "$targetClientId" --rolename "$role" >/dev/null 2>&1 || true
+              }
+
               assign_realm_role_to_service_account "$INTERNAL_REALM" "$OLLAMA_SERVICE_CLIENT_ID" "ollama_service_access"
               assign_realm_role_to_service_account "$INTERNAL_REALM" "$DROOLS_SERVICE_CLIENT_ID" "drools_service_access"
               assign_realm_role_to_service_account "$INTERNAL_REALM" "$DROOLS_SERVICE_CLIENT_ID" "kie-server"
               assign_realm_role_to_service_account "$INTERNAL_REALM" "$DROOLS_SERVICE_CLIENT_ID" "rest-all"
+              assign_client_role_to_service_account "$INTERNAL_REALM" "$DROOLS_SERVICE_CLIENT_ID" "$DROOLS_WORKBENCH_CLIENT_ID" "admin"
+              assign_client_role_to_service_account "$INTERNAL_REALM" "$DROOLS_SERVICE_CLIENT_ID" "$DROOLS_WORKBENCH_CLIENT_ID" "rest-all"
 
               enable_token_exchange_for_client() {
                 local realm="$1"
