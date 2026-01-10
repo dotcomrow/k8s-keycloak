@@ -1129,6 +1129,9 @@ spec:
                 local trimmed=""
                 local json_flat=""
                 local role_escaped=""
+                local key_regex=""
+                local role_regex=""
+                local key_repl=""
                 if [ -z "${key:-}" ] || [ -z "${role:-}" ]; then
                   printf '%s' "$json"
                   return 0
@@ -1138,13 +1141,16 @@ spec:
                   return 0
                 fi
                 json_flat="$(printf '%s' "$json" | tr -d '\n')"
-                if printf '%s' "$json_flat" | grep -q "\"${key}\""; then
-                  if printf '%s' "$json_flat" | grep -q "\"${key}\"[[:space:]]*:[[:space:]]*\\[[^]]*\"${role}\""; then
+                key_regex="$(printf '%s' "$key" | sed 's/[.[\\*^$(){}+?|]/\\\\&/g; s/|/\\\\|/g')"
+                role_regex="$(printf '%s' "$role" | sed 's/[.[\\*^$(){}+?|]/\\\\&/g; s/|/\\\\|/g')"
+                key_repl="$(printf '%s' "$key" | sed 's/[&|]/\\\\&/g')"
+                if printf '%s' "$json_flat" | grep -q "\"${key_regex}\""; then
+                  if printf '%s' "$json_flat" | grep -q "\"${key_regex}\"[[:space:]]*:[[:space:]]*\\[[^]]*\"${role_regex}\""; then
                     printf '%s' "$json_flat"
                     return 0
                   fi
-                  role_escaped="$(printf '%s' "$role" | sed 's/[&/]/\\&/g')"
-                  printf '%s' "$json_flat" | sed "s/\"${key}\"[[:space:]]*:[[:space:]]*\\[\\([^]]*\\)\\]/\"${key}\":[\\1,\"${role_escaped}\"]/"
+                  role_escaped="$(printf '%s' "$role" | sed 's/[&|]/\\\\&/g')"
+                  printf '%s' "$json_flat" | sed "s|\"${key_regex}\"[[:space:]]*:[[:space:]]*\\[\\([^]]*\\)\\]|\"${key_repl}\":[\\1,\"${role_escaped}\"]|"
                   return 0
                 fi
                 trimmed="$(printf '%s' "$json_flat" | sed 's/[[:space:]]*$//')"
@@ -2501,6 +2507,9 @@ spec:
                 local trimmed=""
                 local json_flat=""
                 local role_escaped=""
+                local key_regex=""
+                local role_regex=""
+                local key_repl=""
                 if [ -z "${key:-}" ] || [ -z "${role:-}" ]; then
                   printf '%s' "$json"
                   return 0
@@ -2510,13 +2519,16 @@ spec:
                   return 0
                 fi
                 json_flat="$(printf '%s' "$json" | tr -d '\n')"
-                if printf '%s' "$json_flat" | grep -q "\"${key}\""; then
-                  if printf '%s' "$json_flat" | grep -q "\"${key}\"[[:space:]]*:[[:space:]]*\\[[^]]*\"${role}\""; then
+                key_regex="$(printf '%s' "$key" | sed 's/[.[\\*^$(){}+?|]/\\\\&/g; s/|/\\\\|/g')"
+                role_regex="$(printf '%s' "$role" | sed 's/[.[\\*^$(){}+?|]/\\\\&/g; s/|/\\\\|/g')"
+                key_repl="$(printf '%s' "$key" | sed 's/[&|]/\\\\&/g')"
+                if printf '%s' "$json_flat" | grep -q "\"${key_regex}\""; then
+                  if printf '%s' "$json_flat" | grep -q "\"${key_regex}\"[[:space:]]*:[[:space:]]*\\[[^]]*\"${role_regex}\""; then
                     printf '%s' "$json_flat"
                     return 0
                   fi
-                  role_escaped="$(printf '%s' "$role" | sed 's/[&/]/\\&/g')"
-                  printf '%s' "$json_flat" | sed "s/\"${key}\"[[:space:]]*:[[:space:]]*\\[\\([^]]*\\)\\]/\"${key}\":[\\1,\"${role_escaped}\"]/"
+                  role_escaped="$(printf '%s' "$role" | sed 's/[&|]/\\\\&/g')"
+                  printf '%s' "$json_flat" | sed "s|\"${key_regex}\"[[:space:]]*:[[:space:]]*\\[\\([^]]*\\)\\]|\"${key_repl}\":[\\1,\"${role_escaped}\"]|"
                   return 0
                 fi
                 trimmed="$(printf '%s' "$json_flat" | sed 's/[[:space:]]*$//')"
