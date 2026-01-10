@@ -1082,6 +1082,7 @@ spec:
               EXTERNAL_DISABLE_LOCAL_LOGIN="${EXTERNAL_DISABLE_LOCAL_LOGIN:-true}"
               OPENWEBUI_CLIENT_ID="openwebui"
               OLLAMA_SERVICE_CLIENT_ID="ollama-service"
+              DROOLS_WORKBENCH_CLIENT_ID="drools-workbench"
               DROOLS_SERVICE_CLIENT_ID="drools-kie-server-service"
               PUBLIC_APP_CLIENT_ID="public-app"
               GRAVITEE_INTROSPECT_CLIENT_ID="gravitee-introspection"
@@ -1091,6 +1092,9 @@ spec:
               fi
               if [ -s "${CLIENT_ID_DIR}/client-id-ollama-service" ]; then
                 OLLAMA_SERVICE_CLIENT_ID="$(tr -d '\r\n' < "${CLIENT_ID_DIR}/client-id-ollama-service")"
+              fi
+              if [ -s "${CLIENT_ID_DIR}/client-id-drools-workbench" ]; then
+                DROOLS_WORKBENCH_CLIENT_ID="$(tr -d '\r\n' < "${CLIENT_ID_DIR}/client-id-drools-workbench")"
               fi
               if [ -s "${CLIENT_ID_DIR}/client-id-drools-kie-server-service" ]; then
                 DROOLS_SERVICE_CLIENT_ID="$(tr -d '\r\n' < "${CLIENT_ID_DIR}/client-id-drools-kie-server-service")"
@@ -2051,6 +2055,19 @@ spec:
                 fi
               }
 
+              clear_pkce_for_client() {
+                local realm="$1"
+                local clientId="$2"
+                CID=$($KCADM get clients -r "$realm" -q "clientId=$clientId" --fields id --format csv 2>/dev/null | tail -n1 || true)
+                CID="$(clean_id "$CID")"
+                if [ -n "${CID:-}" ]; then
+                  $KCADM update "clients/$CID" -r "$realm" \
+                    -s "attributes.\"pkce.code.challenge.method\"=" || true
+                else
+                  echo "ℹ️  client not found for PKCE clear: $clientId"
+                fi
+              }
+
               ensure_realm_roles_in_scope_mapper() {
                 local realm="$1"
                 local clientId="$2"
@@ -2102,6 +2119,7 @@ spec:
               apply_clients_from_dir "$INTERNAL_REALM" "$CLIENT_CONFIG_DIR_INTERNAL"
               disable_direct_grants_for_clients "$INTERNAL_REALM"
               enforce_pkce_for_client "$INTERNAL_REALM" "$OPENWEBUI_CLIENT_ID"
+              clear_pkce_for_client "$INTERNAL_REALM" "$DROOLS_WORKBENCH_CLIENT_ID"
               ensure_realm_roles_in_scope_mapper "$INTERNAL_REALM" "$OPENWEBUI_CLIENT_ID"
               ensure_client_attribute_mapper "$INTERNAL_REALM" "$OPENWEBUI_CLIENT_ID" "openwebui-picture" "picture" "picture"
               if ! $KCADM get clients -r "$INTERNAL_REALM" -q "clientId=$OPENWEBUI_CLIENT_ID" --fields id --format csv 2>/dev/null | tail -n1 | grep -q .; then
