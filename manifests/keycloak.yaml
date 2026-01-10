@@ -1187,6 +1187,13 @@ spec:
                 GITHUB_ROLE_MAP_JSON="$(append_role_map_entry "$GITHUB_ROLE_MAP_JSON" "$rules_admin_key" "realm:rest-project")"
                 GITHUB_ROLE_MAP_JSON="$(append_role_map_entry "$GITHUB_ROLE_MAP_JSON" "$rules_admin_key" "client:realm-management:realm-admin")"
                 GITHUB_ROLE_MAP_JSON="$(append_role_map_entry "$GITHUB_ROLE_MAP_JSON" "$rules_admin_key" "client:${DROOLS_WORKBENCH_CLIENT_ID}:admin")"
+                GITHUB_ROLE_MAP_JSON="$(append_role_map_entry "$GITHUB_ROLE_MAP_JSON" "$rules_admin_key" "client:${DROOLS_WORKBENCH_CLIENT_ID}:analyst")"
+                GITHUB_ROLE_MAP_JSON="$(append_role_map_entry "$GITHUB_ROLE_MAP_JSON" "$rules_admin_key" "client:${DROOLS_WORKBENCH_CLIENT_ID}:developer")"
+                GITHUB_ROLE_MAP_JSON="$(append_role_map_entry "$GITHUB_ROLE_MAP_JSON" "$rules_admin_key" "client:${DROOLS_WORKBENCH_CLIENT_ID}:user")"
+                GITHUB_ROLE_MAP_JSON="$(append_role_map_entry "$GITHUB_ROLE_MAP_JSON" "$rules_admin_key" "client:${DROOLS_WORKBENCH_CLIENT_ID}:manager")"
+                GITHUB_ROLE_MAP_JSON="$(append_role_map_entry "$GITHUB_ROLE_MAP_JSON" "$rules_admin_key" "client:${DROOLS_WORKBENCH_CLIENT_ID}:process-admin")"
+                GITHUB_ROLE_MAP_JSON="$(append_role_map_entry "$GITHUB_ROLE_MAP_JSON" "$rules_admin_key" "client:${DROOLS_WORKBENCH_CLIENT_ID}:rest-all")"
+                GITHUB_ROLE_MAP_JSON="$(append_role_map_entry "$GITHUB_ROLE_MAP_JSON" "$rules_admin_key" "client:${DROOLS_WORKBENCH_CLIENT_ID}:rest-project")"
               fi
               if [ "$EXTERNAL_ADMIN_MODE" = "group" ] && [ -n "${EXTERNAL_ADMIN_GROUP:-}" ]; then
                 GOOGLE_GROUP_ROLE_MAP_JSON="$(append_role_map_entry "$GOOGLE_GROUP_ROLE_MAP_JSON" "$EXTERNAL_ADMIN_GROUP" "client:realm-management:realm-admin")"
@@ -2603,6 +2610,13 @@ spec:
                 export GITHUB_ROLE_MAP="$(append_role_map_entry "$GITHUB_ROLE_MAP" "$rules_admin_key" "realm:rest-project")"
                 export GITHUB_ROLE_MAP="$(append_role_map_entry "$GITHUB_ROLE_MAP" "$rules_admin_key" "client:realm-management:realm-admin")"
                 export GITHUB_ROLE_MAP="$(append_role_map_entry "$GITHUB_ROLE_MAP" "$rules_admin_key" "client:${DROOLS_WORKBENCH_CLIENT_ID}:admin")"
+                export GITHUB_ROLE_MAP="$(append_role_map_entry "$GITHUB_ROLE_MAP" "$rules_admin_key" "client:${DROOLS_WORKBENCH_CLIENT_ID}:analyst")"
+                export GITHUB_ROLE_MAP="$(append_role_map_entry "$GITHUB_ROLE_MAP" "$rules_admin_key" "client:${DROOLS_WORKBENCH_CLIENT_ID}:developer")"
+                export GITHUB_ROLE_MAP="$(append_role_map_entry "$GITHUB_ROLE_MAP" "$rules_admin_key" "client:${DROOLS_WORKBENCH_CLIENT_ID}:user")"
+                export GITHUB_ROLE_MAP="$(append_role_map_entry "$GITHUB_ROLE_MAP" "$rules_admin_key" "client:${DROOLS_WORKBENCH_CLIENT_ID}:manager")"
+                export GITHUB_ROLE_MAP="$(append_role_map_entry "$GITHUB_ROLE_MAP" "$rules_admin_key" "client:${DROOLS_WORKBENCH_CLIENT_ID}:process-admin")"
+                export GITHUB_ROLE_MAP="$(append_role_map_entry "$GITHUB_ROLE_MAP" "$rules_admin_key" "client:${DROOLS_WORKBENCH_CLIENT_ID}:rest-all")"
+                export GITHUB_ROLE_MAP="$(append_role_map_entry "$GITHUB_ROLE_MAP" "$rules_admin_key" "client:${DROOLS_WORKBENCH_CLIENT_ID}:rest-project")"
               fi
 
               # Google Groups auth (Cloud Identity)
