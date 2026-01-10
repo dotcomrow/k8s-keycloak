@@ -1127,6 +1127,8 @@ spec:
                 local key="$2"
                 local role="$3"
                 local trimmed=""
+                local json_flat=""
+                local role_escaped=""
                 if [ -z "${key:-}" ] || [ -z "${role:-}" ]; then
                   printf '%s' "$json"
                   return 0
@@ -1135,11 +1137,17 @@ spec:
                   printf '{"%s":["%s"]}' "$key" "$role"
                   return 0
                 fi
-                if printf '%s' "$json" | grep -q "\"${key}\""; then
-                  printf '%s' "$json"
+                json_flat="$(printf '%s' "$json" | tr -d '\n')"
+                if printf '%s' "$json_flat" | grep -q "\"${key}\""; then
+                  if printf '%s' "$json_flat" | grep -q "\"${key}\"[[:space:]]*:[[:space:]]*\\[[^]]*\"${role}\""; then
+                    printf '%s' "$json_flat"
+                    return 0
+                  fi
+                  role_escaped="$(printf '%s' "$role" | sed 's/[&/]/\\&/g')"
+                  printf '%s' "$json_flat" | sed "s/\"${key}\"[[:space:]]*:[[:space:]]*\\[\\([^]]*\\)\\]/\"${key}\":[\\1,\"${role_escaped}\"]/"
                   return 0
                 fi
-                trimmed="$(printf '%s' "$json" | tr -d '\n' | sed 's/[[:space:]]*$//')"
+                trimmed="$(printf '%s' "$json_flat" | sed 's/[[:space:]]*$//')"
                 if printf '%s' "$trimmed" | grep -q '^{' && printf '%s' "$trimmed" | grep -q '}$'; then
                   local inner="${trimmed#\{}"
                   inner="${inner%\}}"
@@ -2491,6 +2499,8 @@ spec:
                 local key="$2"
                 local role="$3"
                 local trimmed=""
+                local json_flat=""
+                local role_escaped=""
                 if [ -z "${key:-}" ] || [ -z "${role:-}" ]; then
                   printf '%s' "$json"
                   return 0
@@ -2499,11 +2509,17 @@ spec:
                   printf '{"%s":["%s"]}' "$key" "$role"
                   return 0
                 fi
-                if printf '%s' "$json" | grep -q "\"${key}\""; then
-                  printf '%s' "$json"
+                json_flat="$(printf '%s' "$json" | tr -d '\n')"
+                if printf '%s' "$json_flat" | grep -q "\"${key}\""; then
+                  if printf '%s' "$json_flat" | grep -q "\"${key}\"[[:space:]]*:[[:space:]]*\\[[^]]*\"${role}\""; then
+                    printf '%s' "$json_flat"
+                    return 0
+                  fi
+                  role_escaped="$(printf '%s' "$role" | sed 's/[&/]/\\&/g')"
+                  printf '%s' "$json_flat" | sed "s/\"${key}\"[[:space:]]*:[[:space:]]*\\[\\([^]]*\\)\\]/\"${key}\":[\\1,\"${role_escaped}\"]/"
                   return 0
                 fi
-                trimmed="$(printf '%s' "$json" | tr -d '\n' | sed 's/[[:space:]]*$//')"
+                trimmed="$(printf '%s' "$json_flat" | sed 's/[[:space:]]*$//')"
                 if printf '%s' "$trimmed" | grep -q '^{' && printf '%s' "$trimmed" | grep -q '}$'; then
                   local inner="${trimmed#\{}"
                   inner="${inner%\}}"
