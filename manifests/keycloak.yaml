@@ -992,6 +992,8 @@ spec:
               value: "true"
             - name: KEYCLOAK_EXTERNAL_ADMIN_MODE
               value: "group"
+            - name: KEYCLOAK_RULES_ADMIN_TEAM
+              value: "rules_admin"
             - name: ADMIN_GITHUB_ENABLED
               value: "false"
             - name: PROVIDER_WARN
@@ -1176,6 +1178,10 @@ spec:
                 rules_admin_key="${GITHUB_ORG}/${RULES_ADMIN_TEAM}"
                 GITHUB_ROLE_MAP_JSON="$(append_role_map_entry "$GITHUB_ROLE_MAP_JSON" "$rules_admin_key" "realm:admin")"
                 GITHUB_ROLE_MAP_JSON="$(append_role_map_entry "$GITHUB_ROLE_MAP_JSON" "$rules_admin_key" "realm:rest-all")"
+                GITHUB_ROLE_MAP_JSON="$(append_role_map_entry "$GITHUB_ROLE_MAP_JSON" "$rules_admin_key" "realm:drools_access")"
+                GITHUB_ROLE_MAP_JSON="$(append_role_map_entry "$GITHUB_ROLE_MAP_JSON" "$rules_admin_key" "realm:drools_admin")"
+                GITHUB_ROLE_MAP_JSON="$(append_role_map_entry "$GITHUB_ROLE_MAP_JSON" "$rules_admin_key" "realm:drools_service_access")"
+                GITHUB_ROLE_MAP_JSON="$(append_role_map_entry "$GITHUB_ROLE_MAP_JSON" "$rules_admin_key" "realm:kie-server")"
                 GITHUB_ROLE_MAP_JSON="$(append_role_map_entry "$GITHUB_ROLE_MAP_JSON" "$rules_admin_key" "client:realm-management:realm-admin")"
                 GITHUB_ROLE_MAP_JSON="$(append_role_map_entry "$GITHUB_ROLE_MAP_JSON" "$rules_admin_key" "client:${DROOLS_WORKBENCH_CLIENT_ID}:admin")"
               fi
@@ -2503,6 +2509,8 @@ spec:
               value: "/"
             - name: KC_HTTP_COOKIE_SAME_SITE
               value: "LAX"
+            - name: KEYCLOAK_RULES_ADMIN_TEAM
+              value: "rules_admin"
           command: ["/bin/bash","-lc"]
           args:
             - |
@@ -2583,6 +2591,10 @@ spec:
                 rules_admin_key="${GITHUB_ORG}/${RULES_ADMIN_TEAM}"
                 export GITHUB_ROLE_MAP="$(append_role_map_entry "$GITHUB_ROLE_MAP" "$rules_admin_key" "realm:admin")"
                 export GITHUB_ROLE_MAP="$(append_role_map_entry "$GITHUB_ROLE_MAP" "$rules_admin_key" "realm:rest-all")"
+                export GITHUB_ROLE_MAP="$(append_role_map_entry "$GITHUB_ROLE_MAP" "$rules_admin_key" "realm:drools_access")"
+                export GITHUB_ROLE_MAP="$(append_role_map_entry "$GITHUB_ROLE_MAP" "$rules_admin_key" "realm:drools_admin")"
+                export GITHUB_ROLE_MAP="$(append_role_map_entry "$GITHUB_ROLE_MAP" "$rules_admin_key" "realm:drools_service_access")"
+                export GITHUB_ROLE_MAP="$(append_role_map_entry "$GITHUB_ROLE_MAP" "$rules_admin_key" "realm:kie-server")"
                 export GITHUB_ROLE_MAP="$(append_role_map_entry "$GITHUB_ROLE_MAP" "$rules_admin_key" "client:realm-management:realm-admin")"
                 export GITHUB_ROLE_MAP="$(append_role_map_entry "$GITHUB_ROLE_MAP" "$rules_admin_key" "client:${DROOLS_WORKBENCH_CLIENT_ID}:admin")"
               fi
