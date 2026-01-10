@@ -2206,6 +2206,65 @@ spec:
               assign_realm_role_to_service_account "$INTERNAL_REALM" "$OLLAMA_SERVICE_CLIENT_ID" "ollama_service_access"
               assign_realm_role_to_service_account "$INTERNAL_REALM" "$DROOLS_SERVICE_CLIENT_ID" "drools_service_access"
 
+              enable_token_exchange_for_client() {
+                local realm="$1"
+                local target_client_id="$2"
+                local allowed_client_id="$3"
+                local target_uuid=""
+                local allowed_uuid=""
+                local perm_json=""
+                local perm_id=""
+                local policy_name=""
+                local policy_id=""
+                if [ -z "${realm:-}" ] || [ -z "${target_client_id:-}" ] || [ -z "${allowed_client_id:-}" ]; then
+                  return 0
+                fi
+                target_uuid=$($KCADM get clients -r "$realm" -q "clientId=$target_client_id" --fields id --format csv 2>/dev/null | tail -n1 || true)
+                target_uuid="$(clean_id "$target_uuid")"
+                if [ -z "${target_uuid:-}" ]; then
+                  echo "⚠️  token exchange target client not found: $target_client_id"
+                  return 0
+                fi
+                allowed_uuid=$($KCADM get clients -r "$realm" -q "clientId=$allowed_client_id" --fields id --format csv 2>/dev/null | tail -n1 || true)
+                allowed_uuid="$(clean_id "$allowed_uuid")"
+                if [ -z "${allowed_uuid:-}" ]; then
+                  echo "⚠️  token exchange allowed client not found: $allowed_client_id"
+                  return 0
+                fi
+
+                $KCADM update "clients/$target_uuid/management/permissions" -r "$realm" -s enabled=true >/dev/null 2>&1 || true
+
+                policy_name="token-exchange-${allowed_client_id}"
+                policy_id=$($KCADM get "clients/$target_uuid/authz/resource-server/policy/client" -r "$realm" -q "name=$policy_name" --fields id --format csv 2>/dev/null | tail -n1 || true)
+                policy_id="$(clean_id "$policy_id")"
+                if [ -z "${policy_id:-}" ]; then
+                  $KCADM create "clients/$target_uuid/authz/resource-server/policy/client" -r "$realm" \
+                    -s "name=$policy_name" \
+                    -s "logic=POSITIVE" \
+                    -s "decisionStrategy=UNANIMOUS" \
+                    -s "clients=[\"$allowed_uuid\"]" >/dev/null 2>&1 || true
+                else
+                  $KCADM update "clients/$target_uuid/authz/resource-server/policy/client/$policy_id" -r "$realm" \
+                    -s "clients=[\"$allowed_uuid\"]" >/dev/null 2>&1 || true
+                fi
+
+                perm_json="$($KCADM get "clients/$target_uuid/management/permissions" -r "$realm" 2>/dev/null || true)"
+                perm_id="$(printf '%s' "$perm_json" | sed -n 's/.*"token-exchange"[[:space:]]*:[[:space:]]*"\\([^"]*\\)".*/\\1/p')"
+                perm_id="$(clean_id "$perm_id")"
+                if [ -n "${perm_id:-}" ]; then
+                  $KCADM update "clients/$target_uuid/authz/resource-server/permission/scope/$perm_id" -r "$realm" \
+                    -s "policies=[\"$policy_name\"]" >/dev/null 2>&1 || true
+                else
+                  $KCADM create "clients/$target_uuid/authz/resource-server/permission/scope" -r "$realm" \
+                    -s "name=token-exchange" \
+                    -s "logic=POSITIVE" \
+                    -s "decisionStrategy=UNANIMOUS" \
+                    -s "scopes=[\"token-exchange\"]" \
+                    -s "policies=[\"$policy_name\"]" >/dev/null 2>&1 || true
+                fi
+              }
+
+              enable_token_exchange_for_client "$INTERNAL_REALM" "$DROOLS_SERVICE_CLIENT_ID" "$DROOLS_SERVICE_CLIENT_ID"
 
               set_client_flow_override() {
                 local realm="$1"
