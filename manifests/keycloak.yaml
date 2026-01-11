@@ -2517,7 +2517,7 @@ spec:
             - name: KC_LOG_FILE
               value: "/opt/keycloak/data/log/keycloak.log"
             - name: KC_LOG_LEVEL
-              value: "INFO,systems.suncoast.kc.github:DEBUG,systems.suncoast.kc.google:DEBUG,org.keycloak.authentication:DEBUG,org.keycloak.events:INFO,org.keycloak.protocol.oidc:DEBUG,org.keycloak.protocol.oidc.endpoints.TokenEndpoint:DEBUG"
+              value: "INFO,systems.suncoast.kc.github:DEBUG,systems.suncoast.kc.google:DEBUG,org.keycloak.authentication:DEBUG,org.keycloak.events:DEBUG,org.keycloak.protocol.oidc:DEBUG,org.keycloak.protocol.oidc.endpoints.TokenEndpoint:TRACE,org.keycloak.protocol.oidc.utils.AuthorizeTokenExecutor:TRACE"
             - name: KC_PROXY
               value: "edge"
 
