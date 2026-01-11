@@ -56,7 +56,7 @@ data:
       "directAccessGrantsEnabled": false,
       "serviceAccountsEnabled": false,
       "attributes": {
-        "pkce.code.challenge.method": ""
+        "pkce.code.challenge.method": "S256"
       },
       "redirectUris": [
         "https://workbench-drools.teleport.app.suncoast.systems/*",
@@ -712,6 +712,12 @@ spec:
         vault.hashicorp.com/agent-inject-secret-client-secret-drools-workbench: "secret/data/keycloak-client-secret-drools-workbench"
         vault.hashicorp.com/agent-inject-template-client-secret-drools-workbench: |
           {{- with secret "secret/data/keycloak-client-secret-drools-workbench" -}}{{ .Data.data.value }}{{- end -}}
+        vault.hashicorp.com/agent-inject-secret-client-id-drools-kie-server: "secret/data/keycloak-client-id-drools-kie-server"
+        vault.hashicorp.com/agent-inject-template-client-id-drools-kie-server: |
+          {{- with secret "secret/data/keycloak-client-id-drools-kie-server" -}}{{ .Data.data.value }}{{- end -}}
+        vault.hashicorp.com/agent-inject-secret-client-secret-drools-kie-server: "secret/data/keycloak-client-secret-drools-kie-server"
+        vault.hashicorp.com/agent-inject-template-client-secret-drools-kie-server: |
+          {{- with secret "secret/data/keycloak-client-secret-drools-kie-server" -}}{{ .Data.data.value }}{{- end -}}
         vault.hashicorp.com/agent-inject-secret-client-id-drools-kie-server-service: "secret/data/keycloak-client-id-drools-kie-server-service"
         vault.hashicorp.com/agent-inject-template-client-id-drools-kie-server-service: |
           {{- with secret "secret/data/keycloak-client-id-drools-kie-server-service" -}}{{ .Data.data.value }}{{- end -}}
