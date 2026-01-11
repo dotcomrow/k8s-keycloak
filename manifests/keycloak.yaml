@@ -55,6 +55,9 @@ data:
       "standardFlowEnabled": true,
       "directAccessGrantsEnabled": false,
       "serviceAccountsEnabled": false,
+      "attributes": {
+        "pkce.code.challenge.method": ""
+      },
       "redirectUris": [
         "https://workbench-drools.teleport.app.suncoast.systems/*",
         "https://workbench-drools.teleport.app.suncoast.systems/business-central/*"
