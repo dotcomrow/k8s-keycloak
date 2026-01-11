@@ -28,8 +28,12 @@ data:
       "standardFlowEnabled": true,
       "directAccessGrantsEnabled": false,
       "serviceAccountsEnabled": false,
-      "redirectUris": ["https://open-webui.teleport.app.suncoast.systems/*"],
-      "webOrigins": ["https://open-webui.teleport.app.suncoast.systems"],
+      "redirectUris": [
+        "https://open-webui.teleport.app.suncoast.systems/*"
+      ],
+      "webOrigins": [
+        "https://open-webui.teleport.app.suncoast.systems"
+      ],
       "attributes": {
         "pkce.code.challenge.method": "S256"
       }
