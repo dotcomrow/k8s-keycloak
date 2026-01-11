@@ -20,7 +20,7 @@ metadata:
 data:
   openwebui.json: |
     {
-      "clientId": "openwebui",
+      "clientId": "<path:secret/data/keycloak-client-id-openwebui#value>",
       "name": "OpenWebUI",
       "protocol": "openid-connect",
       "publicClient": false,
@@ -36,7 +36,7 @@ data:
     }
   ollama-service.json: |
     {
-      "clientId": "ollama-service",
+      "clientId": "<path:secret/data/keycloak-client-id-ollama-service#value>",
       "name": "Ollama Service",
       "protocol": "openid-connect",
       "publicClient": false,
@@ -47,7 +47,7 @@ data:
     }
   drools-workbench.json: |
     {
-      "clientId": "drools-workbench",
+      "clientId": "<path:secret/data/keycloak-client-id-drools-workbench#value>",
       "name": "Drools Workbench",
       "protocol": "openid-connect",
       "publicClient": false,
@@ -66,7 +66,7 @@ data:
     }
   drools-kie-server.json: |
     {
-      "clientId": "drools-kie-server",
+      "clientId": "<path:secret/data/keycloak-client-id-drools-kie-server#value>",
       "name": "Drools KIE Server API",
       "protocol": "openid-connect",
       "publicClient": false,
@@ -77,7 +77,7 @@ data:
     }
   drools-kie-server-service.json: |
     {
-      "clientId": "drools-kie-server-service",
+      "clientId": "<path:secret/data/keycloak-client-id-drools-kie-server-service#value>",
       "name": "Drools KIE Server Service Account",
       "protocol": "openid-connect",
       "publicClient": false,
@@ -103,7 +103,7 @@ metadata:
 data:
   public-app.json: |
     {
-      "clientId": "public-app",
+      "clientId": "<path:secret/data/keycloak-client-id-public-app#value>",
       "name": "Public App",
       "protocol": "openid-connect",
       "publicClient": false,
@@ -1088,8 +1088,8 @@ spec:
               EXTERNAL_DISABLE_LOCAL_LOGIN="${EXTERNAL_DISABLE_LOCAL_LOGIN:-true}"
               OPENWEBUI_CLIENT_ID="openwebui"
               OLLAMA_SERVICE_CLIENT_ID="ollama-service"
-              DROOLS_WORKBENCH_CLIENT_ID="drools-workbench"
-              DROOLS_SERVICE_CLIENT_ID="drools-kie-server-service"
+              DROOLS_WORKBENCH_CLIENT_ID="drools-workbench-5k32f99itpcixgacte"
+              DROOLS_SERVICE_CLIENT_ID="drools-kie-server-service-f92trmqismx56jf87a"
               PUBLIC_APP_CLIENT_ID="public-app"
               GRAVITEE_INTROSPECT_CLIENT_ID="gravitee-introspection"
               GRAVITEE_INTROSPECT_CLIENT_SECRET="$(cat /vault/secrets/client-secret-gravitee-introspection 2>/dev/null || true)"
@@ -2560,7 +2560,7 @@ spec:
               export GITHUB_ORG="$(cat /vault/secrets/github-org)"
               export GITHUB_TEAM="$(cat /vault/secrets/keycloak-admin-team)"
               export RULES_ADMIN_TEAM="${KEYCLOAK_RULES_ADMIN_TEAM:-rules_admin}"
-              DROOLS_WORKBENCH_CLIENT_ID="drools-workbench"
+              DROOLS_WORKBENCH_CLIENT_ID="drools-workbench-5k32f99itpcixgacte"
               if [ -s /vault/secrets/client-id-drools-workbench ]; then
                 DROOLS_WORKBENCH_CLIENT_ID="$(tr -d '\r\n' < /vault/secrets/client-id-drools-workbench)"
               fi
