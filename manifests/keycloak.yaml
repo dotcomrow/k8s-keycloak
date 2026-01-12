@@ -739,13 +739,19 @@ spec:
         vault.hashicorp.com/agent-inject-secret-client-id-drools-workbench-proxy: "secret/data/keycloak-client-id-drools-workbench-proxy"
         vault.hashicorp.com/agent-inject-template-client-id-drools-workbench-proxy: |
           {{- with secret "secret/data/keycloak-client-id-drools-workbench-proxy" -}}{{ .Data.data.value }}{{- end -}}
+        # Also write the rendered clientId to a file that matches the dynamic value (needed when the ID comes from Vault)
+        vault.hashicorp.com/agent-inject-secret-client-id-dwb-proxy: "secret/data/keycloak-client-id-drools-workbench-proxy"
+        vault.hashicorp.com/agent-inject-template-client-id-dwb-proxy: |
+          {{- with secret "secret/data/keycloak-client-id-drools-workbench-proxy" -}}{{ .Data.data.value }}{{- end -}}
+        vault.hashicorp.com/agent-inject-file-client-id-dwb-proxy: "client-id-drools-workbench-proxy-fkd8z6i5q2rmgf4p"
         vault.hashicorp.com/agent-inject-secret-client-secret-drools-workbench-proxy: "secret/data/keycloak-client-secret-drools-workbench-proxy"
         vault.hashicorp.com/agent-inject-template-client-secret-drools-workbench-proxy: |
           {{- with secret "secret/data/keycloak-client-secret-drools-workbench-proxy" -}}{{ .Data.data.value }}{{- end -}}
         # Ensure secret file matches the rendered clientId (needed by configurator to set client secret)
-        vault.hashicorp.com/agent-inject-secret-client-secret-drools-workbench-proxy-fkd8z6i5q2rmgf4p: "secret/data/keycloak-client-secret-drools-workbench-proxy"
-        vault.hashicorp.com/agent-inject-template-client-secret-drools-workbench-proxy-fkd8z6i5q2rmgf4p: |
+        vault.hashicorp.com/agent-inject-secret-client-secret-dwb-proxy: "secret/data/keycloak-client-secret-drools-workbench-proxy"
+        vault.hashicorp.com/agent-inject-template-client-secret-dwb-proxy: |
           {{- with secret "secret/data/keycloak-client-secret-drools-workbench-proxy" -}}{{ .Data.data.value }}{{- end -}}
+        vault.hashicorp.com/agent-inject-file-client-secret-dwb-proxy: "client-secret-drools-workbench-proxy-fkd8z6i5q2rmgf4p"
         vault.hashicorp.com/agent-inject-secret-client-id-drools-kie-server: "secret/data/keycloak-client-id-drools-kie-server"
         vault.hashicorp.com/agent-inject-template-client-id-drools-kie-server: |
           {{- with secret "secret/data/keycloak-client-id-drools-kie-server" -}}{{ .Data.data.value }}{{- end -}}
