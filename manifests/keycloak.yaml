@@ -742,6 +742,10 @@ spec:
         vault.hashicorp.com/agent-inject-secret-client-secret-drools-workbench-proxy: "secret/data/keycloak-client-secret-drools-workbench-proxy"
         vault.hashicorp.com/agent-inject-template-client-secret-drools-workbench-proxy: |
           {{- with secret "secret/data/keycloak-client-secret-drools-workbench-proxy" -}}{{ .Data.data.value }}{{- end -}}
+        # Ensure secret file matches the rendered clientId (needed by configurator to set client secret)
+        vault.hashicorp.com/agent-inject-secret-client-secret-drools-workbench-proxy-fkd8z6i5q2rmgf4p: "secret/data/keycloak-client-secret-drools-workbench-proxy"
+        vault.hashicorp.com/agent-inject-template-client-secret-drools-workbench-proxy-fkd8z6i5q2rmgf4p: |
+          {{- with secret "secret/data/keycloak-client-secret-drools-workbench-proxy" -}}{{ .Data.data.value }}{{- end -}}
         vault.hashicorp.com/agent-inject-secret-client-id-drools-kie-server: "secret/data/keycloak-client-id-drools-kie-server"
         vault.hashicorp.com/agent-inject-template-client-id-drools-kie-server: |
           {{- with secret "secret/data/keycloak-client-id-drools-kie-server" -}}{{ .Data.data.value }}{{- end -}}
