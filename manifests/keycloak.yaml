@@ -64,6 +64,7 @@ data:
       },
       "redirectUris": [
         "https://workbench-drools.teleport.app.suncoast.systems/*",
+        "https://workbench-drools.teleport.app.suncoast.systems/oauth2/callback",
         "https://workbench-drools.teleport.app.suncoast.systems/business-central/*"
       ],
       "webOrigins": ["https://workbench-drools.teleport.app.suncoast.systems"]
