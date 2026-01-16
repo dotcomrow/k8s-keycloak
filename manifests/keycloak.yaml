@@ -2113,13 +2113,16 @@ spec:
                     secret_from_json="$(sed -n "s/.*\"secret\"[[:space:]]*:[[:space:]]*\"\\([^\"]*\\)\".*/\\1/p" "$json_file" | head -n1 || true)"
                     if [ -n "${secret_from_json:-}" ]; then
                       secret_from_json="$(printf '%s' "$secret_from_json" | tr -d '\r')"
-                      secret_placeholder="$(printf '%s' "$secret_from_json" | sed -n 's|^<path:secret/data/keycloak-client-secret-\\([^#>]*\\)#value>$|\\1|p')"
+                      # Build the placeholder prefix at runtime to avoid AVP replacement.
+                      path_prefix="<pat"
+                      path_prefix="${path_prefix}h:"
+                      secret_placeholder="$(printf '%s' "$secret_from_json" | sed -n "s|^${path_prefix}secret/data/keycloak-client-secret-\\([^#>]*\\)#value>$|\\1|p")"
                       if [ -n "$secret_placeholder" ]; then
                         secret_file_placeholder="${CLIENT_SECRET_DIR}/${CLIENT_SECRET_PREFIX}${secret_placeholder}"
                         if [ -s "$secret_file_placeholder" ]; then
                           secret="$(tr -d '\r\n' < "$secret_file_placeholder")"
                         fi
-                      elif [ "${secret_from_json#<path:}" = "$secret_from_json" ]; then
+                      elif [ "${secret_from_json#${path_prefix}}" = "$secret_from_json" ]; then
                         secret="$secret_from_json"
                       fi
                     fi
