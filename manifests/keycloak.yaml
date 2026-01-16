@@ -25,6 +25,7 @@ data:
       "protocol": "openid-connect",
       "publicClient": false,
       "clientAuthenticatorType": "client-secret",
+      "secret": "<path:secret/data/keycloak-client-secret-openwebui#value>",
       "standardFlowEnabled": true,
       "directAccessGrantsEnabled": false,
       "serviceAccountsEnabled": false,
@@ -45,6 +46,7 @@ data:
       "protocol": "openid-connect",
       "publicClient": false,
       "clientAuthenticatorType": "client-secret",
+      "secret": "<path:secret/data/keycloak-client-secret-ollama-service#value>",
       "standardFlowEnabled": false,
       "directAccessGrantsEnabled": false,
       "serviceAccountsEnabled": true
@@ -56,6 +58,7 @@ data:
       "protocol": "openid-connect",
       "publicClient": false,
       "clientAuthenticatorType": "client-secret",
+      "secret": "<path:secret/data/keycloak-client-secret-drools-workbench#value>",
       "standardFlowEnabled": true,
       "directAccessGrantsEnabled": false,
       "serviceAccountsEnabled": false,
@@ -75,6 +78,7 @@ data:
       "name": "Drools KIE Server API",
       "protocol": "openid-connect",
       "publicClient": false,
+      "secret": "<path:secret/data/keycloak-client-secret-drools-kie-server#value>",
       "bearerOnly": true,
       "standardFlowEnabled": false,
       "directAccessGrantsEnabled": false,
@@ -87,6 +91,7 @@ data:
       "protocol": "openid-connect",
       "publicClient": false,
       "clientAuthenticatorType": "client-secret",
+      "secret": "<path:secret/data/keycloak-client-secret-drools-kie-server-service#value>",
       "standardFlowEnabled": false,
       "directAccessGrantsEnabled": false,
       "serviceAccountsEnabled": true
@@ -98,6 +103,7 @@ data:
       "protocol": "openid-connect",
       "publicClient": false,
       "clientAuthenticatorType": "client-secret",
+      "secret": "<path:secret/data/keycloak-client-secret-drools-workbench-proxy#value>",
       "standardFlowEnabled": true,
       "directAccessGrantsEnabled": false,
       "serviceAccountsEnabled": false,
@@ -2103,13 +2109,27 @@ spec:
                   fi
                   if [ -n "${CID:-}" ]; then
                     secret=""
+                    # Prefer explicit secret from client JSON; fall back to secret files.
+                    secret_from_json="$(sed -n "s/.*\"secret\"[[:space:]]*:[[:space:]]*\"\\([^\"]*\\)\".*/\\1/p" "$json_file" | head -n1 || true)"
+                    if [ -n "${secret_from_json:-}" ]; then
+                      secret_from_json="$(printf '%s' "$secret_from_json" | tr -d '\r')"
+                      secret_placeholder="$(printf '%s' "$secret_from_json" | sed -n 's|^<path:secret/data/keycloak-client-secret-\\([^#>]*\\)#value>$|\\1|p')"
+                      if [ -n "$secret_placeholder" ]; then
+                        secret_file_placeholder="${CLIENT_SECRET_DIR}/${CLIENT_SECRET_PREFIX}${secret_placeholder}"
+                        if [ -s "$secret_file_placeholder" ]; then
+                          secret="$(tr -d '\r\n' < "$secret_file_placeholder")"
+                        fi
+                      elif [ "${secret_from_json#<path:}" = "$secret_from_json" ]; then
+                        secret="$secret_from_json"
+                      fi
+                    fi
                     secret_file="${CLIENT_SECRET_DIR}/${CLIENT_SECRET_PREFIX}${client_id}"
                     secret_file_effective="${CLIENT_SECRET_DIR}/${CLIENT_SECRET_PREFIX}${effective_id}"
-                    if [ -s "$secret_file" ]; then
+                    if [ -z "$secret" ] && [ -s "$secret_file" ]; then
                       secret="$(tr -d '\r\n' < "$secret_file")"
-                    elif [ -s "$secret_file_effective" ]; then
+                    elif [ -z "$secret" ] && [ -s "$secret_file_effective" ]; then
                       secret="$(tr -d '\r\n' < "$secret_file_effective")"
-                    elif [ -s "$CLIENT_SECRET_MAP_FILE" ]; then
+                    elif [ -z "$secret" ] && [ -s "$CLIENT_SECRET_MAP_FILE" ]; then
                       secret="$(awk -F= -v cid="$client_id" '$1==cid { $1=""; sub(/^=/,""); print; exit }' "$CLIENT_SECRET_MAP_FILE")"
                     fi
                     if [ -n "${secret:-}" ]; then
