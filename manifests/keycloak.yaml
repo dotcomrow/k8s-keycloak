@@ -543,6 +543,8 @@ metadata:
   namespace: keycloak
   labels:
     app: keycloak
+  annotations:
+    reloader.stakater.com/auto: "true"
     app.kubernetes.io/name: keycloak
     app.kubernetes.io/component: authentication
 spec:
@@ -671,6 +673,7 @@ spec:
       labels:
         app: keycloak
       annotations:
+        reloader.stakater.com/auto: "true"
         # Vault agent for secret files
         vault.hashicorp.com/agent-inject: "true"
         vault.hashicorp.com/role: "keycloak"
@@ -2766,6 +2769,8 @@ kind: Deployment
 metadata:
   name: keycloak-admin-redirect
   namespace: keycloak
+  annotations:
+    reloader.stakater.com/auto: "true"
 spec:
   replicas: 1
   selector:
@@ -2775,6 +2780,8 @@ spec:
     metadata:
       labels:
         app: keycloak-admin-redirect
+      annotations:
+        reloader.stakater.com/auto: "true"
     spec:
       containers:
         - name: redirect
