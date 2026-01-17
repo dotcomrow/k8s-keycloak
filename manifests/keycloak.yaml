@@ -62,9 +62,6 @@ data:
       "standardFlowEnabled": true,
       "directAccessGrantsEnabled": false,
       "serviceAccountsEnabled": false,
-      "attributes": {
-        "pkce.code.challenge.method": "S256"
-      },
       "redirectUris": [
         "https://workbench-drools.teleport.app.suncoast.systems/*",
         "https://workbench-drools.teleport.app.suncoast.systems/oauth2/callback",
@@ -113,9 +110,6 @@ data:
       "webOrigins": [
         "https://workbench-drools.teleport.app.suncoast.systems"
       ],
-      "attributes": {
-        "pkce.code.challenge.method": "S256"
-      },
       "protocolMappers": [
         {
           "name": "audience-drools-workbench",
