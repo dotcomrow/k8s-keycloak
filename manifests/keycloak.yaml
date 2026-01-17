@@ -2263,6 +2263,58 @@ spec:
                   -s "config.\"multivalued\"=true" || true
               }
 
+              ensure_client_roles_claim_mapper() {
+                local realm="$1"
+                local clientId="$2"
+                local mapper_name="client-roles-claim"
+                CID=$($KCADM get clients -r "$realm" -q "clientId=$clientId" --fields id --format csv 2>/dev/null | tail -n1 || true)
+                CID="$(clean_id "$CID")"
+                [ -z "${CID:-}" ] && return 0
+                local mapper_id=""
+                while IFS= read -r line; do
+                  line=${line%$'\r'}
+                  if [ -z "$line" ] || [ "$line" = "id,name" ] || [ "$line" = "\"id\",\"name\"" ]; then
+                    continue
+                  fi
+                  IFS=, read -r id name <<< "$line"
+                  id=${id#\"}
+                  id=${id%\"}
+                  name=${name#\"}
+                  name=${name%\"}
+                  if [ "$name" = "$mapper_name" ]; then
+                    mapper_id="$id"
+                    break
+                  fi
+                done < <($KCADM get "clients/$CID/protocol-mappers/models" -r "$realm" \
+                  --fields id,name --format csv 2>/dev/null || true)
+
+                if [ -n "${mapper_id:-}" ]; then
+                  $KCADM update "clients/$CID/protocol-mappers/models/$mapper_id" -r "$realm" \
+                    -s "name=${mapper_name}" \
+                    -s "protocol=openid-connect" \
+                    -s "protocolMapper=oidc-usermodel-client-role-mapper" \
+                    -s "config.\"usermodel.clientRoleMapping.clientId\"=${clientId}" \
+                    -s "config.\"claim.name\"=resource_access.${clientId}.roles" \
+                    -s "config.\"jsonType.label\"=String" \
+                    -s "config.\"access.token.claim\"=true" \
+                    -s "config.\"id.token.claim\"=true" \
+                    -s "config.\"userinfo.token.claim\"=false" \
+                    -s "config.\"multivalued\"=true" || true
+                  return 0
+                fi
+                $KCADM create "clients/$CID/protocol-mappers/models" -r "$realm" \
+                  -s "name=${mapper_name}" \
+                  -s "protocol=openid-connect" \
+                  -s "protocolMapper=oidc-usermodel-client-role-mapper" \
+                  -s "config.\"usermodel.clientRoleMapping.clientId\"=${clientId}" \
+                  -s "config.\"claim.name\"=resource_access.${clientId}.roles" \
+                  -s "config.\"jsonType.label\"=String" \
+                  -s "config.\"access.token.claim\"=true" \
+                  -s "config.\"id.token.claim\"=true" \
+                  -s "config.\"userinfo.token.claim\"=false" \
+                  -s "config.\"multivalued\"=true" || true
+              }
+
               ensure_client_attribute_mapper() {
                 local realm="$1"
                 local clientId="$2"
@@ -2427,6 +2479,7 @@ spec:
                 admin analyst developer user manager process-admin rest-all rest-project
               ensure_client_scope "$INTERNAL_REALM" "$DROOLS_WORKBENCH_CLIENT_ID" "roles"
               ensure_realm_roles_claim_mapper "$INTERNAL_REALM" "$DROOLS_WORKBENCH_CLIENT_ID"
+              ensure_client_roles_claim_mapper "$INTERNAL_REALM" "$DROOLS_WORKBENCH_CLIENT_ID"
               ensure_default_client_role_member "$INTERNAL_REALM" "$DROOLS_WORKBENCH_CLIENT_ID" "user"
 
               assign_realm_role_to_service_account() {
