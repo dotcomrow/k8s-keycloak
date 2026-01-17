@@ -2726,6 +2726,8 @@ spec:
                 export GITHUB_ROLE_MAP="$(append_role_map_entry "$GITHUB_ROLE_MAP" "$rules_admin_key" "client:${DROOLS_WORKBENCH_CLIENT_ID}:rest-all")"
                 export GITHUB_ROLE_MAP="$(append_role_map_entry "$GITHUB_ROLE_MAP" "$rules_admin_key" "client:${DROOLS_WORKBENCH_CLIENT_ID}:rest-project")"
               fi
+              # Keep JSON alias for providers expecting GITHUB_ROLE_MAP_JSON.
+              export GITHUB_ROLE_MAP_JSON="$GITHUB_ROLE_MAP"
 
               # Google Groups auth (Cloud Identity)
               export GOOGLE_ADMIN_EMAIL="$(cat /vault/secrets/google-admin-email)"
