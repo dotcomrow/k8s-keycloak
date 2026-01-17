@@ -2213,6 +2213,29 @@ spec:
                   -s "config.\"multivalued\"=true" || true
               }
 
+              ensure_realm_roles_claim_mapper() {
+                local realm="$1"
+                local clientId="$2"
+                local mapper_name="realm-roles-claim"
+                CID=$($KCADM get clients -r "$realm" -q "clientId=$clientId" --fields id --format csv 2>/dev/null | tail -n1 || true)
+                CID="$(clean_id "$CID")"
+                [ -z "${CID:-}" ] && return 0
+                if $KCADM get "clients/$CID/protocol-mappers/models" -r "$realm" 2>/dev/null \
+                  | grep -q "\"name\"[[:space:]]*:[[:space:]]*\"${mapper_name}\""; then
+                  return 0
+                fi
+                $KCADM create "clients/$CID/protocol-mappers/models" -r "$realm" \
+                  -s "name=${mapper_name}" \
+                  -s "protocol=openid-connect" \
+                  -s "protocolMapper=oidc-usermodel-realm-role-mapper" \
+                  -s "config.\"claim.name\"=roles" \
+                  -s "config.\"jsonType.label\"=String" \
+                  -s "config.\"access.token.claim\"=true" \
+                  -s "config.\"id.token.claim\"=false" \
+                  -s "config.\"userinfo.token.claim\"=false" \
+                  -s "config.\"multivalued\"=true" || true
+              }
+
               ensure_client_attribute_mapper() {
                 local realm="$1"
                 local clientId="$2"
@@ -2376,6 +2399,7 @@ spec:
               ensure_client_roles "$INTERNAL_REALM" "$DROOLS_WORKBENCH_CLIENT_ID" \
                 admin analyst developer user manager process-admin rest-all rest-project
               ensure_client_scope "$INTERNAL_REALM" "$DROOLS_WORKBENCH_CLIENT_ID" "roles"
+              ensure_realm_roles_claim_mapper "$INTERNAL_REALM" "$DROOLS_WORKBENCH_CLIENT_ID"
               ensure_default_client_role_member "$INTERNAL_REALM" "$DROOLS_WORKBENCH_CLIENT_ID" "user"
 
               assign_realm_role_to_service_account() {
