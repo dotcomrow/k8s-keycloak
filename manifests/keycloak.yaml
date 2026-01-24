@@ -2555,9 +2555,40 @@ spec:
                 $KCADM create "clients/$CLIENT_UUID/default-client-scopes/$SCOPE_UUID" -r "$realm" >/dev/null 2>&1 || true
               }
 
+              ensure_groups_scope() {
+                local realm="$1"
+                local scopeName="groups"
+                local SCOPE_UUID=""
+                SCOPE_UUID=$($KCADM get client-scopes -r "$realm" -q "name=$scopeName" --fields id --format csv 2>/dev/null | tail -n1 || true)
+                SCOPE_UUID="$(clean_id "$SCOPE_UUID")"
+                if [ -z "${SCOPE_UUID:-}" ]; then
+                  SCOPE_UUID=$($KCADM create client-scopes -r "$realm" \
+                    -s "name=$scopeName" \
+                    -s "protocol=openid-connect" \
+                    -s "attributes.include.in.token.scope=true" \
+                    -i 2>/dev/null || true)
+                  SCOPE_UUID="$(clean_id "$SCOPE_UUID")"
+                fi
+                [ -z "${SCOPE_UUID:-}" ] && return 0
+                if $KCADM get "client-scopes/$SCOPE_UUID/protocol-mappers/models" -r "$realm" 2>/dev/null \
+                  | grep -q "\"name\"[[:space:]]*:[[:space:]]*\"groups\""; then
+                  return 0
+                fi
+                $KCADM create "client-scopes/$SCOPE_UUID/protocol-mappers/models" -r "$realm" \
+                  -s "name=groups" \
+                  -s "protocol=openid-connect" \
+                  -s "protocolMapper=oidc-group-membership-mapper" \
+                  -s "config.\"full.path\"=false" \
+                  -s "config.\"claim.name\"=groups" \
+                  -s "config.\"access.token.claim\"=true" \
+                  -s "config.\"id.token.claim\"=false" \
+                  -s "config.\"userinfo.token.claim\"=false" >/dev/null 2>&1 || true
+              }
+
               ensure_client_roles "$INTERNAL_REALM" "$DROOLS_WORKBENCH_CLIENT_ID" \
                 admin analyst developer user manager process-admin rest-all rest-project
               ensure_client_scope "$INTERNAL_REALM" "$DROOLS_WORKBENCH_CLIENT_ID" "roles"
+              ensure_groups_scope "$INTERNAL_REALM"
               ensure_client_scope "$INTERNAL_REALM" "$HASURA_CONSOLE_PROXY_CLIENT_ID" "groups"
               ensure_realm_roles_claim_mapper "$INTERNAL_REALM" "$DROOLS_WORKBENCH_CLIENT_ID"
               ensure_client_roles_claim_mapper "$INTERNAL_REALM" "$DROOLS_WORKBENCH_CLIENT_ID"
