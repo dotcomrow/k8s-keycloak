@@ -142,6 +142,52 @@ data:
         }
       ]
     }
+  hasura-console-proxy.json: |
+    {
+      "clientId": "<path:secret/data/keycloak-client-id-hasura-console-proxy#value>",
+      "name": "Hasura Console OAuth2 Proxy",
+      "protocol": "openid-connect",
+      "publicClient": false,
+      "clientAuthenticatorType": "client-secret",
+      "secret": "<path:secret/data/keycloak-client-secret-hasura-console-proxy#value>",
+      "standardFlowEnabled": true,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": false,
+      "redirectUris": [
+        "https://graphql-gui.teleport.app.suncoast.systems/oauth2/callback"
+      ],
+      "webOrigins": [
+        "https://graphql-gui.teleport.app.suncoast.systems"
+      ],
+      "protocolMappers": [
+        {
+          "name": "audience-hasura-console-proxy",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "consentRequired": false,
+          "config": {
+            "included.client.audience": "<path:secret/data/keycloak-client-id-hasura-console-proxy#value>",
+            "access.token.claim": "true",
+            "id.token.claim": "false"
+          }
+        },
+        {
+          "name": "hasura-claims",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-hardcoded-claim-mapper",
+          "consentRequired": false,
+          "config": {
+            "claim.name": "https://hasura.io/jwt/claims",
+            "claim.value": "{\"x-hasura-default-role\":\"admin\",\"x-hasura-allowed-roles\":[\"admin\"]}",
+            "jsonType.label": "JSON",
+            "access.token.claim": "true",
+            "id.token.claim": "false",
+            "userinfo.token.claim": "false"
+          }
+        }
+      ]
+    }
+
 ---
 apiVersion: v1
 kind: ConfigMap
@@ -765,6 +811,12 @@ spec:
         vault.hashicorp.com/agent-inject-secret-client-secret-openwebui: "secret/data/keycloak-client-secret-openwebui"
         vault.hashicorp.com/agent-inject-template-client-secret-openwebui: |
           {{- with secret "secret/data/keycloak-client-secret-openwebui" -}}{{ .Data.data.value }}{{- end -}}
+        vault.hashicorp.com/agent-inject-secret-client-id-hasura-console-proxy: "secret/data/keycloak-client-id-hasura-console-proxy"
+        vault.hashicorp.com/agent-inject-template-client-id-hasura-console-proxy: |
+          {{- with secret "secret/data/keycloak-client-id-hasura-console-proxy" -}}{{ .Data.data.value }}{{- end -}}
+        vault.hashicorp.com/agent-inject-secret-client-secret-hasura-console-proxy: "secret/data/keycloak-client-secret-hasura-console-proxy"
+        vault.hashicorp.com/agent-inject-template-client-secret-hasura-console-proxy: |
+          {{- with secret "secret/data/keycloak-client-secret-hasura-console-proxy" -}}{{ .Data.data.value }}{{- end -}}
         vault.hashicorp.com/agent-inject-secret-client-id-drools-workbench: "secret/data/keycloak-client-id-drools-workbench"
         vault.hashicorp.com/agent-inject-template-client-id-drools-workbench: |
           {{- with secret "secret/data/keycloak-client-id-drools-workbench" -}}{{ .Data.data.value }}{{- end -}}
