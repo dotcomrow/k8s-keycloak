@@ -1232,6 +1232,7 @@ spec:
               PUBLIC_APP_CLIENT_ID="public-app"
               GRAVITEE_INTROSPECT_CLIENT_ID="gravitee-introspection"
               GRAVITEE_INTROSPECT_CLIENT_SECRET="$(cat /vault/secrets/client-secret-gravitee-introspection 2>/dev/null || true)"
+              HASURA_CONSOLE_PROXY_CLIENT_ID="hasura-console-proxy"
               if [ -s "${CLIENT_ID_DIR}/client-id-openwebui" ]; then
                 OPENWEBUI_CLIENT_ID="$(tr -d '\r\n' < "${CLIENT_ID_DIR}/client-id-openwebui")"
               fi
@@ -1249,6 +1250,9 @@ spec:
               fi
               if [ -s "${CLIENT_ID_DIR}/client-id-gravitee-introspection" ]; then
                 GRAVITEE_INTROSPECT_CLIENT_ID="$(tr -d '\r\n' < "${CLIENT_ID_DIR}/client-id-gravitee-introspection")"
+              fi
+              if [ -s "${CLIENT_ID_DIR}/client-id-hasura-console-proxy" ]; then
+                HASURA_CONSOLE_PROXY_CLIENT_ID="$(tr -d '\r\n' < "${CLIENT_ID_DIR}/client-id-hasura-console-proxy")"
               fi
               
               login_with_client() {
@@ -2554,6 +2558,7 @@ spec:
               ensure_client_roles "$INTERNAL_REALM" "$DROOLS_WORKBENCH_CLIENT_ID" \
                 admin analyst developer user manager process-admin rest-all rest-project
               ensure_client_scope "$INTERNAL_REALM" "$DROOLS_WORKBENCH_CLIENT_ID" "roles"
+              ensure_client_scope "$INTERNAL_REALM" "$HASURA_CONSOLE_PROXY_CLIENT_ID" "groups"
               ensure_realm_roles_claim_mapper "$INTERNAL_REALM" "$DROOLS_WORKBENCH_CLIENT_ID"
               ensure_client_roles_claim_mapper "$INTERNAL_REALM" "$DROOLS_WORKBENCH_CLIENT_ID"
               ensure_default_client_role_member "$INTERNAL_REALM" "$DROOLS_WORKBENCH_CLIENT_ID" "user"
