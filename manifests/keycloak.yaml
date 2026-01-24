@@ -2544,42 +2544,50 @@ spec:
                 local scopeName="$3"
                 local CLIENT_UUID=""
                 local SCOPE_UUID=""
+                local scope_line=""
                 CLIENT_UUID=$($KCADM get clients -r "$realm" -q "clientId=$clientId" --fields id --format csv 2>/dev/null | tail -n1 || true)
                 CLIENT_UUID="$(clean_id "$CLIENT_UUID")"
                 [ -z "${CLIENT_UUID:-}" ] && return 0
-                SCOPE_UUID=$($KCADM get client-scopes -r "$realm" -q "name=$scopeName" --fields id --format csv 2>/dev/null | tail -n1 || true)
-                SCOPE_UUID="$(clean_id "$SCOPE_UUID")"
+                scope_line=$($KCADM get client-scopes -r "$realm" --fields id,name --format csv 2>/dev/null | grep -m1 "\"${scopeName}\"" || true)
+                SCOPE_UUID="$(printf '%s' "$scope_line" | cut -d',' -f1 | tr -d '"' | tr -d '[:space:]')"
                 [ -z "${SCOPE_UUID:-}" ] && return 0
                 if $KCADM get "clients/$CLIENT_UUID/default-client-scopes" -r "$realm" 2>/dev/null \
                   | grep -q "\"name\"[[:space:]]*:[[:space:]]*\"${scopeName}\""; then
                   return 0
                 fi
-                $KCADM create "clients/$CLIENT_UUID/default-client-scopes/$SCOPE_UUID" -r "$realm" >/dev/null 2>&1 || true
+                $KCADM update "clients/$CLIENT_UUID/default-client-scopes/$SCOPE_UUID" -r "$realm" >/dev/null 2>&1 || true
               }
 
               ensure_groups_scope() {
                 local realm="$1"
                 local scopeName="groups"
                 local SCOPE_UUID=""
-                SCOPE_UUID=$($KCADM get client-scopes -r "$realm" -q "name=$scopeName" --fields id --format csv 2>/dev/null | tail -n1 || true)
-                SCOPE_UUID="$(clean_id "$SCOPE_UUID")"
+                local scope_line=""
+                local mapper_line=""
+                local mapper_id=""
+                scope_line=$($KCADM get client-scopes -r "$realm" --fields id,name --format csv 2>/dev/null | grep -m1 "\"${scopeName}\"" || true)
+                SCOPE_UUID="$(printf '%s' "$scope_line" | cut -d',' -f1 | tr -d '"' | tr -d '[:space:]')"
                 if [ -z "${SCOPE_UUID:-}" ]; then
                   SCOPE_UUID=$($KCADM create client-scopes -r "$realm" \
                     -s "name=$scopeName" \
                     -s "protocol=openid-connect" \
-                    -s "attributes.include.in.token.scope=true" \
                     -i 2>/dev/null || true)
                   SCOPE_UUID="$(clean_id "$SCOPE_UUID")"
                 fi
                 [ -z "${SCOPE_UUID:-}" ] && return 0
-                if $KCADM get "client-scopes/$SCOPE_UUID/protocol-mappers/models" -r "$realm" 2>/dev/null \
-                  | grep -q "\"name\"[[:space:]]*:[[:space:]]*\"groups\""; then
-                  return 0
+                mapper_line=$($KCADM get "client-scopes/$SCOPE_UUID/protocol-mappers/models" -r "$realm" \
+                  --fields id,name --format csv 2>/dev/null | grep -m1 '"groups"' || true)
+                mapper_id="$(printf '%s' "$mapper_line" | cut -d',' -f1 | tr -d '"' | tr -d '[:space:]')"
+                if [ -z "${mapper_id:-}" ]; then
+                  mapper_id=$($KCADM create "client-scopes/$SCOPE_UUID/protocol-mappers/models" -r "$realm" \
+                    -s "name=groups" \
+                    -s "protocol=openid-connect" \
+                    -s "protocolMapper=oidc-group-membership-mapper" \
+                    -i 2>/dev/null || true)
+                  mapper_id="$(clean_id "$mapper_id")"
                 fi
-                $KCADM create "client-scopes/$SCOPE_UUID/protocol-mappers/models" -r "$realm" \
-                  -s "name=groups" \
-                  -s "protocol=openid-connect" \
-                  -s "protocolMapper=oidc-group-membership-mapper" \
+                [ -z "${mapper_id:-}" ] && return 0
+                $KCADM update "client-scopes/$SCOPE_UUID/protocol-mappers/models/$mapper_id" -r "$realm" \
                   -s "config.\"full.path\"=false" \
                   -s "config.\"claim.name\"=groups" \
                   -s "config.\"access.token.claim\"=true" \
