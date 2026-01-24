@@ -213,8 +213,10 @@ data:
       "standardFlowEnabled": true,
       "directAccessGrantsEnabled": false,
       "serviceAccountsEnabled": false,
-      "redirectUris": ["https://app.example.com/*"],
-      "webOrigins": ["https://app.example.com"]
+      "redirectUris": [
+        "https://oauth.pstmn.io/v1/callback"
+      ],
+      "webOrigins": []
     }
 ---
 apiVersion: v1
