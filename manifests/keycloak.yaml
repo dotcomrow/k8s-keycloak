@@ -1411,7 +1411,7 @@ spec:
                 SA_ID="$(clean_id "$SA_ID")"
                 if [ -n "${SA_ID:-}" ]; then
                   for role in realm-admin admin create-realm manage-realm view-realm manage-users manage-clients manage-identity-providers manage-authorization manage-events view-events query-realms query-users query-clients query-groups view-users view-clients view-identity-providers; do
-                    $KCADM add-roles -r "$ADMIN_REALM" --uuserid "$SA_ID" \
+                    $KCADM add-roles -r "$ADMIN_REALM" --uid "$SA_ID" \
                       --cclientid realm-management --rolename "$role" >/dev/null 2>&1 || true
                   done
                 fi
@@ -1479,7 +1479,7 @@ spec:
                   echo "⚠️  Unable to ensure admin user in realm ${realm} for ${email}"
                   return 1
                 fi
-                $KCADM add-roles -r "$realm" --uuserid "$uid" \
+                $KCADM add-roles -r "$realm" --uid "$uid" \
                   --cclientid realm-management --rolename realm-admin >/dev/null 2>&1 || true
               }
 
@@ -2709,7 +2709,7 @@ spec:
                 [ -z "${CLIENT_UUID:-}" ] && return 0
                 SA_ID="$(get_service_account_id "$realm" "$CLIENT_UUID" || true)"
                 [ -z "${SA_ID:-}" ] && return 0
-                $KCADM add-roles -r "$realm" --uuserid "$SA_ID" --rolename "$role" >/dev/null 2>&1 || true
+                $KCADM add-roles -r "$realm" --uid "$SA_ID" --rolename "$role" >/dev/null 2>&1 || true
               }
 
               assign_client_role_to_service_account() {
@@ -2728,7 +2728,7 @@ spec:
                 [ -z "${target_uuid:-}" ] && return 0
                 sa_id="$(get_service_account_id "$realm" "$service_uuid" || true)"
                 [ -z "${sa_id:-}" ] && return 0
-                $KCADM add-roles -r "$realm" --uuserid "$sa_id" --cclientid "$targetClientId" --rolename "$role" >/dev/null 2>&1 || true
+                $KCADM add-roles -r "$realm" --uid "$sa_id" --cclientid "$targetClientId" --rolename "$role" >/dev/null 2>&1 || true
               }
 
               ensure_admin_auth_for_service_account_roles || true
