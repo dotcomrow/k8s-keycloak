@@ -2671,6 +2671,35 @@ spec:
               ensure_client_roles_claim_mapper "$INTERNAL_REALM" "$DROOLS_WORKBENCH_CLIENT_ID"
               ensure_default_client_role_member "$INTERNAL_REALM" "$DROOLS_WORKBENCH_CLIENT_ID" "user"
 
+              ensure_admin_auth_for_service_account_roles() {
+                if login_with_admin; then
+                  AUTH_MODE="admin"
+                  ADMIN_ESCALATED="true"
+                  return 0
+                fi
+                echo "WARN: admin auth unavailable for service account role assignment; continuing with ${AUTH_MODE:-unknown}"
+                login_with_client >/dev/null 2>&1 || true
+                return 1
+              }
+
+              get_service_account_id() {
+                local realm="$1"
+                local client_uuid="$2"
+                local sa_id=""
+                local attempt=""
+                for attempt in 1 2 3 4 5; do
+                  sa_id=$($KCADM get "clients/$client_uuid/service-account-user" -r "$realm" 2>/dev/null \
+                    | sed -n "s/.*\"id\"[[:space:]]*:[[:space:]]*\"\\([^\"]*\\)\".*/\\1/p" | head -n1 || true)
+                  sa_id="$(clean_id "$sa_id")"
+                  if [ -n "${sa_id:-}" ]; then
+                    printf '%s' "$sa_id"
+                    return 0
+                  fi
+                  sleep 1
+                done
+                return 1
+              }
+
               assign_realm_role_to_service_account() {
                 local realm="$1"
                 local clientId="$2"
@@ -2678,9 +2707,7 @@ spec:
                 CLIENT_UUID=$($KCADM get clients -r "$realm" -q "clientId=$clientId" --fields id --format csv 2>/dev/null | tail -n1 || true)
                 CLIENT_UUID="$(clean_id "$CLIENT_UUID")"
                 [ -z "${CLIENT_UUID:-}" ] && return 0
-                SA_ID=$($KCADM get "clients/$CLIENT_UUID/service-account-user" -r "$realm" 2>/dev/null \
-                  | sed -n "s/.*\"id\"[[:space:]]*:[[:space:]]*\"\\([^\"]*\\)\".*/\\1/p" | head -n1 || true)
-                SA_ID="$(clean_id "$SA_ID")"
+                SA_ID="$(get_service_account_id "$realm" "$CLIENT_UUID" || true)"
                 [ -z "${SA_ID:-}" ] && return 0
                 $KCADM add-roles -r "$realm" --uuserid "$SA_ID" --rolename "$role" >/dev/null 2>&1 || true
               }
@@ -2699,12 +2726,12 @@ spec:
                 target_uuid=$($KCADM get clients -r "$realm" -q "clientId=$targetClientId" --fields id --format csv 2>/dev/null | tail -n1 || true)
                 target_uuid="$(clean_id "$target_uuid")"
                 [ -z "${target_uuid:-}" ] && return 0
-                sa_id=$($KCADM get "clients/$service_uuid/service-account-user" -r "$realm" 2>/dev/null \
-                  | sed -n "s/.*\"id\"[[:space:]]*:[[:space:]]*\"\\([^\"]*\\)\".*/\\1/p" | head -n1 || true)
-                sa_id="$(clean_id "$sa_id")"
+                sa_id="$(get_service_account_id "$realm" "$service_uuid" || true)"
                 [ -z "${sa_id:-}" ] && return 0
                 $KCADM add-roles -r "$realm" --uuserid "$sa_id" --cclientid "$targetClientId" --rolename "$role" >/dev/null 2>&1 || true
               }
+
+              ensure_admin_auth_for_service_account_roles || true
 
               assign_realm_role_to_service_account "$INTERNAL_REALM" "$OLLAMA_SERVICE_CLIENT_ID" "ollama_service_access"
               assign_realm_role_to_service_account "$INTERNAL_REALM" "$DROOLS_SERVICE_CLIENT_ID" "drools_service_access"
