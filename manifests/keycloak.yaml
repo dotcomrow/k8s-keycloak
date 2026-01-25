@@ -195,7 +195,7 @@ metadata:
   name: keycloak-role-config-internal
   namespace: keycloak
 data:
-  internal-realm-roles: "openwebui_access,ollama_access,ollama_service_access,drools_access,drools_service_access,drools_admin,admin,analyst,developer,user,rest-all,rest-user,kie-server,process-admin,manager,rest-project"
+  internal-realm-roles: "openwebui_access,ollama_access,ollama_service_access,drools_access,drools_service_access,drools_admin,hasura_admins,admin,analyst,developer,user,rest-all,rest-user,kie-server,process-admin,manager,rest-project"
 ---
 apiVersion: v1
 kind: ConfigMap
