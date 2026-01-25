@@ -2740,6 +2740,8 @@ spec:
               assign_client_role_to_service_account "$INTERNAL_REALM" "$DROOLS_SERVICE_CLIENT_ID" "$DROOLS_WORKBENCH_CLIENT_ID" "admin"
               assign_client_role_to_service_account "$INTERNAL_REALM" "$DROOLS_SERVICE_CLIENT_ID" "$DROOLS_WORKBENCH_CLIENT_ID" "rest-all"
               assign_realm_role_to_service_account "$INTERNAL_REALM" "$DROOLS_WORKBENCH_CLIENT_ID" "drools_service_access"
+              assign_realm_role_to_service_account "$INTERNAL_REALM" "$DROOLS_WORKBENCH_CLIENT_ID" "admin"
+              assign_realm_role_to_service_account "$INTERNAL_REALM" "$DROOLS_WORKBENCH_CLIENT_ID" "drools_admin"
               assign_realm_role_to_service_account "$INTERNAL_REALM" "$DROOLS_WORKBENCH_CLIENT_ID" "kie-server"
               assign_realm_role_to_service_account "$INTERNAL_REALM" "$DROOLS_WORKBENCH_CLIENT_ID" "rest-all"
               assign_realm_role_to_service_account "$INTERNAL_REALM" "$DROOLS_WORKBENCH_CLIENT_ID" "rest-project"
