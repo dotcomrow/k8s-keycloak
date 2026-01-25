@@ -1296,7 +1296,9 @@ spec:
               fi
               if [ -s "${CLIENT_CONFIG_DIR_EXTERNAL}/graphql-api.json" ]; then
                 graph_id="$(sed -n "s/.*\"clientId\"[[:space:]]*:[[:space:]]*\"\\([^\"]*\\)\".*/\\1/p" "${CLIENT_CONFIG_DIR_EXTERNAL}/graphql-api.json" | head -n1 | tr -d '\r')"
-                if [ -n "${graph_id:-}" ] && ! printf '%s' "$graph_id" | grep -q '^<path:'; then
+                path_prefix="<pat"
+                path_prefix="${path_prefix}h:"
+                if [ -n "${graph_id:-}" ] && ! printf '%s' "$graph_id" | grep -q "^${path_prefix}"; then
                   GRAPHQL_API_CLIENT_ID="$graph_id"
                 fi
               fi
@@ -3003,7 +3005,9 @@ spec:
               GRAPHQL_API_CLIENT_ID="graphql-api"
               if [ -s /opt/keycloak/data/clients/external/graphql-api.json ]; then
                 graph_id="$(sed -n "s/.*\"clientId\"[[:space:]]*:[[:space:]]*\"\\([^\"]*\\)\".*/\\1/p" /opt/keycloak/data/clients/external/graphql-api.json | head -n1 | tr -d '\r')"
-                if [ -n "${graph_id:-}" ] && ! printf '%s' "$graph_id" | grep -q '^<path:'; then
+                path_prefix="<pat"
+                path_prefix="${path_prefix}h:"
+                if [ -n "${graph_id:-}" ] && ! printf '%s' "$graph_id" | grep -q "^${path_prefix}"; then
                   GRAPHQL_API_CLIENT_ID="$graph_id"
                 fi
               fi
