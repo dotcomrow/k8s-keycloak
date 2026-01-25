@@ -61,7 +61,7 @@ data:
       "secret": "<path:secret/data/keycloak-client-secret-drools-workbench#value>",
       "standardFlowEnabled": true,
       "directAccessGrantsEnabled": false,
-      "serviceAccountsEnabled": false,
+      "serviceAccountsEnabled": true,
       "redirectUris": [
         "https://workbench-drools.teleport.app.suncoast.systems/*",
         "https://workbench-drools.teleport.app.suncoast.systems/oauth2/callback",
