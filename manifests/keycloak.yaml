@@ -18,27 +18,6 @@ metadata:
   name: keycloak-client-config-internal
   namespace: keycloak
 data:
-  openwebui.json: |
-    {
-      "clientId": "<path:secret/data/keycloak-client-id-openwebui#value>",
-      "name": "OpenWebUI",
-      "protocol": "openid-connect",
-      "publicClient": false,
-      "clientAuthenticatorType": "client-secret",
-      "secret": "<path:secret/data/keycloak-client-secret-openwebui#value>",
-      "standardFlowEnabled": true,
-      "directAccessGrantsEnabled": false,
-      "serviceAccountsEnabled": false,
-      "redirectUris": [
-        "https://open-webui.teleport.app.suncoast.systems/*"
-      ],
-      "webOrigins": [
-        "https://open-webui.teleport.app.suncoast.systems"
-      ],
-      "attributes": {
-        "pkce.code.challenge.method": "S256"
-      }
-    }
   ollama-service.json: |
     {
       "clientId": "<path:secret/data/keycloak-client-id-ollama-service#value>",
@@ -203,6 +182,27 @@ metadata:
   name: keycloak-client-config-external
   namespace: keycloak
 data:
+  openwebui.json: |
+    {
+      "clientId": "<path:secret/data/keycloak-client-id-openwebui#value>",
+      "name": "OpenWebUI",
+      "protocol": "openid-connect",
+      "publicClient": false,
+      "clientAuthenticatorType": "client-secret",
+      "secret": "<path:secret/data/keycloak-client-secret-openwebui#value>",
+      "standardFlowEnabled": true,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": false,
+      "redirectUris": [
+        "https://open-webui.teleport.app.suncoast.systems/*"
+      ],
+      "webOrigins": [
+        "https://open-webui.teleport.app.suncoast.systems"
+      ],
+      "attributes": {
+        "pkce.code.challenge.method": "S256"
+      }
+    }
   graphql-api.json: |
     {
       "clientId": "<path:secret/data/keycloak-client-id-graphql-api#value>",
@@ -231,14 +231,29 @@ data:
           }
         },
         {
-          "name": "hasura-claims",
+          "name": "hasura-allowed-roles",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-client-role-mapper",
+          "consentRequired": false,
+          "config": {
+            "usermodel.clientRoleMapping.clientId": "<path:secret/data/keycloak-client-id-graphql-api#value>",
+            "claim.name": "https://hasura.io/jwt/claims.x-hasura-allowed-roles",
+            "jsonType.label": "String",
+            "access.token.claim": "true",
+            "id.token.claim": "false",
+            "userinfo.token.claim": "false",
+            "multivalued": "true"
+          }
+        },
+        {
+          "name": "hasura-default-role",
           "protocol": "openid-connect",
           "protocolMapper": "oidc-hardcoded-claim-mapper",
           "consentRequired": false,
           "config": {
-            "claim.name": "https://hasura.io/jwt/claims",
-            "claim.value": "{\"x-hasura-default-role\":\"user\",\"x-hasura-allowed-roles\":[\"user\"]}",
-            "jsonType.label": "JSON",
+            "claim.name": "https://hasura.io/jwt/claims.x-hasura-default-role",
+            "claim.value": "user",
+            "jsonType.label": "String",
             "access.token.claim": "true",
             "id.token.claim": "false",
             "userinfo.token.claim": "false"
@@ -1260,6 +1275,7 @@ spec:
               GRAVITEE_INTROSPECT_CLIENT_ID="gravitee-introspection"
               GRAVITEE_INTROSPECT_CLIENT_SECRET="$(cat /vault/secrets/client-secret-gravitee-introspection 2>/dev/null || true)"
               HASURA_CONSOLE_PROXY_CLIENT_ID="hasura-console-proxy"
+              GRAPHQL_API_CLIENT_ID="graphql-api"
               if [ -s "${CLIENT_ID_DIR}/client-id-openwebui" ]; then
                 OPENWEBUI_CLIENT_ID="$(tr -d '\r\n' < "${CLIENT_ID_DIR}/client-id-openwebui")"
               fi
@@ -1277,6 +1293,15 @@ spec:
               fi
               if [ -s "${CLIENT_ID_DIR}/client-id-hasura-console-proxy" ]; then
                 HASURA_CONSOLE_PROXY_CLIENT_ID="$(tr -d '\r\n' < "${CLIENT_ID_DIR}/client-id-hasura-console-proxy")"
+              fi
+              if [ -s "${CLIENT_CONFIG_DIR_EXTERNAL}/graphql-api.json" ]; then
+                graph_id="$(sed -n "s/.*\"clientId\"[[:space:]]*:[[:space:]]*\"\\([^\"]*\\)\".*/\\1/p" "${CLIENT_CONFIG_DIR_EXTERNAL}/graphql-api.json" | head -n1 | tr -d '\r')"
+                if [ -n "${graph_id:-}" ] && ! printf '%s' "$graph_id" | grep -q '^<path:'; then
+                  GRAPHQL_API_CLIENT_ID="$graph_id"
+                fi
+              fi
+              if [ -s "${CLIENT_ID_DIR}/client-id-graphql-api" ]; then
+                GRAPHQL_API_CLIENT_ID="$(tr -d '\r\n' < "${CLIENT_ID_DIR}/client-id-graphql-api")"
               fi
               
               login_with_client() {
@@ -2491,16 +2516,16 @@ spec:
               
               apply_clients_from_dir "$INTERNAL_REALM" "$CLIENT_CONFIG_DIR_INTERNAL"
               disable_direct_grants_for_clients "$INTERNAL_REALM"
-              enforce_pkce_for_client "$INTERNAL_REALM" "$OPENWEBUI_CLIENT_ID"
               clear_pkce_for_client "$INTERNAL_REALM" "$DROOLS_WORKBENCH_CLIENT_ID"
-              ensure_realm_roles_in_scope_mapper "$INTERNAL_REALM" "$OPENWEBUI_CLIENT_ID"
-              ensure_client_attribute_mapper "$INTERNAL_REALM" "$OPENWEBUI_CLIENT_ID" "openwebui-picture" "picture" "picture"
-              if ! $KCADM get clients -r "$INTERNAL_REALM" -q "clientId=$OPENWEBUI_CLIENT_ID" --fields id --format csv 2>/dev/null | tail -n1 | grep -q .; then
-                echo "⚠️  openwebui client not present in internal realm (${INTERNAL_REALM})"
-              fi
 
               apply_clients_from_dir "$EXTERNAL_REALM" "$CLIENT_CONFIG_DIR_EXTERNAL"
               disable_direct_grants_for_clients "$EXTERNAL_REALM"
+              enforce_pkce_for_client "$EXTERNAL_REALM" "$OPENWEBUI_CLIENT_ID"
+              ensure_realm_roles_in_scope_mapper "$EXTERNAL_REALM" "$OPENWEBUI_CLIENT_ID"
+              ensure_client_attribute_mapper "$EXTERNAL_REALM" "$OPENWEBUI_CLIENT_ID" "openwebui-picture" "picture" "picture"
+              if ! $KCADM get clients -r "$EXTERNAL_REALM" -q "clientId=$OPENWEBUI_CLIENT_ID" --fields id --format csv 2>/dev/null | tail -n1 | grep -q .; then
+                echo "⚠️  openwebui client not present in external realm (${EXTERNAL_REALM})"
+              fi
 
               # Sample roles for mapping (edit/remove as needed)
               if [ -n "${INTERNAL_REALM_ROLES_RAW:-}" ]; then
@@ -2662,6 +2687,8 @@ spec:
                   -s "config.\"userinfo.token.claim\"=false" >/dev/null 2>&1 || true
               }
 
+              ensure_client_roles "$EXTERNAL_REALM" "$GRAPHQL_API_CLIENT_ID" user
+              ensure_default_client_role_member "$EXTERNAL_REALM" "$GRAPHQL_API_CLIENT_ID" "user"
               ensure_client_roles "$INTERNAL_REALM" "$DROOLS_WORKBENCH_CLIENT_ID" \
                 admin analyst developer user manager process-admin rest-all rest-project
               ensure_client_scope "$INTERNAL_REALM" "$DROOLS_WORKBENCH_CLIENT_ID" "roles"
@@ -2973,6 +3000,17 @@ spec:
                 DROOLS_WORKBENCH_CLIENT_ID="$(tr -d '\r\n' < /vault/secrets/client-id-drools-workbench)"
               fi
               export DROOLS_WORKBENCH_CLIENT_ID
+              GRAPHQL_API_CLIENT_ID="graphql-api"
+              if [ -s /opt/keycloak/data/clients/external/graphql-api.json ]; then
+                graph_id="$(sed -n "s/.*\"clientId\"[[:space:]]*:[[:space:]]*\"\\([^\"]*\\)\".*/\\1/p" /opt/keycloak/data/clients/external/graphql-api.json | head -n1 | tr -d '\r')"
+                if [ -n "${graph_id:-}" ] && ! printf '%s' "$graph_id" | grep -q '^<path:'; then
+                  GRAPHQL_API_CLIENT_ID="$graph_id"
+                fi
+              fi
+              if [ -s /vault/secrets/client-id-graphql-api ]; then
+                GRAPHQL_API_CLIENT_ID="$(tr -d '\r\n' < /vault/secrets/client-id-graphql-api)"
+              fi
+              export GRAPHQL_API_CLIENT_ID
               export DEBUG_ALWAYS_GRANT="${DEBUG_ALWAYS_GRANT:-false}"
               export GITHUB_ADMIN_USERNAMES="${GITHUB_ADMIN_USERNAMES:-}"
               append_role_map_entry() {
