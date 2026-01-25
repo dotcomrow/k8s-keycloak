@@ -203,20 +203,48 @@ metadata:
   name: keycloak-client-config-external
   namespace: keycloak
 data:
-  public-app.json: |
+  graphql-api.json: |
     {
-      "clientId": "<path:secret/data/keycloak-client-id-public-app#value>",
-      "name": "Public App",
+      "clientId": "<path:secret/data/keycloak-client-id-graphql-api#value>",
+      "name": "GraphQL API",
       "protocol": "openid-connect",
       "publicClient": false,
       "clientAuthenticatorType": "client-secret",
+      "secret": "<path:secret/data/keycloak-client-secret-graphql-api#value>",
       "standardFlowEnabled": true,
       "directAccessGrantsEnabled": false,
       "serviceAccountsEnabled": false,
       "redirectUris": [
         "https://oauth.pstmn.io/v1/callback"
       ],
-      "webOrigins": []
+      "webOrigins": [],
+      "protocolMappers": [
+        {
+          "name": "audience-graphql-api",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "consentRequired": false,
+          "config": {
+            "included.client.audience": "<path:secret/data/keycloak-client-id-graphql-api#value>",
+            "access.token.claim": "true",
+            "id.token.claim": "false"
+          }
+        },
+        {
+          "name": "hasura-claims",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-hardcoded-claim-mapper",
+          "consentRequired": false,
+          "config": {
+            "claim.name": "https://hasura.io/jwt/claims",
+            "claim.value": "{\"x-hasura-default-role\":\"user\",\"x-hasura-allowed-roles\":[\"user\"]}",
+            "jsonType.label": "JSON",
+            "access.token.claim": "true",
+            "id.token.claim": "false",
+            "userinfo.token.claim": "false"
+          }
+        }
+      ]
     }
 ---
 apiVersion: v1
@@ -1130,8 +1158,6 @@ spec:
               value: "true"
             - name: APPS_GITHUB_ONLY
               value: "true"
-            - name: EXTERNAL_GITHUB_ENABLED
-              value: "false"
             - name: EXTERNAL_DISABLE_LOCAL_LOGIN
               value: "true"
             - name: KEYCLOAK_EXTERNAL_ADMIN_MODE
@@ -1162,6 +1188,7 @@ spec:
               PROVIDER_GGL="google-groups-authenticator"
               FLOW_BROWSER_GH="browser-github-only"
               FLOW_BROWSER_GGL="browser-google-only"
+              FLOW_BROWSER_EXTERNAL_IDP="browser-external-idp-only"
               FIRST_BROKER_FLOW="first-broker-login-autolink"
               FIRST_BROKER_BASE="first broker login"
               PROVIDER_IDP_AUTO_LINK="idp-auto-link"
@@ -1171,7 +1198,6 @@ spec:
               INTERNAL_GITHUB_ENABLED="${APPS_GITHUB_ENABLED:-true}"
               INTERNAL_GITHUB_HIDE_ON_LOGIN="${APPS_GITHUB_HIDE_ON_LOGIN:-false}"
               INTERNAL_GITHUB_ONLY="${APPS_GITHUB_ONLY:-false}"
-              EXTERNAL_GITHUB_ENABLED="${EXTERNAL_GITHUB_ENABLED:-false}"
               KCADM="/opt/keycloak/bin/kcadm.sh"
               KCADM_CONFIG="/tmp/kcadm.config"
               export KCADM_CONFIG
@@ -1231,7 +1257,6 @@ spec:
               OLLAMA_SERVICE_CLIENT_ID="ollama-service"
               DROOLS_WORKBENCH_CLIENT_ID="drools-workbench-5k32f99itpcixgacte"
               DROOLS_SERVICE_CLIENT_ID="drools-kie-server-service-f92trmqismx56jf87a"
-              PUBLIC_APP_CLIENT_ID="public-app"
               GRAVITEE_INTROSPECT_CLIENT_ID="gravitee-introspection"
               GRAVITEE_INTROSPECT_CLIENT_SECRET="$(cat /vault/secrets/client-secret-gravitee-introspection 2>/dev/null || true)"
               HASURA_CONSOLE_PROXY_CLIENT_ID="hasura-console-proxy"
@@ -1246,9 +1271,6 @@ spec:
               fi
               if [ -s "${CLIENT_ID_DIR}/client-id-drools-kie-server-service" ]; then
                 DROOLS_SERVICE_CLIENT_ID="$(tr -d '\r\n' < "${CLIENT_ID_DIR}/client-id-drools-kie-server-service")"
-              fi
-              if [ -s "${CLIENT_ID_DIR}/client-id-public-app" ]; then
-                PUBLIC_APP_CLIENT_ID="$(tr -d '\r\n' < "${CLIENT_ID_DIR}/client-id-public-app")"
               fi
               if [ -s "${CLIENT_ID_DIR}/client-id-gravitee-introspection" ]; then
                 GRAVITEE_INTROSPECT_CLIENT_ID="$(tr -d '\r\n' < "${CLIENT_ID_DIR}/client-id-gravitee-introspection")"
@@ -1885,6 +1907,50 @@ spec:
                 fi
               }
 
+              ensure_idp_only_flow() {
+                local realm="$1"
+                local flow="$2"
+                local default_provider="$3"
+                local desc="$4"
+
+                ensure_flow "$realm" "$flow" "$desc"
+                add_exec_required "$realm" "$flow" "identity-provider-redirector"
+
+                if [ -z "${default_provider:-}" ]; then
+                  echo "ℹ️  No default IdP set for ${flow}; use kc_idp_hint to select a provider."
+                  return 0
+                fi
+
+                REDIR_ID=""
+                for i in {1..30}; do
+                  EXECS=$($KCADM get "authentication/flows/${flow}/executions" -r "$realm" || echo "[]")
+                  REDIR_ID=$(
+                            echo "$EXECS" | tr -d "\n" | sed "s/},[[:space:]]*{/}\n{/g" \
+                              | grep -E '"providerId" *: *"identity-provider-redirector"' \
+                              | sed -n "s/.*\"id\"[[:space:]]*:[[:space:]]*\"\([^\"]\+\)\".*/\1/p" | head -n1 || true
+                          )
+                  [ -n "$REDIR_ID" ] && break || sleep 1
+                done
+                [ -z "$REDIR_ID" ] && { echo "⚠️  cannot find redirector execution for ${flow}; skipping"; return 0; }
+
+                CFG_ID=""
+                for i in {1..30}; do
+                  CFG_ID=$($KCADM get "authentication/executions/${REDIR_ID}/config" -r "$realm" 2>/dev/null \
+                          | sed -n "s/.*\"id\"[[:space:]]*:[[:space:]]*\"\([^\"]*\)\".*/\1/p" | head -n1 || true)
+                  [ -n "${CFG_ID:-}" ] && break || sleep 1
+                done
+                if [ -n "${CFG_ID:-}" ]; then
+                  if ! $KCADM update "authentication/executions/${REDIR_ID}/config/${CFG_ID}" -r "$realm" \
+                    -s "alias=redirect-to-${default_provider}" -s "config.defaultProvider=${default_provider}"; then
+                    $KCADM create "authentication/executions/${REDIR_ID}/config" -r "$realm" \
+                      -s "alias=redirect-to-${default_provider}" -s "config.defaultProvider=${default_provider}" || true
+                  fi
+                else
+                  $KCADM create "authentication/executions/${REDIR_ID}/config" -r "$realm" \
+                  -s "alias=redirect-to-${default_provider}" -s "config.defaultProvider=${default_provider}" || true
+                fi
+              }
+
               ensure_first_broker_flow_autolink() {
                 local realm="$1"
                 local flow="$FIRST_BROKER_FLOW"
@@ -2066,13 +2132,6 @@ spec:
               
               EXTERNAL_GOOGLE_READY="false"
               echo "Configuring external realm: ${EXTERNAL_REALM}"
-              if [ "$EXTERNAL_GITHUB_ENABLED" = "true" ]; then
-                ensure_github_idp "$EXTERNAL_REALM" "true"
-              else
-                if $KCADM get identity-provider/instances/github -r "$EXTERNAL_REALM" >/dev/null 2>&1; then
-                  $KCADM delete identity-provider/instances/github -r "$EXTERNAL_REALM" || true
-                fi
-              fi
               ensure_first_broker_flow_autolink "$EXTERNAL_REALM"
               if ensure_google_idp "$EXTERNAL_REALM"; then
                 EXTERNAL_GOOGLE_READY="true"
@@ -2096,6 +2155,14 @@ spec:
               if [ "$EXTERNAL_GOOGLE_READY" = "true" ]; then
                 ensure_redirect_flow "$EXTERNAL_REALM" "$FLOW_BROWSER_GGL" "google" "Browser flow that redirects to Google"
               fi
+
+              EXTERNAL_DEFAULT_IDP="${EXTERNAL_DEFAULT_IDP:-}"
+              if [ -z "${EXTERNAL_DEFAULT_IDP:-}" ] && [ "$EXTERNAL_GOOGLE_READY" = "true" ]; then
+                EXTERNAL_DEFAULT_IDP="google"
+              fi
+              if [ "$EXTERNAL_DISABLE_LOCAL_LOGIN" = "true" ]; then
+                ensure_idp_only_flow "$EXTERNAL_REALM" "$FLOW_BROWSER_EXTERNAL_IDP" "$EXTERNAL_DEFAULT_IDP" "Browser flow that redirects to external IdPs"
+              fi
               
               if [ "$INTERNAL_REALM" != "$ADMIN_REALM" ]; then
                 if [ "$INTERNAL_GITHUB_ONLY" = "true" ]; then
@@ -2105,8 +2172,8 @@ spec:
                 fi
               fi
               if [ "$EXTERNAL_REALM" != "$ADMIN_REALM" ]; then
-                if [ "$EXTERNAL_DISABLE_LOCAL_LOGIN" = "true" ] && [ "$EXTERNAL_GOOGLE_READY" = "true" ]; then
-                  $KCADM update "realms/${EXTERNAL_REALM}" -s "browserFlow=${FLOW_BROWSER_GGL}" || true
+                if [ "$EXTERNAL_DISABLE_LOCAL_LOGIN" = "true" ]; then
+                  $KCADM update "realms/${EXTERNAL_REALM}" -s "browserFlow=${FLOW_BROWSER_EXTERNAL_IDP}" || true
                 else
                   $KCADM update "realms/${EXTERNAL_REALM}" -s "browserFlow=browser" || true
                 fi
@@ -2774,11 +2841,6 @@ spec:
                 clear_client_flow_override "$INTERNAL_REALM" "$OPENWEBUI_CLIENT_ID" "$FLOW_BROWSER_GH"
               fi
               
-              # Enforce Google-only for external apps (example clientId)
-              if [ "$EXTERNAL_GOOGLE_READY" = "true" ]; then
-                set_client_flow_override "$EXTERNAL_REALM" "$PUBLIC_APP_CLIENT_ID" "$FLOW_BROWSER_GGL"
-              fi
-
               if [ "$CONFIGURATOR_DELETE_CLIENT" = "true" ]; then
                 CID=$($KCADM get clients -r "$ADMIN_REALM" -q "clientId=$CONFIG_CLIENT_ID" --fields id --format csv 2>/dev/null | tail -n1 || true)
                 if [ -n "${CID:-}" ]; then
