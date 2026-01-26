@@ -2811,6 +2811,9 @@ spec:
                 local policy_name=""
                 local policy_id=""
                 local scope_id=""
+                local default_resource_id=""
+                local resource_json=""
+                local resource_type=""
                 if [ -z "${realm:-}" ] || [ -z "${target_client_id:-}" ] || [ -z "${allowed_client_id:-}" ]; then
                   return 0
                 fi
@@ -2838,6 +2841,25 @@ spec:
                 if [ -z "${scope_id:-}" ]; then
                   echo "⚠️  token exchange scope not found: token-exchange"
                   return 0
+                fi
+
+                default_resource_id=$($KCADM get "clients/$target_uuid/authz/resource-server/resource" -r "$realm" -q "name=Default Resource" --fields _id --format csv 2>/dev/null | tail -n1 || true)
+                default_resource_id="$(clean_id "$default_resource_id")"
+                if [ -n "${default_resource_id:-}" ]; then
+                  resource_json=$($KCADM get "clients/$target_uuid/authz/resource-server/resource/$default_resource_id" -r "$realm" 2>/dev/null || true)
+                  if ! printf '%s' "$resource_json" | grep -q '"name"[[:space:]]*:[[:space:]]*"token-exchange"'; then
+                    resource_type="urn:${target_client_id}:resources:default"
+                    tmp_resource_json="/tmp/token-exchange-resource-${target_uuid}.json"
+                    printf '%s\n' \
+                      '{' \
+                      '  "name": "Default Resource",' \
+                      "  \"type\": \"${resource_type}\"," \
+                      '  "uris": ["/*"],' \
+                      '  "scopes": ["token-exchange"]' \
+                      '}' > "$tmp_resource_json"
+                    $KCADM update "clients/$target_uuid/authz/resource-server/resource/$default_resource_id" -r "$realm" \
+                      -f "$tmp_resource_json" >/dev/null 2>&1 || true
+                  fi
                 fi
 
                 policy_name="token-exchange-${allowed_client_id}"
@@ -2869,7 +2891,7 @@ spec:
                   '  "type": "scope",' \
                   '  "logic": "POSITIVE",' \
                   '  "decisionStrategy": "UNANIMOUS",' \
-                  "  \"scopes\": [\"${scope_id}\"]," \
+                  "  \"scopes\": [\"token-exchange\"]," \
                   "  \"policies\": [\"${policy_name}\"]" \
                   '}' > "$tmp_perm_json"
                 if [ -n "${perm_id:-}" ]; then
