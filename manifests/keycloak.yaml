@@ -179,6 +179,18 @@ data:
 apiVersion: v1
 kind: ConfigMap
 metadata:
+  name: keycloak-token-exchange-config
+  namespace: keycloak
+data:
+  rules: |
+    # Format: <realm>:<allowed-client>=<target1>,<target2>
+    # Client IDs can be overridden via /vault/secrets/client-id-<name> files.
+    # Example: external:gravitee-introspection=openwebui,ollama
+    external:gravitee-introspection=openwebui
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
   name: keycloak-client-config-external
   namespace: keycloak
 data:
@@ -1169,6 +1181,12 @@ spec:
                 configMapKeyRef:
                   name: keycloak-role-config-internal
                   key: internal-realm-roles
+            - name: KEYCLOAK_TOKEN_EXCHANGE_RULES
+              valueFrom:
+                configMapKeyRef:
+                  name: keycloak-token-exchange-config
+                  key: rules
+                  optional: true
             - name: APPS_GITHUB_ENABLED
               value: "true"
             - name: APPS_GITHUB_ONLY
@@ -1750,6 +1768,7 @@ spec:
               fi
 
               ensure_confidential_service_client "$INTERNAL_REALM" "$GRAVITEE_INTROSPECT_CLIENT_ID" "$GRAVITEE_INTROSPECT_CLIENT_SECRET"
+              ensure_confidential_service_client "$EXTERNAL_REALM" "$GRAVITEE_INTROSPECT_CLIENT_ID" "$GRAVITEE_INTROSPECT_CLIENT_SECRET"
 
               ensure_flow() {
                 local realm="$1"
@@ -2836,7 +2855,56 @@ spec:
                 fi
               }
 
+              resolve_client_id() {
+                local client_id="$1"
+                local override_file="${CLIENT_ID_DIR:-/vault/secrets}/client-id-${client_id}"
+                if [ -s "$override_file" ]; then
+                  client_id="$(tr -d '\r\n' < "$override_file")"
+                fi
+                printf '%s' "$client_id"
+              }
+
+              apply_token_exchange_rules() {
+                local rules="${KEYCLOAK_TOKEN_EXCHANGE_RULES:-}"
+                local line=""
+                local realm=""
+                local rest=""
+                local allowed=""
+                local targets=""
+                if [ -z "${rules//[[:space:]]/}" ]; then
+                  return 0
+                fi
+                while IFS= read -r line || [ -n "$line" ]; do
+                  line="${line%%#*}"
+                  line="$(printf '%s' "$line" | tr -d '\r')"
+                  line="$(printf '%s' "$line" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')"
+                  [ -z "$line" ] && continue
+                  realm="$EXTERNAL_REALM"
+                  rest="$line"
+                  if printf '%s' "$line" | grep -q ':'; then
+                    realm="${line%%:*}"
+                    rest="${line#*:}"
+                  fi
+                  allowed="${rest%%=*}"
+                  targets="${rest#*=}"
+                  if [ -z "${allowed//[[:space:]]/}" ] || [ -z "${targets//[[:space:]]/}" ] || [ "$rest" = "$targets" ]; then
+                    echo "⚠️  invalid token exchange rule: $line"
+                    continue
+                  fi
+                  allowed="$(printf '%s' "$allowed" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')"
+                  allowed="$(resolve_client_id "$allowed")"
+                  IFS=',' read -r -a target_list <<< "$targets"
+                  for target in "${target_list[@]}"; do
+                    target="$(printf '%s' "$target" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')"
+                    [ -z "$target" ] && continue
+                    target="$(resolve_client_id "$target")"
+                    enable_token_exchange_for_client "$realm" "$target" "$allowed"
+                  done
+                done <<< "$rules"
+              }
+
               enable_token_exchange_for_client "$INTERNAL_REALM" "$DROOLS_SERVICE_CLIENT_ID" "$DROOLS_SERVICE_CLIENT_ID"
+              apply_token_exchange_rules
 
               set_client_flow_override() {
                 local realm="$1"
