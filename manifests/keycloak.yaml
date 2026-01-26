@@ -2293,28 +2293,12 @@ spec:
                   fi
                   CID=$($KCADM get clients -r "$realm" -q "clientId=$effective_id" --fields id --format csv 2>/dev/null | tail -n1 || true)
                   CID="$(clean_id "$CID")"
-                  authz_enabled="false"
-                  if grep -q "\"authorizationServicesEnabled\"[[:space:]]*:[[:space:]]*true" "$json_file"; then
-                    authz_enabled="true"
-                  fi
-                  json_apply="$json_file"
-                  if [ "$authz_enabled" = "true" ]; then
-                    json_apply="$(mktemp)"
-                    sed -e '/"authorizationServicesEnabled"/d' \
-                        -e 's/"serviceAccountsEnabled"[[:space:]]*:[[:space:]]*false/"serviceAccountsEnabled": true/' \
-                        -e 's/,[[:space:]]*}/}/' \
-                        "$json_file" > "$json_apply"
-                  fi
                   if [ -n "${CID:-}" ]; then
-                    $KCADM update "clients/$CID" -r "$realm" -f "$json_apply" || true
+                    $KCADM update "clients/$CID" -r "$realm" -f "$json_file" || true
                   else
-                    $KCADM create clients -r "$realm" -f "$json_apply" || true
+                    $KCADM create clients -r "$realm" -f "$json_file" || true
                     CID=$($KCADM get clients -r "$realm" -q "clientId=$effective_id" --fields id --format csv 2>/dev/null | tail -n1 || true)
                     CID="$(clean_id "$CID")"
-                  fi
-                  if [ "$authz_enabled" = "true" ] && [ -n "${CID:-}" ]; then
-                    $KCADM update "clients/$CID" -r "$realm" -s "serviceAccountsEnabled=true" >/dev/null 2>&1 || true
-                    $KCADM update "clients/$CID" -r "$realm" -s "authorizationServicesEnabled=true" >/dev/null 2>&1 || true
                   fi
                   if [ -z "${CID:-}" ]; then
                     echo "⚠️  client not found after apply: ${effective_id} in realm ${realm}"
@@ -2354,9 +2338,6 @@ spec:
                         -s "secret=$secret" || true
                       echo "🔐 Set client secret for $effective_id"
                     fi
-                  fi
-                  if [ "${json_apply:-}" != "$json_file" ] && [ -f "${json_apply:-}" ]; then
-                    rm -f "$json_apply"
                   fi
                   if [ "$json_file" != "$f" ] && [ -f "$json_file" ]; then
                     rm -f "$json_file"
