@@ -2857,16 +2857,15 @@ spec:
                 perm_id=$($KCADM get "clients/$target_uuid/authz/resource-server/permission/scope" -r "$realm" -q "name=token-exchange" --fields id --format csv 2>/dev/null | tail -n1 || true)
                 perm_id="$(clean_id "$perm_id")"
                 tmp_perm_json="/tmp/token-exchange-permission-${target_uuid}.json"
-                cat > "$tmp_perm_json" <<JSON
-{
-  "name": "token-exchange",
-  "type": "scope",
-  "logic": "POSITIVE",
-  "decisionStrategy": "UNANIMOUS",
-  "scopes": ["${scope_id}"],
-  "policies": ["${policy_id}"]
-}
-JSON
+                printf '%s\n' \
+                  '{' \
+                  '  "name": "token-exchange",' \
+                  '  "type": "scope",' \
+                  '  "logic": "POSITIVE",' \
+                  '  "decisionStrategy": "UNANIMOUS",' \
+                  "  \"scopes\": [\"${scope_id}\"]," \
+                  "  \"policies\": [\"${policy_id}\"]" \
+                  '}' > "$tmp_perm_json"
                 if [ -n "${perm_id:-}" ]; then
                   $KCADM update "clients/$target_uuid/authz/resource-server/permission/scope/$perm_id" -r "$realm" \
                     -f "$tmp_perm_json" >/dev/null 2>&1 || true
