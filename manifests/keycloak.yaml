@@ -2807,10 +2807,10 @@ spec:
                 local allowed_client_id="$3"
                 local target_uuid=""
                 local allowed_uuid=""
-                local perm_json=""
                 local perm_id=""
                 local policy_name=""
                 local policy_id=""
+                local scope_id=""
                 if [ -z "${realm:-}" ] || [ -z "${target_client_id:-}" ] || [ -z "${allowed_client_id:-}" ]; then
                   return 0
                 fi
@@ -2827,7 +2827,12 @@ spec:
                   return 0
                 fi
 
-                $KCADM update "clients/$target_uuid/management/permissions" -r "$realm" -s enabled=true >/dev/null 2>&1 || true
+                scope_id=$($KCADM get "clients/$target_uuid/authz/resource-server/scope" -r "$realm" -q "name=token-exchange" --fields id --format csv 2>/dev/null | tail -n1 || true)
+                scope_id="$(clean_id "$scope_id")"
+                if [ -z "${scope_id:-}" ]; then
+                  $KCADM create "clients/$target_uuid/authz/resource-server/scope" -r "$realm" \
+                    -s "name=token-exchange" >/dev/null 2>&1 || true
+                fi
 
                 policy_name="token-exchange-${allowed_client_id}"
                 policy_id=$($KCADM get "clients/$target_uuid/authz/resource-server/policy/client" -r "$realm" -q "name=$policy_name" --fields id --format csv 2>/dev/null | tail -n1 || true)
@@ -2843,11 +2848,11 @@ spec:
                     -s "clients=[\"$allowed_uuid\"]" >/dev/null 2>&1 || true
                 fi
 
-                perm_json="$($KCADM get "clients/$target_uuid/management/permissions" -r "$realm" 2>/dev/null || true)"
-                perm_id="$(printf '%s' "$perm_json" | sed -n 's/.*"token-exchange"[[:space:]]*:[[:space:]]*"\\([^"]*\\)".*/\\1/p')"
+                perm_id=$($KCADM get "clients/$target_uuid/authz/resource-server/permission/scope" -r "$realm" -q "name=token-exchange" --fields id --format csv 2>/dev/null | tail -n1 || true)
                 perm_id="$(clean_id "$perm_id")"
                 if [ -n "${perm_id:-}" ]; then
                   $KCADM update "clients/$target_uuid/authz/resource-server/permission/scope/$perm_id" -r "$realm" \
+                    -s "scopes=[\"token-exchange\"]" \
                     -s "policies=[\"$policy_name\"]" >/dev/null 2>&1 || true
                 else
                   $KCADM create "clients/$target_uuid/authz/resource-server/permission/scope" -r "$realm" \
