@@ -2832,6 +2832,12 @@ spec:
                 if [ -z "${scope_id:-}" ]; then
                   $KCADM create "clients/$target_uuid/authz/resource-server/scope" -r "$realm" \
                     -s "name=token-exchange" >/dev/null 2>&1 || true
+                  scope_id=$($KCADM get "clients/$target_uuid/authz/resource-server/scope" -r "$realm" -q "name=token-exchange" --fields id --format csv 2>/dev/null | tail -n1 || true)
+                  scope_id="$(clean_id "$scope_id")"
+                fi
+                if [ -z "${scope_id:-}" ]; then
+                  echo "⚠️  token exchange scope not found: token-exchange"
+                  return 0
                 fi
 
                 policy_name="token-exchange-${allowed_client_id}"
@@ -2864,7 +2870,7 @@ spec:
                   '  "logic": "POSITIVE",' \
                   '  "decisionStrategy": "UNANIMOUS",' \
                   "  \"scopes\": [\"${scope_id}\"]," \
-                  "  \"policies\": [\"${policy_id}\"]" \
+                  "  \"policies\": [\"${policy_name}\"]" \
                   '}' > "$tmp_perm_json"
                 if [ -n "${perm_id:-}" ]; then
                   $KCADM update "clients/$target_uuid/authz/resource-server/permission/scope/$perm_id" -r "$realm" \
