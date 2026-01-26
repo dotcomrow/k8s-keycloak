@@ -28,7 +28,8 @@ data:
       "secret": "<path:secret/data/keycloak-client-secret-ollama-service#value>",
       "standardFlowEnabled": false,
       "directAccessGrantsEnabled": false,
-      "serviceAccountsEnabled": true
+      "serviceAccountsEnabled": true,
+      "authorizationServicesEnabled": true
     }
   drools-workbench.json: |
     {
@@ -41,6 +42,7 @@ data:
       "standardFlowEnabled": true,
       "directAccessGrantsEnabled": false,
       "serviceAccountsEnabled": true,
+      "authorizationServicesEnabled": true,
       "redirectUris": [
         "https://workbench-drools.teleport.app.suncoast.systems/*",
         "https://workbench-drools.teleport.app.suncoast.systems/oauth2/callback",
@@ -57,6 +59,7 @@ data:
       "standardFlowEnabled": true,
       "directAccessGrantsEnabled": false,
       "serviceAccountsEnabled": false,
+      "authorizationServicesEnabled": true,
       "redirectUris": [
         "https://kogito-console-drools.teleport.app.suncoast.systems/*",
         "https://kogito-task-console-drools.teleport.app.suncoast.systems/*"
@@ -76,7 +79,8 @@ data:
       "bearerOnly": true,
       "standardFlowEnabled": false,
       "directAccessGrantsEnabled": true,
-      "serviceAccountsEnabled": false
+      "serviceAccountsEnabled": false,
+      "authorizationServicesEnabled": true
     }
   drools-kie-server-service.json: |
     {
@@ -88,7 +92,8 @@ data:
       "secret": "<path:secret/data/keycloak-client-secret-drools-kie-server-service#value>",
       "standardFlowEnabled": false,
       "directAccessGrantsEnabled": false,
-      "serviceAccountsEnabled": true
+      "serviceAccountsEnabled": true,
+      "authorizationServicesEnabled": true
     }
   drools-workbench-proxy.json: |
     {
@@ -205,6 +210,7 @@ data:
       "standardFlowEnabled": true,
       "directAccessGrantsEnabled": false,
       "serviceAccountsEnabled": false,
+      "authorizationServicesEnabled": true,
       "redirectUris": [
         "https://open-webui.teleport.app.suncoast.systems/*"
       ],
