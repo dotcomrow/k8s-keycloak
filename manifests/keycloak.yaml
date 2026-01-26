@@ -2365,12 +2365,12 @@ spec:
                 CID=$($KCADM get clients -r "$realm" -q "clientId=$clientId" --fields id --format csv 2>/dev/null | tail -n1 || true)
                 CID="$(clean_id "$CID")"
                 if [ -n "${CID:-}" ]; then
-                  $KCADM update "clients/$CID" -r "$realm" \
-                    -s "standardFlowEnabled=true" \
-                    -s "directAccessGrantsEnabled=false" \
-                    -s "implicitFlowEnabled=false" \
-                    -s "serviceAccountsEnabled=false" \
-                    -s "attributes.\"pkce.code.challenge.method\"=S256" || true
+                $KCADM update "clients/$CID" -r "$realm" \
+                  -s "standardFlowEnabled=true" \
+                  -s "directAccessGrantsEnabled=false" \
+                  -s "implicitFlowEnabled=false" \
+                  -s "serviceAccountsEnabled=true" \
+                  -s "attributes.\"pkce.code.challenge.method\"=S256" || true
                 else
                   echo "ℹ️  client not found for PKCE enforcement: $clientId"
                 fi
