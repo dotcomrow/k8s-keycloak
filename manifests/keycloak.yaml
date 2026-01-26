@@ -2843,9 +2843,15 @@ spec:
                     -s "logic=POSITIVE" \
                     -s "decisionStrategy=UNANIMOUS" \
                     -s "clients=[\"$allowed_uuid\"]" >/dev/null 2>&1 || true
+                  policy_id=$($KCADM get "clients/$target_uuid/authz/resource-server/policy/client" -r "$realm" -q "name=$policy_name" --fields id --format csv 2>/dev/null | tail -n1 || true)
+                  policy_id="$(clean_id "$policy_id")"
                 else
                   $KCADM update "clients/$target_uuid/authz/resource-server/policy/client/$policy_id" -r "$realm" \
                     -s "clients=[\"$allowed_uuid\"]" >/dev/null 2>&1 || true
+                fi
+                if [ -z "${policy_id:-}" ]; then
+                  echo "⚠️  token exchange policy not found: $policy_name"
+                  return 0
                 fi
 
                 perm_id=$($KCADM get "clients/$target_uuid/authz/resource-server/permission/scope" -r "$realm" -q "name=token-exchange" --fields id --format csv 2>/dev/null | tail -n1 || true)
