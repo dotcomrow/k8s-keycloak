@@ -2853,14 +2853,14 @@ spec:
                 if [ -n "${perm_id:-}" ]; then
                   $KCADM update "clients/$target_uuid/authz/resource-server/permission/scope/$perm_id" -r "$realm" \
                     -s "scopes=[\"token-exchange\"]" \
-                    -s "policies=[\"$policy_name\"]" >/dev/null 2>&1 || true
+                    -s "policies=[\"$policy_id\"]" >/dev/null 2>&1 || true
                 else
                   $KCADM create "clients/$target_uuid/authz/resource-server/permission/scope" -r "$realm" \
                     -s "name=token-exchange" \
                     -s "logic=POSITIVE" \
                     -s "decisionStrategy=UNANIMOUS" \
                     -s "scopes=[\"token-exchange\"]" \
-                    -s "policies=[\"$policy_name\"]" >/dev/null 2>&1 || true
+                    -s "policies=[\"$policy_id\"]" >/dev/null 2>&1 || true
                 fi
               }
 
