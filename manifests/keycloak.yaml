@@ -3034,6 +3034,26 @@ spec:
                     echo "ℹ️  token exchange permission dump: ${perm_dump}"
                   fi
                 fi
+
+                # Also bind the built-in "token-exchange" permission (Keycloak appears to enforce this name).
+                perm_name_default="token-exchange"
+                perm_id_default=$($KCADM get "clients/$target_uuid/authz/resource-server/permission/scope" -r "$realm" -q "name=$perm_name_default" --fields id --format csv 2>/dev/null | tail -n1 || true)
+                perm_id_default="$(clean_id "$perm_id_default")"
+                if [ -n "${perm_id_default:-}" ]; then
+                  if ! $KCADM update "clients/$target_uuid/authz/resource-server/permission/scope/$perm_id_default" -r "$realm" \
+                    -s 'resources=["Default Resource"]' \
+                    -s 'scopes=["token-exchange"]' \
+                    -s "policies=[\"${policy_name}\"]"; then
+                    echo "⚠️  token exchange default permission update failed: realm=$realm target=$target_client_id allowed=$allowed_client_id perm_id=$perm_id_default"
+                  else
+                    perm_dump_default="$($KCADM get "clients/$target_uuid/authz/resource-server/permission/scope/$perm_id_default" -r "$realm" 2>/dev/null | tr -d '\n' || true)"
+                    if [ -n "${perm_dump_default:-}" ]; then
+                      echo "ℹ️  token exchange default permission dump: ${perm_dump_default}"
+                    fi
+                  fi
+                else
+                  echo "⚠️  token exchange default permission not found: ${perm_name_default}"
+                fi
               }
 
               resolve_client_id() {
