@@ -1172,7 +1172,7 @@ spec:
       containers:
         # --- One-time configuration sidecar (IdPs + flows + attach providers) ---
         - name: keycloak-configurator
-          image: ghcr.io/dotcomrow/keycloak-image:sha-60f2be9
+          image: ghcr.io/dotcomrow/keycloak-image:sha-3891e6f
           imagePullPolicy: Always
           env:
             - name: KEYCLOAK_REALM
@@ -2948,7 +2948,8 @@ spec:
                   return 0
                 fi
 
-                perm_id=$($KCADM get "clients/$target_uuid/authz/resource-server/permission/scope" -r "$realm" -q "name=token-exchange" --fields id --format csv 2>/dev/null | tail -n1 || true)
+                perm_name="token-exchange-${allowed_client_id}"
+                perm_id=$($KCADM get "clients/$target_uuid/authz/resource-server/permission/scope" -r "$realm" -q "name=$perm_name" --fields id --format csv 2>/dev/null | tail -n1 || true)
                 perm_id="$(clean_id "$perm_id")"
                 tmp_perm_json="/tmp/token-exchange-permission-${target_uuid}.json"
                 # Use ids for scopes/policies to satisfy strict Keycloak validation.
@@ -2956,7 +2957,7 @@ spec:
                 if [ -n "${default_resource_id:-}" ]; then
                   printf '%s\n' \
                     '{' \
-                    '  "name": "token-exchange",' \
+                    "  \"name\": \"${perm_name}\"," \
                     '  "type": "scope",' \
                     '  "logic": "POSITIVE",' \
                     '  "decisionStrategy": "UNANIMOUS",' \
@@ -2967,7 +2968,7 @@ spec:
                 else
                   printf '%s\n' \
                     '{' \
-                    '  "name": "token-exchange",' \
+                    "  \"name\": \"${perm_name}\"," \
                     '  "type": "scope",' \
                     '  "logic": "POSITIVE",' \
                     '  "decisionStrategy": "UNANIMOUS",' \
@@ -3122,7 +3123,7 @@ spec:
 
         # --- Keycloak runtime ---
         - name: keycloak
-          image: ghcr.io/dotcomrow/keycloak-image:sha-60f2be9
+          image: ghcr.io/dotcomrow/keycloak-image:sha-3891e6f
           imagePullPolicy: Always
           ports:
             - containerPort: 8080
