@@ -2962,7 +2962,8 @@ spec:
                   return 0
                 fi
 
-                perm_name="token-exchange-${allowed_client_id}"
+                # Use a distinct permission name to avoid colliding with policy names.
+                perm_name="token-exchange-perm-${allowed_client_id}"
                 perm_id=$($KCADM get "clients/$target_uuid/authz/resource-server/permission/scope" -r "$realm" -q "name=$perm_name" --fields id --format csv 2>/dev/null | tail -n1 || true)
                 perm_id="$(clean_id "$perm_id")"
                 tmp_perm_json="/tmp/token-exchange-permission-${target_uuid}.json"
