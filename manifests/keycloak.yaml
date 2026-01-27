@@ -2972,9 +2972,25 @@ spec:
                   return 0
                 fi
 
+                get_permission_id_by_name() {
+                  local realm="$1"
+                  local client_uuid="$2"
+                  local perm_name="$3"
+                  local perm_list=""
+                  local perm_id=""
+                  perm_list="$($KCADM get "clients/$client_uuid/authz/resource-server/permission/scope" -r "$realm" 2>/dev/null | tr -d '\n' || true)"
+                  if [ -z "${perm_list:-}" ]; then
+                    printf '%s' ""
+                    return 0
+                  fi
+                  perm_id="$(printf '%s' "$perm_list" \
+                    | sed -n "s/.*\"id\"[[:space:]]*:[[:space:]]*\"\\([^\"]*\\)\"[^{]*\"name\"[[:space:]]*:[[:space:]]*\"${perm_name}\".*/\\1/p")"
+                  printf '%s' "$perm_id"
+                }
+
                 # Use a distinct permission name to avoid colliding with policy names.
                 perm_name="token-exchange-perm-${allowed_client_id}"
-                perm_id=$($KCADM get "clients/$target_uuid/authz/resource-server/permission/scope" -r "$realm" -q "name=$perm_name" --fields id --format csv 2>/dev/null | tail -n1 || true)
+                perm_id="$(get_permission_id_by_name "$realm" "$target_uuid" "$perm_name")"
                 perm_id="$(clean_id "$perm_id")"
                 echo "ℹ️  token exchange perm_name=$perm_name perm_id=$perm_id"
                 tmp_perm_json="/tmp/token-exchange-permission-${target_uuid}.json"
@@ -3016,7 +3032,7 @@ spec:
                 fi
 
                 # Enforce names-based associations (Keycloak accepts these reliably).
-                perm_id=$($KCADM get "clients/$target_uuid/authz/resource-server/permission/scope" -r "$realm" -q "name=$perm_name" --fields id --format csv 2>/dev/null | tail -n1 || true)
+                perm_id="$(get_permission_id_by_name "$realm" "$target_uuid" "$perm_name")"
                 perm_id="$(clean_id "$perm_id")"
                 if [ -n "${perm_id:-}" ]; then
                   if ! $KCADM update "clients/$target_uuid/authz/resource-server/permission/scope/$perm_id" -r "$realm" \
@@ -3037,7 +3053,7 @@ spec:
 
                 # Also bind the built-in "token-exchange" permission (Keycloak appears to enforce this name).
                 perm_name_default="token-exchange"
-                perm_id_default=$($KCADM get "clients/$target_uuid/authz/resource-server/permission/scope" -r "$realm" -q "name=$perm_name_default" --fields id --format csv 2>/dev/null | tail -n1 || true)
+                perm_id_default="$(get_permission_id_by_name "$realm" "$target_uuid" "$perm_name_default")"
                 perm_id_default="$(clean_id "$perm_id_default")"
                 if [ -n "${perm_id_default:-}" ]; then
                   if ! $KCADM update "clients/$target_uuid/authz/resource-server/permission/scope/$perm_id_default" -r "$realm" \
@@ -3053,6 +3069,33 @@ spec:
                   fi
                 else
                   echo "⚠️  token exchange default permission not found: ${perm_name_default}"
+                fi
+
+                perm_list_names="$($KCADM get "clients/$target_uuid/authz/resource-server/permission/scope" -r "$realm" 2>/dev/null | tr -d '\n' | sed -n 's/.*\"name\"[[:space:]]*:[[:space:]]*\"\\([^\"]*\\)\".*/\\1/p' || true)"
+                if [ -n "${perm_list_names:-}" ]; then
+                  echo "ℹ️  token exchange permissions present: ${perm_list_names}"
+                fi
+
+                # Deep diagnostics for stubborn failures.
+                authz_status="$($KCADM get "clients/$target_uuid" -r "$realm" 2>/dev/null | sed -n 's/.*\"authorizationServicesEnabled\"[[:space:]]*:[[:space:]]*\\([^,}]*\\).*/\\1/p' | head -n1 || true)"
+                if [ -n "${authz_status:-}" ]; then
+                  echo "ℹ️  token exchange authz enabled: ${authz_status}"
+                fi
+                scope_dump="$($KCADM get "clients/$target_uuid/authz/resource-server/scope" -r "$realm" 2>/dev/null | tr -d '\n' || true)"
+                if [ -n "${scope_dump:-}" ]; then
+                  echo "ℹ️  token exchange scopes dump: ${scope_dump}"
+                fi
+                resource_dump="$($KCADM get "clients/$target_uuid/authz/resource-server/resource" -r "$realm" 2>/dev/null | tr -d '\n' || true)"
+                if [ -n "${resource_dump:-}" ]; then
+                  echo "ℹ️  token exchange resources dump: ${resource_dump}"
+                fi
+                policy_dump="$($KCADM get "clients/$target_uuid/authz/resource-server/policy" -r "$realm" 2>/dev/null | tr -d '\n' || true)"
+                if [ -n "${policy_dump:-}" ]; then
+                  echo "ℹ️  token exchange policies dump: ${policy_dump}"
+                fi
+                perm_dump_all="$($KCADM get "clients/$target_uuid/authz/resource-server/permission" -r "$realm" 2>/dev/null | tr -d '\n' || true)"
+                if [ -n "${perm_dump_all:-}" ]; then
+                  echo "ℹ️  token exchange permissions dump: ${perm_dump_all}"
                 fi
               }
 
