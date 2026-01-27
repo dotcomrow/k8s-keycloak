@@ -1835,6 +1835,7 @@ spec:
               ensure_confidential_service_client "$EXTERNAL_REALM" "$GRAVITEE_INTROSPECT_CLIENT_ID" "$GRAVITEE_INTROSPECT_CLIENT_SECRET"
               ensure_audience_mapper "$INTERNAL_REALM" "$GRAVITEE_INTROSPECT_CLIENT_ID" "$GRAVITEE_INTROSPECT_CLIENT_ID"
               ensure_audience_mapper "$EXTERNAL_REALM" "$GRAVITEE_INTROSPECT_CLIENT_ID" "$GRAVITEE_INTROSPECT_CLIENT_ID"
+              ensure_audience_mapper "$EXTERNAL_REALM" "$GRAPHQL_API_CLIENT_ID" "$OPENWEBUI_CLIENT_ID"
 
               ensure_flow() {
                 local realm="$1"
