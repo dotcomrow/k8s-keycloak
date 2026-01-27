@@ -3147,7 +3147,7 @@ spec:
 
             # Feature flags
             - name: KC_FEATURES
-              value: "token-exchange"
+              value: "token-exchange,admin-fine-grained-authz"
 
             # Logging
             - name: KC_LOG
