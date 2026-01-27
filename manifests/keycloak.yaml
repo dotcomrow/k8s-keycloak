@@ -1496,6 +1496,7 @@ spec:
                     -s standardFlowEnabled=false \
                     -s implicitFlowEnabled=false \
                     -s directAccessGrantsEnabled=false \
+                    -s "attributes.\"standard.token.exchange.enabled\"=true" \
                     -s "clientAuthenticatorType=client-secret" \
                     -s "secret=$client_secret" >/dev/null 2>&1 || true
                 else
@@ -1506,6 +1507,7 @@ spec:
                     -s standardFlowEnabled=false \
                     -s implicitFlowEnabled=false \
                     -s directAccessGrantsEnabled=false \
+                    -s "attributes.\"standard.token.exchange.enabled\"=true" \
                     -s "clientAuthenticatorType=client-secret" \
                     -s "secret=$client_secret" >/dev/null 2>&1 || true
                 fi
