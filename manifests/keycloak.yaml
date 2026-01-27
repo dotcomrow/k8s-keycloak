@@ -3055,6 +3055,11 @@ spec:
                 if [ -z "${rules//[[:space:]]/}" ]; then
                   return 0
                 fi
+                if login_with_admin; then
+                  echo "ℹ️  token exchange: using admin auth for authz configuration"
+                else
+                  echo "⚠️  token exchange: admin auth unavailable; proceeding with client auth"
+                fi
                 while IFS= read -r line || [ -n "$line" ]; do
                   line="${line%%#*}"
                   line="$(printf '%s' "$line" | tr -d '\r')"
