@@ -216,7 +216,8 @@ data:
         "https://open-webui.teleport.app.suncoast.systems"
       ],
       "attributes": {
-        "pkce.code.challenge.method": "S256"
+        "pkce.code.challenge.method": "S256",
+        "standard.token.exchange.enabled": "true"
       }
     }
   graphql-api.json: |
@@ -2946,16 +2947,20 @@ spec:
                 policy_id=$($KCADM get "clients/$target_uuid/authz/resource-server/policy/client" -r "$realm" -q "name=$policy_name" --fields id --format csv 2>/dev/null | tail -n1 || true)
                 policy_id="$(clean_id "$policy_id")"
                 if [ -z "${policy_id:-}" ]; then
-                  $KCADM create "clients/$target_uuid/authz/resource-server/policy/client" -r "$realm" \
+                  if ! $KCADM create "clients/$target_uuid/authz/resource-server/policy/client" -r "$realm" \
                     -s "name=$policy_name" \
                     -s "logic=POSITIVE" \
                     -s "decisionStrategy=UNANIMOUS" \
-                    -s "clients=[\"$allowed_uuid\"]" >/dev/null 2>&1 || true
+                    -s "clients=[\"$allowed_uuid\"]"; then
+                    echo "⚠️  token exchange policy create failed: realm=$realm target=$target_client_id allowed=$allowed_client_id"
+                  fi
                   policy_id=$($KCADM get "clients/$target_uuid/authz/resource-server/policy/client" -r "$realm" -q "name=$policy_name" --fields id --format csv 2>/dev/null | tail -n1 || true)
                   policy_id="$(clean_id "$policy_id")"
                 else
-                  $KCADM update "clients/$target_uuid/authz/resource-server/policy/client/$policy_id" -r "$realm" \
-                    -s "clients=[\"$allowed_uuid\"]" >/dev/null 2>&1 || true
+                  if ! $KCADM update "clients/$target_uuid/authz/resource-server/policy/client/$policy_id" -r "$realm" \
+                    -s "clients=[\"$allowed_uuid\"]"; then
+                    echo "⚠️  token exchange policy update failed: realm=$realm target=$target_client_id allowed=$allowed_client_id policy_id=$policy_id"
+                  fi
                 fi
                 if [ -z "${policy_id:-}" ]; then
                   echo "⚠️  token exchange policy not found: $policy_name"
@@ -2991,11 +2996,17 @@ spec:
                     '}' > "$tmp_perm_json"
                 fi
                 if [ -n "${perm_id:-}" ]; then
-                  $KCADM update "clients/$target_uuid/authz/resource-server/permission/scope/$perm_id" -r "$realm" \
-                    -f "$tmp_perm_json" >/dev/null 2>&1 || true
+                  if ! $KCADM update "clients/$target_uuid/authz/resource-server/permission/scope/$perm_id" -r "$realm" \
+                    -f "$tmp_perm_json"; then
+                    echo "⚠️  token exchange permission update failed: realm=$realm target=$target_client_id allowed=$allowed_client_id perm_id=$perm_id"
+                    echo "    perm_json=$(tr -d '\n' < "$tmp_perm_json")"
+                  fi
                 else
-                  $KCADM create "clients/$target_uuid/authz/resource-server/permission/scope" -r "$realm" \
-                    -f "$tmp_perm_json" >/dev/null 2>&1 || true
+                  if ! $KCADM create "clients/$target_uuid/authz/resource-server/permission/scope" -r "$realm" \
+                    -f "$tmp_perm_json"; then
+                    echo "⚠️  token exchange permission create failed: realm=$realm target=$target_client_id allowed=$allowed_client_id"
+                    echo "    perm_json=$(tr -d '\n' < "$tmp_perm_json")"
+                  fi
                 fi
               }
 
