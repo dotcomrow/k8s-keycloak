@@ -228,6 +228,9 @@ data:
       "publicClient": false,
       "clientAuthenticatorType": "client-secret",
       "secret": "<path:secret/data/keycloak-client-secret-graphql-api#value>",
+      "attributes": {
+        "standard.token.exchange.enabled": "true"
+      },
       "standardFlowEnabled": true,
       "directAccessGrantsEnabled": false,
       "serviceAccountsEnabled": false,
@@ -3271,7 +3274,7 @@ spec:
 
             # Feature flags
             - name: KC_FEATURES
-              value: "token-exchange-standard,token-exchange-external-internal"
+              value: "token-exchange,token-exchange-standard,token-exchange-external-internal"
 
             # Logging
             - name: KC_LOG
@@ -3279,7 +3282,7 @@ spec:
             - name: KC_LOG_FILE
               value: "/opt/keycloak/data/log/keycloak.log"
             - name: KC_LOG_LEVEL
-              value: "INFO,systems.suncoast.kc.github:DEBUG,systems.suncoast.kc.google:DEBUG,org.keycloak.authentication:DEBUG,org.keycloak.events:DEBUG,org.keycloak.protocol.oidc:DEBUG,org.keycloak.protocol.oidc.endpoints.TokenEndpoint:TRACE,org.keycloak.protocol.oidc.utils.AuthorizeTokenExecutor:TRACE"
+              value: "INFO,systems.suncoast.kc.github:DEBUG,systems.suncoast.kc.google:DEBUG,org.keycloak.authentication:DEBUG,org.keycloak.events:DEBUG,org.keycloak.protocol.oidc:DEBUG,org.keycloak.protocol.oidc.grants:TRACE,org.keycloak.protocol.oidc.grants.TokenExchangeGrant:TRACE,org.keycloak.protocol.oidc.endpoints.TokenEndpoint:TRACE,org.keycloak.protocol.oidc.utils.AuthorizeTokenExecutor:TRACE,org.keycloak.authorization:DEBUG,org.keycloak.services.resources.admin.permissions:DEBUG"
             # Proxy & Hostname (Keycloak 26.5 hostname v2)
             - name: KC_PROXY_HEADERS
               value: "xforwarded"
