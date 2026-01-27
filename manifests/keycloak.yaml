@@ -1187,7 +1187,7 @@ spec:
       containers:
         # --- One-time configuration sidecar (IdPs + flows + attach providers) ---
         - name: keycloak-configurator
-          image: ghcr.io/dotcomrow/keycloak-image:sha-9871d6f
+          image: ghcr.io/dotcomrow/keycloak-image:sha-6b71290
           imagePullPolicy: Always
           env:
             - name: KEYCLOAK_REALM
@@ -3248,7 +3248,7 @@ spec:
 
         # --- Keycloak runtime ---
         - name: keycloak
-          image: ghcr.io/dotcomrow/keycloak-image:sha-9871d6f
+          image: ghcr.io/dotcomrow/keycloak-image:sha-6b71290
           imagePullPolicy: Always
           ports:
             - containerPort: 8080
