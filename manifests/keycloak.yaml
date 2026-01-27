@@ -1511,6 +1511,42 @@ spec:
                 fi
               }
 
+              ensure_audience_mapper() {
+                local realm="$1"
+                local client_id="$2"
+                local audience="$3"
+                local mapper_name=""
+                local cid=""
+                local mapper_id=""
+                if [ -z "${realm:-}" ] || [ -z "${client_id:-}" ] || [ -z "${audience:-}" ]; then
+                  return 0
+                fi
+                mapper_name="audience-${audience}"
+                cid=$($KCADM get clients -r "$realm" -q "clientId=$client_id" --fields id --format csv 2>/dev/null | tail -n1 || true)
+                cid="$(clean_id "$cid")"
+                if [ -z "${cid:-}" ]; then
+                  return 0
+                fi
+                mapper_id=$($KCADM get "clients/$cid/protocol-mappers/models" -r "$realm" -q "name=$mapper_name" --fields id --format csv 2>/dev/null | tail -n1 || true)
+                mapper_id="$(clean_id "$mapper_id")"
+                if [ -n "${mapper_id:-}" ]; then
+                  $KCADM update "clients/$cid/protocol-mappers/models/$mapper_id" -r "$realm" \
+                    -s "protocol=openid-connect" \
+                    -s "protocolMapper=oidc-audience-mapper" \
+                    -s "config.included.client.audience=$audience" \
+                    -s "config.access.token.claim=true" \
+                    -s "config.id.token.claim=false" >/dev/null 2>&1 || true
+                else
+                  $KCADM create "clients/$cid/protocol-mappers/models" -r "$realm" \
+                    -s "name=$mapper_name" \
+                    -s "protocol=openid-connect" \
+                    -s "protocolMapper=oidc-audience-mapper" \
+                    -s "config.included.client.audience=$audience" \
+                    -s "config.access.token.claim=true" \
+                    -s "config.id.token.claim=false" >/dev/null 2>&1 || true
+                fi
+              }
+
               ensure_user_admin() {
                 local realm="$1"
                 local email="$2"
@@ -1784,6 +1820,8 @@ spec:
 
               ensure_confidential_service_client "$INTERNAL_REALM" "$GRAVITEE_INTROSPECT_CLIENT_ID" "$GRAVITEE_INTROSPECT_CLIENT_SECRET"
               ensure_confidential_service_client "$EXTERNAL_REALM" "$GRAVITEE_INTROSPECT_CLIENT_ID" "$GRAVITEE_INTROSPECT_CLIENT_SECRET"
+              ensure_audience_mapper "$INTERNAL_REALM" "$GRAVITEE_INTROSPECT_CLIENT_ID" "$GRAVITEE_INTROSPECT_CLIENT_ID"
+              ensure_audience_mapper "$EXTERNAL_REALM" "$GRAVITEE_INTROSPECT_CLIENT_ID" "$GRAVITEE_INTROSPECT_CLIENT_ID"
 
               ensure_flow() {
                 local realm="$1"
