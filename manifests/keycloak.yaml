@@ -3128,6 +3128,8 @@ spec:
           ports:
             - containerPort: 8080
               name: http
+            - containerPort: 9000
+              name: management
           env:
             - name: KEYCLOAK_REALM
               value: "external"
@@ -3318,7 +3320,7 @@ spec:
           readinessProbe:
             httpGet:
               path: /health/ready
-              port: http
+              port: management
             periodSeconds: 10
             failureThreshold: 6
             timeoutSeconds: 5
