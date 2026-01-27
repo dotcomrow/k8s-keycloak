@@ -3158,14 +3158,13 @@ spec:
               value: "/opt/keycloak/data/log/keycloak.log"
             - name: KC_LOG_LEVEL
               value: "INFO,systems.suncoast.kc.github:DEBUG,systems.suncoast.kc.google:DEBUG,org.keycloak.authentication:DEBUG,org.keycloak.events:DEBUG,org.keycloak.protocol.oidc:DEBUG,org.keycloak.protocol.oidc.endpoints.TokenEndpoint:TRACE,org.keycloak.protocol.oidc.utils.AuthorizeTokenExecutor:TRACE"
-            - name: KC_PROXY
-              value: "edge"
-
-            # Hostname & HTTP
+            # Proxy & Hostname (Keycloak 26.5 hostname v2)
+            - name: KC_PROXY_HEADERS
+              value: "xforwarded"
             - name: KC_HOSTNAME
-              value: "auth.suncoast.systems"
+              value: "https://auth.suncoast.systems"
             - name: KC_HOSTNAME_ADMIN
-              value: "keycloak-admin.teleport.app.suncoast.systems"
+              value: "https://keycloak-admin.teleport.app.suncoast.systems"
             - name: KC_HEALTH_ENABLED
               value: "true"
             - name: KC_HOSTNAME_STRICT
@@ -3174,8 +3173,6 @@ spec:
               value: "true"
             - name: KC_TRANSACTION_XA_ENABLED
               value: "false"
-            - name: KC_HOSTNAME_STRICT_HTTPS
-              value: "true"
             - name: KC_HTTP_RELATIVE_PATH
               value: "/"
             - name: KC_HTTP_COOKIE_SAME_SITE
