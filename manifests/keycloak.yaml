@@ -2967,8 +2967,7 @@ spec:
                 perm_id=$($KCADM get "clients/$target_uuid/authz/resource-server/permission/scope" -r "$realm" -q "name=$perm_name" --fields id --format csv 2>/dev/null | tail -n1 || true)
                 perm_id="$(clean_id "$perm_id")"
                 tmp_perm_json="/tmp/token-exchange-permission-${target_uuid}.json"
-                # Use ids for scopes/policies to satisfy strict Keycloak validation.
-                # Attach the default resource if present to avoid empty-scope permissions.
+                # Use names (not ids). Keycloak rejects permissions when policy names collide.
                 if [ -n "${default_resource_id:-}" ]; then
                   printf '%s\n' \
                     '{' \
@@ -2976,9 +2975,9 @@ spec:
                     '  "type": "scope",' \
                     '  "logic": "POSITIVE",' \
                     '  "decisionStrategy": "UNANIMOUS",' \
-                    "  \"resources\": [\"${default_resource_id}\"]," \
-                    "  \"scopes\": [\"${scope_id}\"]," \
-                    "  \"policies\": [\"${policy_id}\"]" \
+                    '  "resources": ["Default Resource"],' \
+                    '  "scopes": ["token-exchange"],' \
+                    "  \"policies\": [\"${policy_name}\"]" \
                     '}' > "$tmp_perm_json"
                 else
                   printf '%s\n' \
@@ -2987,8 +2986,8 @@ spec:
                     '  "type": "scope",' \
                     '  "logic": "POSITIVE",' \
                     '  "decisionStrategy": "UNANIMOUS",' \
-                    "  \"scopes\": [\"${scope_id}\"]," \
-                    "  \"policies\": [\"${policy_id}\"]" \
+                    '  "scopes": ["token-exchange"],' \
+                    "  \"policies\": [\"${policy_name}\"]" \
                     '}' > "$tmp_perm_json"
                 fi
                 if [ -n "${perm_id:-}" ]; then
