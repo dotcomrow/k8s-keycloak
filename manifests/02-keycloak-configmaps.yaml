@@ -63,7 +63,7 @@ data:
       "protocol": "openid-connect",
       "publicClient": false,
       "secret": "<path:secret/data/keycloak-client-secret-drools-kie-server#value>",
-      "bearerOnly": true,
+      "bearerOnly": false,
       "standardFlowEnabled": false,
       "directAccessGrantsEnabled": true,
       "serviceAccountsEnabled": false

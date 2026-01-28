@@ -563,6 +563,8 @@ spec:
               CLIENT_CONFIG_DIR_INTERNAL="/opt/keycloak/data/clients/internal"
               CLIENT_CONFIG_DIR_EXTERNAL="/opt/keycloak/data/clients/external"
               EXTERNAL_DISABLE_LOCAL_LOGIN="${EXTERNAL_DISABLE_LOCAL_LOGIN:-true}"
+              INTERNAL_DISABLE_DIRECT_GRANTS="${INTERNAL_DISABLE_DIRECT_GRANTS:-false}"
+              EXTERNAL_DISABLE_DIRECT_GRANTS="${EXTERNAL_DISABLE_DIRECT_GRANTS:-true}"
               OPENWEBUI_CLIENT_ID="openwebui"
               OLLAMA_SERVICE_CLIENT_ID="ollama-service"
               DROOLS_WORKBENCH_CLIENT_ID="drools-workbench-5k32f99itpcixgacte"
@@ -1561,8 +1563,12 @@ spec:
                 fi
                 $KCADM update "realms/$realm" -s "directGrantFlow=$DG" || true
               }
-              ensure_disabled_direct_grant_flow "$INTERNAL_REALM"
-              ensure_disabled_direct_grant_flow "$EXTERNAL_REALM"
+              if [ "$INTERNAL_DISABLE_DIRECT_GRANTS" = "true" ]; then
+                ensure_disabled_direct_grant_flow "$INTERNAL_REALM"
+              fi
+              if [ "$EXTERNAL_DISABLE_DIRECT_GRANTS" = "true" ]; then
+                ensure_disabled_direct_grant_flow "$EXTERNAL_REALM"
+              fi
               
               # 2) Disable the bootstrap admin user in master (only after configurator client auth is working)
               if [ "${DISABLE_BOOTSTRAP_ADMIN:-false}" = "true" ] && [ "${AUTH_MODE:-}" = "client" ]; then
@@ -1870,11 +1876,15 @@ spec:
               }
               
               apply_clients_from_dir "$INTERNAL_REALM" "$CLIENT_CONFIG_DIR_INTERNAL"
-              disable_direct_grants_for_clients "$INTERNAL_REALM"
+              if [ "$INTERNAL_DISABLE_DIRECT_GRANTS" = "true" ]; then
+                disable_direct_grants_for_clients "$INTERNAL_REALM"
+              fi
               clear_pkce_for_client "$INTERNAL_REALM" "$DROOLS_WORKBENCH_CLIENT_ID"
 
               apply_clients_from_dir "$EXTERNAL_REALM" "$CLIENT_CONFIG_DIR_EXTERNAL"
-              disable_direct_grants_for_clients "$EXTERNAL_REALM"
+              if [ "$EXTERNAL_DISABLE_DIRECT_GRANTS" = "true" ]; then
+                disable_direct_grants_for_clients "$EXTERNAL_REALM"
+              fi
               enforce_standard_flow_for_client "$EXTERNAL_REALM" "$GRAPHQL_API_CLIENT_ID"
               enforce_pkce_for_client "$EXTERNAL_REALM" "$OPENWEBUI_CLIENT_ID"
               ensure_realm_roles_in_scope_mapper "$EXTERNAL_REALM" "$OPENWEBUI_CLIENT_ID"
