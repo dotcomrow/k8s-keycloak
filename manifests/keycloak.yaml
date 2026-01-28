@@ -892,6 +892,12 @@ spec:
         vault.hashicorp.com/agent-inject-secret-client-secret-gravitee-introspection: "secret/data/keycloak-client-secret-gravitee-introspection"
         vault.hashicorp.com/agent-inject-template-client-secret-gravitee-introspection: |
           {{- with secret "secret/data/keycloak-client-secret-gravitee-introspection" -}}{{ .Data.data.value }}{{- end -}}
+        vault.hashicorp.com/agent-inject-secret-client-id-graphql-api: "secret/data/keycloak-client-id-graphql-api"
+        vault.hashicorp.com/agent-inject-template-client-id-graphql-api: |
+          {{- with secret "secret/data/keycloak-client-id-graphql-api" -}}{{ .Data.data.value }}{{- end -}}
+        vault.hashicorp.com/agent-inject-secret-client-secret-graphql-api: "secret/data/keycloak-client-secret-graphql-api"
+        vault.hashicorp.com/agent-inject-template-client-secret-graphql-api: |
+          {{- with secret "secret/data/keycloak-client-secret-graphql-api" -}}{{ .Data.data.value }}{{- end -}}
         vault.hashicorp.com/agent-inject-secret-client-id-openwebui: "secret/data/keycloak-client-id-openwebui"
         vault.hashicorp.com/agent-inject-template-client-id-openwebui: |
           {{- with secret "secret/data/keycloak-client-id-openwebui" -}}{{ .Data.data.value }}{{- end -}}
