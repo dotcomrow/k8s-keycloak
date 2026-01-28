@@ -189,7 +189,7 @@ data:
     # Format: <realm>:<allowed-client>=<target1>,<target2>
     # Client IDs can be overridden via /vault/secrets/client-id-<name> files.
     # Example: external:gravitee-introspection=openwebui,ollama
-    external:gravitee-introspection=openwebui
+    external:graphql-api=openwebui
 ---
 apiVersion: v1
 kind: ConfigMap
