@@ -1,0 +1,371 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: copy-keycloak-vault-root-token
+  namespace: vault
+  annotations:
+    argocd.argoproj.io/sync-wave: "2"
+spec:
+  backoffLimit: 0
+  template:
+    metadata:
+      annotations:
+        linkerd.io/inject: disabled
+    spec:
+      serviceAccountName: default
+      restartPolicy: Never
+      containers:
+        - name: copy-secret
+          image: alpine/k8s:1.31.4
+          command: ["/bin/sh","-c"]
+          args:
+            - |
+              echo "🔁 Copying 'vault-root-token' from vault → keycloak..."
+              kubectl get secret vault-root-token -n vault -o yaml | \
+                sed 's/namespace: vault/namespace: keycloak/' | \
+                kubectl apply -f -
+              echo "✅ Secret copied successfully."
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: keycloak-yugabyte-config
+  namespace: vault
+  annotations:
+    argocd.argoproj.io/sync-options: Replace=true,Force=true
+    argocd.argoproj.io/sync-wave: "2"
+spec:
+  selector:
+    matchLabels:
+      job-name: keycloak-yugabyte-config
+  backoffLimit: 0
+  template:
+    metadata:
+      annotations:
+        linkerd.io/inject: "disabled"
+      labels:
+        job-name: keycloak-yugabyte-config
+        app: keycloak-bootstrap
+    spec:
+      restartPolicy: Never
+      serviceAccountName: default
+      volumes:
+        - name: root-token
+          secret:
+            secretName: vault-root-token
+      containers:
+        - name: setup-role
+          image: hashicorp/vault:1.15.4
+          command: ["/bin/sh","-c"]
+          args:
+            - |
+              #!/bin/sh
+              set -eu
+
+              PGHOST=yb-tserver-service.yugabyte.svc.cluster.local
+              PGPORT=5433
+              DB=keycloak
+              ROLE_GROUP=keycloak
+              ROLE_OWNER=keycloak_app
+              VAULTADMIN_USER=vaultadmin
+
+              # Basic retry helpers for transient Yugabyte/Vault hiccups
+              psql_retry() {
+                # Usage: psql_retry <database> <label> <<'SQL' ... SQL
+                # Retries the psql command with ON_ERROR_STOP enabled.
+                local db="$1"; local label="$2"; shift 2
+                local max="${MAX_PSQL_RETRIES:-10}"; local delay="${PSQL_RETRY_DELAY:-3}"
+                local attempt=0 tmp
+                tmp="$(mktemp)"
+                cat >"$tmp"
+                while :; do
+                  attempt=$((attempt+1))
+                  if psql -h "$PGHOST" -p "$PGPORT" -U "$VAULTADMIN_USER" -d "$db" -v ON_ERROR_STOP=1 -f "$tmp"; then
+                    rm -f "$tmp"
+                    return 0
+                  fi
+                  if [ "$attempt" -ge "$max" ]; then
+                    echo "❌ ${label} failed after ${attempt} attempts"
+                    rm -f "$tmp"
+                    return 1
+                  fi
+                  echo "🔁 ${label} failed (attempt ${attempt}/${max}); retrying in ${delay}s..."
+                  sleep "$delay"
+                done
+              }
+
+              retry_cmd() {
+                # Usage: retry_cmd <label> <cmd...>
+                local label="$1"; shift
+                local max="${MAX_CMD_RETRIES:-10}"; local delay="${CMD_RETRY_DELAY:-5}"
+                local attempt=0
+                while :; do
+                  attempt=$((attempt+1))
+                  if "$@"; then return 0; fi
+                  if [ "$attempt" -ge "$max" ]; then
+                    echo "❌ ${label} failed after ${attempt} attempts"
+                    return 1
+                  fi
+                  echo "🔁 ${label} failed (attempt ${attempt}/${max}); retrying in ${delay}s..."
+                  sleep "$delay"
+                done
+              }
+
+              apk add --no-cache postgresql15-client jq netcat-openbsd curl
+
+              export PATH="$PATH:/vault-bin"
+              export VAULT_ADDR="http://vault.vault.svc.cluster.local:8200"
+
+              while [ ! -f /vault-token/VAULT_TOKEN ]; do
+                echo "🔁 Waiting for Vault token file..."
+                sleep 2
+              done
+              export VAULT_TOKEN="$(cat /vault-token/VAULT_TOKEN)"
+
+              echo "🧩 Ensuring KV v2 at 'secret/'..."
+              while :; do
+                # already KVv2?
+                if vault secrets list -format=json 2>/dev/null \
+                  | jq -e '."secret/".type=="kv" and ."secret/".options.version=="2"' >/dev/null; then
+                  echo "✅ 'secret/' is KVv2"
+                  break
+                fi
+
+                # path exists but not KVv2 → bail
+                if vault secrets list -format=json 2>/dev/null \
+                  | jq -e 'has("secret/")' >/dev/null; then
+                  echo "❌ 'secret/' exists but is not KVv2; please migrate manually."
+                  exit 1
+                fi
+
+                # try to enable KVv2; if it works, we're done; otherwise, retry after a short pause
+                vault secrets enable -path=secret -version=2 kv && break
+
+                sleep 2
+              done
+
+              echo "🔐 Seeding Keycloak admin creds at secret/keycloak/admin (if missing)..."
+              if ! vault kv get -format=json secret/keycloak/admin >/dev/null 2>&1; then
+                PASS="$(tr -dc 'A-Za-z0-9@#%^+=_' </dev/urandom | head -c 32)"
+                vault kv put secret/keycloak/admin username=admin password="$PASS"
+                echo "✅ Seeded admin secret at secret/keycloak/admin"
+              else
+                echo "✅ Admin secret already present"
+              fi
+
+              until getent hosts "$PGHOST" >/dev/null 2>&1; do echo "🔄 Waiting for DNS for $PGHOST..."; sleep 3; done
+              until nc -z -w1 "$PGHOST" "$PGPORT"; do echo "⏳ Waiting for DB $PGHOST:$PGPORT..."; sleep 3; done
+              echo "✅ Yugabyte reachable"
+
+              echo "🔐 Waiting for secret/${VAULTADMIN_USER} to exist in Vault..."
+              VAULTADMIN_PASS=""
+              while :; do
+                OUT="$(vault kv get -format=json "secret/${VAULTADMIN_USER}" 2>/dev/null || true)"
+                if [ -n "${OUT}" ]; then
+                  VAULTADMIN_PASS="$(printf '%s' "$OUT" | jq -r '.data.data.password // .data.data.value // empty')"
+                  if [ -n "${VAULTADMIN_PASS}" ] && [ "${VAULTADMIN_PASS}" != "null" ]; then
+                    echo "✅ Found secret/${VAULTADMIN_USER}"
+                    break
+                  fi
+                fi
+                echo "⏳ secret/${VAULTADMIN_USER} not ready yet; retrying in 5s..."
+                sleep 5
+              done
+              export PGPASSWORD="$VAULTADMIN_PASS"
+
+              while :; do
+                DB_EXISTS="$(psql -h "$PGHOST" -p "$PGPORT" -U "$VAULTADMIN_USER" -d yugabyte -tAc "SELECT 1 FROM pg_database WHERE datname='$DB'" 2>/dev/null || true)"
+                [ "$DB_EXISTS" = "1" ] && { echo "✅ DB '$DB' exists"; break; }
+                echo "📦 Creating DB '$DB' owned by $VAULTADMIN_USER..."
+                createdb -h "$PGHOST" -p "$PGPORT" -U "$VAULTADMIN_USER" -O "$VAULTADMIN_USER" "$DB" 2>/dev/null && { echo "✅ DB created"; break; }
+                echo "🔁 Retry create DB in 3s..."; sleep 3
+              done
+
+              psql_retry yugabyte "role + group creation" <<EOSQL
+              DO \$\$
+              BEGIN
+                IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = '${ROLE_GROUP}') THEN
+                  CREATE ROLE ${ROLE_GROUP} NOLOGIN;
+                END IF;
+                IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = '${ROLE_OWNER}') THEN
+                  CREATE ROLE ${ROLE_OWNER} LOGIN INHERIT;
+                END IF;
+              END
+              \$\$;
+              GRANT ${ROLE_GROUP} TO ${ROLE_OWNER};
+              GRANT ${ROLE_OWNER} TO ${VAULTADMIN_USER};
+              EOSQL
+
+              psql_retry "$DB" "schema creation + connect grants" <<EOSQL
+              CREATE SCHEMA IF NOT EXISTS keycloak AUTHORIZATION ${ROLE_OWNER};
+              ALTER SCHEMA keycloak OWNER TO ${ROLE_OWNER};
+              ALTER ROLE ${ROLE_OWNER} SET search_path = keycloak;
+              GRANT CONNECT ON DATABASE ${DB} TO ${ROLE_OWNER};
+              EOSQL
+
+              psql_retry "$DB" "table ownership fixes" <<EOSQL
+              ALTER TABLE IF EXISTS keycloak.databasechangeloglock OWNER TO ${ROLE_OWNER};
+              ALTER TABLE IF EXISTS keycloak.databasechangelog    OWNER TO ${ROLE_OWNER};
+              EOSQL
+
+              psql_retry "$DB" "schema grants" <<EOSQL
+              SET ROLE ${ROLE_OWNER};
+              GRANT USAGE, CREATE ON SCHEMA keycloak TO ${ROLE_GROUP};
+              GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES    IN SCHEMA keycloak TO ${ROLE_GROUP};
+              GRANT USAGE, SELECT                     ON ALL SEQUENCES IN SCHEMA keycloak TO ${ROLE_GROUP};
+              ALTER DEFAULT PRIVILEGES IN SCHEMA keycloak
+                GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES   TO ${ROLE_GROUP};
+              ALTER DEFAULT PRIVILEGES IN SCHEMA keycloak
+                GRANT USAGE, SELECT                ON SEQUENCES TO ${ROLE_GROUP};
+              GRANT USAGE, CREATE ON SCHEMA keycloak TO ${VAULTADMIN_USER};
+              GRANT ALL PRIVILEGES ON ALL TABLES    IN SCHEMA keycloak TO ${VAULTADMIN_USER};
+              GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA keycloak TO ${VAULTADMIN_USER};
+              ALTER DEFAULT PRIVILEGES IN SCHEMA keycloak GRANT ALL ON TABLES    TO ${VAULTADMIN_USER};
+              ALTER DEFAULT PRIVILEGES IN SCHEMA keycloak GRANT ALL ON SEQUENCES TO ${VAULTADMIN_USER};
+              RESET ROLE;
+              EOSQL
+
+              echo "✅ Schema & privileges prepared"
+
+              if ! vault secrets list -format=json | jq -e 'has("yugabyte-db/")' >/dev/null 2>&1; then
+                vault secrets enable -path=yugabyte-db database
+              fi
+
+              retry_cmd "vault static role keycloak-app" \
+                vault write yugabyte-db/static-roles/keycloak-app \
+                  db_name="yugabyte" \
+                  username="${ROLE_OWNER}" \
+                  rotation_statements="ALTER ROLE ${ROLE_OWNER} WITH PASSWORD '{{password}}';" \
+                  rotation_period="720h"
+
+              vault policy write "keycloak" - <<'EOF'
+              path "yugabyte-db/static-creds/keycloak-app"        { capabilities = ["read"] }
+              path "secret/data/keycloak/admin"                   { capabilities = ["read"] }
+              path "secret/data/vaultadmin"                       { capabilities = ["read"] }
+              path "secret/data/keycloak-oauth-client-id"         { capabilities = ["read"] }
+              path "secret/data/keycloak-oauth-client-secret"     { capabilities = ["read"] }
+              path "secret/data/keycloak-github-role-map"         { capabilities = ["read"] }
+              path "secret/data/keycloak-google-client-id"        { capabilities = ["read"] }
+              path "secret/data/keycloak-google-client-secret"    { capabilities = ["read"] }
+              path "secret/data/keycloak-google-admin-email"      { capabilities = ["read"] }
+              path "secret/data/keycloak-google-admin-group"      { capabilities = ["read"] }
+              path "secret/data/keycloak-google-sa-json"          { capabilities = ["read"] }
+              path "secret/data/keycloak-google-group-role-map"   { capabilities = ["read"] }
+              path "secret/data/keycloak-configurator-client-secret" { capabilities = ["read"] }
+              path "secret/data/keycloak-client-secret-*"         { capabilities = ["read"] }
+              path "secret/data/keycloak-client-id-*"             { capabilities = ["read"] }
+              path "secret/data/k8s-teleport-teleport-github-org" { capabilities = ["read"] }
+              path "secret/data/keycloak-admin-team" { capabilities = ["read"] }
+              EOF
+
+              vault write auth/kubernetes/role/keycloak \
+                bound_service_account_names="keycloak" \
+                bound_service_account_namespaces="keycloak" \
+                policies="keycloak" \
+                ttl="48h"
+
+              CREDS_JSON=""
+              for i in $(seq 1 "${MAX_CMD_RETRIES:-10}"); do
+                CREDS_JSON="$(vault read -format=json yugabyte-db/static-creds/keycloak-app 2>/dev/null || true)"
+                [ -n "${CREDS_JSON}" ] && break
+                echo "🔁 Waiting for static creds keycloak-app (attempt $i/${MAX_CMD_RETRIES:-10})..."
+                sleep "${CMD_RETRY_DELAY:-5}"
+              done
+              if [ -z "${CREDS_JSON}" ]; then
+                echo "❌ Unable to read static creds for keycloak-app"
+                exit 1
+              fi
+              DB_USER="$(printf '%s' "$CREDS_JSON" | jq -r .data.username)"
+              DB_PASS="$(printf '%s' "$CREDS_JSON" | jq -r .data.password)"
+              export PGPASSWORD="$DB_PASS"
+              echo "🔎 Sanity check as \$DB_USER=$DB_USER"
+              psql -h "$PGHOST" -p "$PGPORT" -U "$DB_USER" -d "$DB" -c "SELECT current_user, current_schema();"
+
+              echo "🎉 Keycloak DB prepared; Vault static role + policy + K8s binding ready."
+          volumeMounts:
+            - name: root-token
+              mountPath: /vault-token
+              readOnly: true
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: keycloak-vault-k8s-role
+  namespace: vault
+  annotations:
+    argocd.argoproj.io/sync-options: Replace=true,Force=true
+    argocd.argoproj.io/sync-wave: "2"
+spec:
+  selector:
+    matchLabels:
+      job-name: keycloak-vault-k8s-role
+  backoffLimit: 0
+  template:
+    metadata:
+      annotations:
+        linkerd.io/inject: "disabled"
+      labels:
+        job-name: keycloak-vault-k8s-role
+        app: keycloak-bootstrap
+    spec:
+      restartPolicy: Never
+      serviceAccountName: default
+      volumes:
+        - name: root-token
+          secret:
+            secretName: vault-root-token
+      containers:
+        - name: ensure-role
+          image: hashicorp/vault:1.15.4
+          command: ["/bin/sh","-c"]
+          args:
+            - |
+              set -Eeuo pipefail
+              export PATH="$PATH:/vault-bin"
+              export VAULT_ADDR="http://vault.vault.svc.cluster.local:8200"
+
+              while [ ! -s /vault-token/VAULT_TOKEN ]; do
+                echo "🔁 Waiting for Vault token file..."
+                sleep 2
+              done
+              export VAULT_TOKEN="$(cat /vault-token/VAULT_TOKEN)"
+
+              echo "🔎 Checking for auth/kubernetes/role/keycloak..."
+              if vault read auth/kubernetes/role/keycloak >/dev/null 2>&1; then
+                echo "✅ Role already exists; nothing to do."
+                exit 0
+              fi
+
+              echo "⚙️  (Re)creating policy 'keycloak' and Kubernetes role..."
+              vault policy write "keycloak" - <<'EOF'
+              path "yugabyte-db/static-creds/keycloak-app"        { capabilities = ["read"] }
+              path "secret/data/keycloak/admin"                   { capabilities = ["read"] }
+              path "secret/data/vaultadmin"                       { capabilities = ["read"] }
+              path "secret/data/keycloak-oauth-client-id"         { capabilities = ["read"] }
+              path "secret/data/keycloak-oauth-client-secret"     { capabilities = ["read"] }
+              path "secret/data/keycloak-github-role-map"         { capabilities = ["read"] }
+              path "secret/data/keycloak-google-client-id"        { capabilities = ["read"] }
+              path "secret/data/keycloak-google-client-secret"    { capabilities = ["read"] }
+              path "secret/data/keycloak-google-admin-email"      { capabilities = ["read"] }
+              path "secret/data/keycloak-google-admin-group"      { capabilities = ["read"] }
+              path "secret/data/keycloak-google-sa-json"          { capabilities = ["read"] }
+              path "secret/data/keycloak-google-group-role-map"   { capabilities = ["read"] }
+              path "secret/data/keycloak-configurator-client-secret" { capabilities = ["read"] }
+              path "secret/data/keycloak-client-secret-*"         { capabilities = ["read"] }
+              path "secret/data/keycloak-client-id-*"             { capabilities = ["read"] }
+              path "secret/data/k8s-teleport-teleport-github-org" { capabilities = ["read"] }
+              path "secret/data/keycloak-admin-team" { capabilities = ["read"] }
+              EOF
+
+              vault write auth/kubernetes/role/keycloak \
+                bound_service_account_names="keycloak" \
+                bound_service_account_namespaces="keycloak" \
+                policies="keycloak" \
+                ttl="48h"
+
+              vault read auth/kubernetes/role/keycloak >/dev/null
+              echo "🎉 Vault Kubernetes role 'keycloak' ready."
+          volumeMounts:
+            - name: root-token
+              mountPath: /vault-token
+              readOnly: true

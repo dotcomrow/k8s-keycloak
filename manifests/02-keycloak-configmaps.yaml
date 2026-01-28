@@ -1,0 +1,298 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: keycloak-client-config-internal
+  namespace: keycloak
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+data:
+  ollama-service.json: |
+    {
+      "clientId": "<path:secret/data/keycloak-client-id-ollama-service#value>",
+      "name": "Ollama Service",
+      "protocol": "openid-connect",
+      "publicClient": false,
+      "clientAuthenticatorType": "client-secret",
+      "secret": "<path:secret/data/keycloak-client-secret-ollama-service#value>",
+      "standardFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": true,
+      "authorizationServicesEnabled": true
+    }
+  drools-workbench.json: |
+    {
+      "clientId": "<path:secret/data/keycloak-client-id-drools-workbench#value>",
+      "name": "Drools Workbench",
+      "protocol": "openid-connect",
+      "publicClient": false,
+      "clientAuthenticatorType": "client-secret",
+      "secret": "<path:secret/data/keycloak-client-secret-drools-workbench#value>",
+      "standardFlowEnabled": true,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": true,
+      "authorizationServicesEnabled": true,
+      "redirectUris": [
+        "https://workbench-drools.teleport.app.suncoast.systems/*",
+        "https://workbench-drools.teleport.app.suncoast.systems/oauth2/callback",
+        "https://workbench-drools.teleport.app.suncoast.systems/business-central/*"
+      ],
+      "webOrigins": ["https://workbench-drools.teleport.app.suncoast.systems"]
+    }
+  kogito-console.json: |
+    {
+      "clientId": "<path:secret/data/keycloak-client-id-kogito-console#value>",
+      "name": "Kogito Console",
+      "protocol": "openid-connect",
+      "publicClient": true,
+      "standardFlowEnabled": true,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": false,
+      "redirectUris": [
+        "https://kogito-console-drools.teleport.app.suncoast.systems/*",
+        "https://kogito-task-console-drools.teleport.app.suncoast.systems/*"
+      ],
+      "webOrigins": [
+        "https://kogito-console-drools.teleport.app.suncoast.systems",
+        "https://kogito-task-console-drools.teleport.app.suncoast.systems"
+      ]
+    }
+  drools-kie-server.json: |
+    {
+      "clientId": "<path:secret/data/keycloak-client-id-drools-kie-server#value>",
+      "name": "Drools KIE Server API",
+      "protocol": "openid-connect",
+      "publicClient": false,
+      "secret": "<path:secret/data/keycloak-client-secret-drools-kie-server#value>",
+      "bearerOnly": true,
+      "standardFlowEnabled": false,
+      "directAccessGrantsEnabled": true,
+      "serviceAccountsEnabled": false
+    }
+  drools-kie-server-service.json: |
+    {
+      "clientId": "<path:secret/data/keycloak-client-id-drools-kie-server-service#value>",
+      "name": "Drools KIE Server Service Account",
+      "protocol": "openid-connect",
+      "publicClient": false,
+      "clientAuthenticatorType": "client-secret",
+      "secret": "<path:secret/data/keycloak-client-secret-drools-kie-server-service#value>",
+      "standardFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": true,
+      "authorizationServicesEnabled": true
+    }
+  drools-workbench-proxy.json: |
+    {
+      "clientId": "<path:secret/data/keycloak-client-id-drools-workbench-proxy#value>",
+      "name": "Drools Workbench OAuth2 Proxy",
+      "protocol": "openid-connect",
+      "publicClient": false,
+      "clientAuthenticatorType": "client-secret",
+      "secret": "<path:secret/data/keycloak-client-secret-drools-workbench-proxy#value>",
+      "standardFlowEnabled": true,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": false,
+      "redirectUris": [
+        "https://workbench-drools.teleport.app.suncoast.systems/oauth2/callback"
+      ],
+      "webOrigins": [
+        "https://workbench-drools.teleport.app.suncoast.systems"
+      ],
+      "protocolMappers": [
+        {
+          "name": "audience-drools-workbench",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "consentRequired": false,
+          "config": {
+            "included.client.audience": "<path:secret/data/keycloak-client-id-drools-workbench#value>",
+            "access.token.claim": "true",
+            "id.token.claim": "false"
+          }
+        }
+      ]
+    }
+  hasura-console-proxy.json: |
+    {
+      "clientId": "<path:secret/data/keycloak-client-id-hasura-console-proxy#value>",
+      "name": "Hasura Console OAuth2 Proxy",
+      "protocol": "openid-connect",
+      "publicClient": false,
+      "clientAuthenticatorType": "client-secret",
+      "secret": "<path:secret/data/keycloak-client-secret-hasura-console-proxy#value>",
+      "standardFlowEnabled": true,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": false,
+      "redirectUris": [
+        "https://graphql-gui.teleport.app.suncoast.systems/oauth2/callback"
+      ],
+      "webOrigins": [
+        "https://graphql-gui.teleport.app.suncoast.systems"
+      ],
+      "protocolMappers": [
+        {
+          "name": "audience-hasura-console-proxy",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "consentRequired": false,
+          "config": {
+            "included.client.audience": "<path:secret/data/keycloak-client-id-hasura-console-proxy#value>",
+            "access.token.claim": "true",
+            "id.token.claim": "false"
+          }
+        },
+        {
+          "name": "hasura-claims",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-hardcoded-claim-mapper",
+          "consentRequired": false,
+          "config": {
+            "claim.name": "https://hasura.io/jwt/claims",
+            "claim.value": "{\"x-hasura-default-role\":\"admin\",\"x-hasura-allowed-roles\":[\"admin\"]}",
+            "jsonType.label": "JSON",
+            "access.token.claim": "true",
+            "id.token.claim": "false",
+            "userinfo.token.claim": "false"
+          }
+        }
+      ]
+    }
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: keycloak-role-config-internal
+  namespace: keycloak
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+data:
+  internal-realm-roles: "openwebui_access,ollama_access,ollama_service_access,drools_access,drools_service_access,drools_admin,hasura_admins,admin,analyst,developer,user,rest-all,rest-user,kie-server,process-admin,manager,rest-project"
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: keycloak-token-exchange-config
+  namespace: keycloak
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+data:
+  rules: |
+    # Format: <realm>:<allowed-client>=<target1>,<target2>
+    # Client IDs can be overridden via /vault/secrets/client-id-<name> files.
+    # Example: external:gravitee-introspection=openwebui,ollama
+    external:graphql-api=openwebui
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: keycloak-client-config-external
+  namespace: keycloak
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+data:
+  openwebui.json: |
+    {
+      "clientId": "<path:secret/data/keycloak-client-id-openwebui#value>",
+      "name": "OpenWebUI",
+      "protocol": "openid-connect",
+      "publicClient": false,
+      "clientAuthenticatorType": "client-secret",
+      "secret": "<path:secret/data/keycloak-client-secret-openwebui#value>",
+      "standardFlowEnabled": true,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": true,
+      "authorizationServicesEnabled": true,
+      "redirectUris": [
+        "https://open-webui.teleport.app.suncoast.systems/*"
+      ],
+      "webOrigins": [
+        "https://open-webui.teleport.app.suncoast.systems"
+      ],
+      "attributes": {
+        "pkce.code.challenge.method": "S256",
+        "standard.token.exchange.enabled": "true"
+      }
+    }
+  graphql-api.json: |
+    {
+      "clientId": "<path:secret/data/keycloak-client-id-graphql-api#value>",
+      "name": "GraphQL API",
+      "protocol": "openid-connect",
+      "publicClient": false,
+      "clientAuthenticatorType": "client-secret",
+      "secret": "<path:secret/data/keycloak-client-secret-graphql-api#value>",
+      "attributes": {
+        "standard.token.exchange.enabled": "true"
+      },
+      "standardFlowEnabled": true,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": false,
+      "redirectUris": [
+        "https://oauth.pstmn.io/v1/callback"
+      ],
+      "webOrigins": [],
+      "protocolMappers": [
+        {
+          "name": "audience-graphql-api",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "consentRequired": false,
+          "config": {
+            "included.client.audience": "<path:secret/data/keycloak-client-id-graphql-api#value>",
+            "access.token.claim": "true",
+            "id.token.claim": "false"
+          }
+        },
+        {
+          "name": "audience-gravitee-introspection",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "consentRequired": false,
+          "config": {
+            "included.client.audience": "<path:secret/data/keycloak-client-id-gravitee-introspection#value>",
+            "access.token.claim": "true",
+            "id.token.claim": "false"
+          }
+        },
+        {
+          "name": "audience-openwebui",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "consentRequired": false,
+          "config": {
+            "included.client.audience": "<path:secret/data/keycloak-client-id-openwebui#value>",
+            "access.token.claim": "true",
+            "id.token.claim": "false"
+          }
+        },
+        {
+          "name": "hasura-allowed-roles",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-client-role-mapper",
+          "consentRequired": false,
+          "config": {
+            "usermodel.clientRoleMapping.clientId": "<path:secret/data/keycloak-client-id-graphql-api#value>",
+            "claim.name": "https://hasura.io/jwt/claims.x-hasura-allowed-roles",
+            "jsonType.label": "String",
+            "access.token.claim": "true",
+            "id.token.claim": "false",
+            "userinfo.token.claim": "false",
+            "multivalued": "true"
+          }
+        },
+        {
+          "name": "hasura-default-role",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-hardcoded-claim-mapper",
+          "consentRequired": false,
+          "config": {
+            "claim.name": "https://hasura.io/jwt/claims.x-hasura-default-role",
+            "claim.value": "user",
+            "jsonType.label": "String",
+            "access.token.claim": "true",
+            "id.token.claim": "false",
+            "userinfo.token.claim": "false"
+          }
+        }
+      ]
+    }
