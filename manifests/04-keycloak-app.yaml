@@ -2558,7 +2558,7 @@ spec:
             - name: KC_HTTP_RELATIVE_PATH
               value: "/"
             - name: KC_HTTP_COOKIE_SAME_SITE
-              value: "LAX"
+              value: "NONE"
             - name: KEYCLOAK_RULES_ADMIN_TEAM
               value: "rules_admin"
           command: ["/bin/bash","-lc"]
