@@ -157,12 +157,6 @@ spec:
         vault.hashicorp.com/agent-inject-secret-client-secret-drools-workbench: "secret/data/keycloak-client-secret-drools-workbench"
         vault.hashicorp.com/agent-inject-template-client-secret-drools-workbench: |
           {{- with secret "secret/data/keycloak-client-secret-drools-workbench" -}}{{ .Data.data.value }}{{- end -}}
-        vault.hashicorp.com/agent-inject-secret-client-id-kogito-console: "secret/data/keycloak-client-id-kogito-console"
-        vault.hashicorp.com/agent-inject-template-client-id-kogito-console: |
-          {{- with secret "secret/data/keycloak-client-id-kogito-console" -}}{{ .Data.data.value }}{{- end -}}
-        vault.hashicorp.com/agent-inject-secret-client-secret-kogito-console: "secret/data/keycloak-client-secret-kogito-console"
-        vault.hashicorp.com/agent-inject-template-client-secret-kogito-console: |
-          {{- with secret "secret/data/keycloak-client-secret-kogito-console" -}}{{ .Data.data.value }}{{- end -}}
         vault.hashicorp.com/agent-inject-secret-client-id-drools-workbench-proxy: "secret/data/keycloak-client-id-drools-workbench-proxy"
         vault.hashicorp.com/agent-inject-template-client-id-drools-workbench-proxy: |
           {{- with secret "secret/data/keycloak-client-id-drools-workbench-proxy" -}}{{ .Data.data.value }}{{- end -}}

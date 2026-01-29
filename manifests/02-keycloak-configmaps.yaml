@@ -38,27 +38,6 @@ data:
       ],
       "webOrigins": ["https://workbench-drools.teleport.app.suncoast.systems"]
     }
-  kogito-console.json: |
-    {
-      "clientId": "<path:secret/data/keycloak-client-id-kogito-console#value>",
-      "name": "Kogito Console",
-      "protocol": "openid-connect",
-      "publicClient": true,
-      "standardFlowEnabled": true,
-      "directAccessGrantsEnabled": false,
-      "serviceAccountsEnabled": false,
-      "attributes": {
-        "exclude.issuer.from.auth.response": "true"
-      },
-      "redirectUris": [
-        "https://kogito-console-drools.teleport.app.suncoast.systems/*",
-        "https://kogito-task-console-drools.teleport.app.suncoast.systems/*"
-      ],
-      "webOrigins": [
-        "https://kogito-console-drools.teleport.app.suncoast.systems",
-        "https://kogito-task-console-drools.teleport.app.suncoast.systems"
-      ]
-    }
   drools-kie-server.json: |
     {
       "clientId": "<path:secret/data/keycloak-client-id-drools-kie-server#value>",
