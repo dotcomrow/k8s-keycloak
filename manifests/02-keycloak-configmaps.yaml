@@ -47,6 +47,9 @@ data:
       "standardFlowEnabled": true,
       "directAccessGrantsEnabled": false,
       "serviceAccountsEnabled": false,
+      "attributes": {
+        "exclude.issuer.from.auth.response": "true"
+      },
       "redirectUris": [
         "https://kogito-console-drools.teleport.app.suncoast.systems/*",
         "https://kogito-task-console-drools.teleport.app.suncoast.systems/*"
