@@ -962,6 +962,9 @@ spec:
                 local flow="$2"
                 local provider="$3"
                 local desc="$4"
+                # Auth execution config aliases must be unique per realm. Include the flow name
+                # so we can have multiple redirect flows to the same IdP (e.g., Google).
+                local cfg_alias="redirect-to-${provider}-${flow}"
               
                 if ! $KCADM get authentication/flows -r "$realm" | grep -q "\"alias\"[[:space:]]*:[[:space:]]*\"$flow\""; then
                   $KCADM create authentication/flows -r "$realm" \
@@ -972,48 +975,60 @@ spec:
                 fi
               
                 REDIR_ID=""
+                CFG_ID=""
                 for i in {1..30}; do
                   EXECS=$($KCADM get "authentication/flows/${flow}/executions" -r "$realm" || echo "[]")
-                  REDIR_ID=$(
+                  REDIR_OBJ=$(
                             echo "$EXECS" | tr -d "\n" | sed "s/},[[:space:]]*{/}\n{/g" \
                               | grep -E '"providerId" *: *"identity-provider-redirector"' \
-                              | sed -n "s/.*\"id\"[[:space:]]*:[[:space:]]*\"\([^\"]\+\)\".*/\1/p" | head -n1 || true
+                              | head -n1 || true
                           )
-                  [ -n "$REDIR_ID" ] && break || sleep 1
+                  REDIR_ID=$(
+                            echo "$REDIR_OBJ" \
+                              | sed -n "s/.*\"id\"[[:space:]]*:[[:space:]]*\"\\([^\"]\\+\\)\".*/\\1/p" \
+                              | head -n1 || true
+                          )
+                  CFG_ID=$(
+                            echo "$REDIR_OBJ" \
+                              | sed -n "s/.*\"authenticationConfig\"[[:space:]]*:[[:space:]]*\"\\([^\"]\\+\\)\".*/\\1/p" \
+                              | head -n1 || true
+                          )
+                  [ -n "${REDIR_ID:-}" ] && break || sleep 1
                 done
-                if [ -z "$REDIR_ID" ]; then
+                if [ -z "${REDIR_ID:-}" ]; then
                   $KCADM create "authentication/flows/${flow}/executions/execution" -r "$realm" \
                     -s provider=identity-provider-redirector || true
                   for i in {1..10}; do
                     EXECS=$($KCADM get "authentication/flows/${flow}/executions" -r "$realm" || echo "[]")
-                    REDIR_ID=$(
+                    REDIR_OBJ=$(
                               echo "$EXECS" | tr -d "\n" | sed "s/},[[:space:]]*{/}\n{/g" \
                                 | grep -E '"providerId" *: *"identity-provider-redirector"' \
-                                | sed -n "s/.*\"id\"[[:space:]]*:[[:space:]]*\"\\([^\"]\\+\\)\".*/\\1/p" | head -n1 || true
+                                | head -n1 || true
                             )
-                    [ -n "$REDIR_ID" ] && break || sleep 1
+                    REDIR_ID=$(
+                              echo "$REDIR_OBJ" \
+                                | sed -n "s/.*\"id\"[[:space:]]*:[[:space:]]*\"\\([^\"]\\+\\)\".*/\\1/p" \
+                                | head -n1 || true
+                            )
+                    CFG_ID=$(
+                              echo "$REDIR_OBJ" \
+                                | sed -n "s/.*\"authenticationConfig\"[[:space:]]*:[[:space:]]*\"\\([^\"]\\+\\)\".*/\\1/p" \
+                                | head -n1 || true
+                            )
+                    [ -n "${REDIR_ID:-}" ] && break || sleep 1
                   done
                 fi
-                [ -z "$REDIR_ID" ] && { echo "⚠️  cannot find redirector execution for ${flow}; skipping"; return 0; }
+                [ -z "${REDIR_ID:-}" ] && { echo "⚠️  cannot find redirector execution for ${flow}; skipping"; return 0; }
               
                 printf '{ "id":"%s", "requirement":"REQUIRED" }\n' "$REDIR_ID" >/tmp/r2.json
                 $KCADM update "authentication/flows/${flow}/executions" -r "$realm" -f /tmp/r2.json || true
               
-                CFG_ID=""
-                for i in {1..30}; do
-                  CFG_ID=$($KCADM get "authentication/executions/${REDIR_ID}/config" -r "$realm" 2>/dev/null \
-                          | sed -n "s/.*\"id\"[[:space:]]*:[[:space:]]*\"\([^\"]*\)\".*/\1/p" | head -n1 || true)
-                  [ -n "${CFG_ID:-}" ] && break || sleep 1
-                done
                 if [ -n "${CFG_ID:-}" ]; then
-                  if ! $KCADM update "authentication/executions/${REDIR_ID}/config/${CFG_ID}" -r "$realm" \
-                    -s "alias=redirect-to-${provider}" -s "config.defaultProvider=${provider}"; then
-                    $KCADM create "authentication/executions/${REDIR_ID}/config" -r "$realm" \
-                      -s "alias=redirect-to-${provider}" -s "config.defaultProvider=${provider}" || true
-                  fi
+                  $KCADM update "authentication/config/${CFG_ID}" -r "$realm" \
+                    -s "alias=${cfg_alias}" -s "config.defaultProvider=${provider}" || true
                 else
                   $KCADM create "authentication/executions/${REDIR_ID}/config" -r "$realm" \
-                  -s "alias=redirect-to-${provider}" -s "config.defaultProvider=${provider}" || true
+                    -s "alias=${cfg_alias}" -s "config.defaultProvider=${provider}" || true
                 fi
               }
 
@@ -1022,6 +1037,9 @@ spec:
                 local flow="$2"
                 local default_provider="$3"
                 local desc="$4"
+                # Auth execution config aliases must be unique per realm. Include the flow name
+                # so we can have multiple redirect flows to the same IdP (e.g., Google).
+                local cfg_alias="redirect-to-${default_provider}-${flow}"
 
                 ensure_flow "$realm" "$flow" "$desc"
                 add_exec_required "$realm" "$flow" "identity-provider-redirector"
@@ -1032,32 +1050,33 @@ spec:
                 fi
 
                 REDIR_ID=""
-                for i in {1..30}; do
-                  EXECS=$($KCADM get "authentication/flows/${flow}/executions" -r "$realm" || echo "[]")
-                  REDIR_ID=$(
-                            echo "$EXECS" | tr -d "\n" | sed "s/},[[:space:]]*{/}\n{/g" \
-                              | grep -E '"providerId" *: *"identity-provider-redirector"' \
-                              | sed -n "s/.*\"id\"[[:space:]]*:[[:space:]]*\"\([^\"]\+\)\".*/\1/p" | head -n1 || true
-                          )
-                  [ -n "$REDIR_ID" ] && break || sleep 1
-                done
-                [ -z "$REDIR_ID" ] && { echo "⚠️  cannot find redirector execution for ${flow}; skipping"; return 0; }
-
                 CFG_ID=""
                 for i in {1..30}; do
-                  CFG_ID=$($KCADM get "authentication/executions/${REDIR_ID}/config" -r "$realm" 2>/dev/null \
-                          | sed -n "s/.*\"id\"[[:space:]]*:[[:space:]]*\"\([^\"]*\)\".*/\1/p" | head -n1 || true)
-                  [ -n "${CFG_ID:-}" ] && break || sleep 1
+                  EXECS=$($KCADM get "authentication/flows/${flow}/executions" -r "$realm" || echo "[]")
+                  REDIR_OBJ=$(
+                            echo "$EXECS" | tr -d "\n" | sed "s/},[[:space:]]*{/}\n{/g" \
+                              | grep -E '"providerId" *: *"identity-provider-redirector"' \
+                              | head -n1 || true
+                          )
+                  REDIR_ID=$(
+                            echo "$REDIR_OBJ" \
+                              | sed -n "s/.*\"id\"[[:space:]]*:[[:space:]]*\"\\([^\"]\\+\\)\".*/\\1/p" \
+                              | head -n1 || true
+                          )
+                  CFG_ID=$(
+                            echo "$REDIR_OBJ" \
+                              | sed -n "s/.*\"authenticationConfig\"[[:space:]]*:[[:space:]]*\"\\([^\"]\\+\\)\".*/\\1/p" \
+                              | head -n1 || true
+                          )
+                  [ -n "${REDIR_ID:-}" ] && break || sleep 1
                 done
+                [ -z "${REDIR_ID:-}" ] && { echo "⚠️  cannot find redirector execution for ${flow}; skipping"; return 0; }
                 if [ -n "${CFG_ID:-}" ]; then
-                  if ! $KCADM update "authentication/executions/${REDIR_ID}/config/${CFG_ID}" -r "$realm" \
-                    -s "alias=redirect-to-${default_provider}" -s "config.defaultProvider=${default_provider}"; then
-                    $KCADM create "authentication/executions/${REDIR_ID}/config" -r "$realm" \
-                      -s "alias=redirect-to-${default_provider}" -s "config.defaultProvider=${default_provider}" || true
-                  fi
+                  $KCADM update "authentication/config/${CFG_ID}" -r "$realm" \
+                    -s "alias=${cfg_alias}" -s "config.defaultProvider=${default_provider}" || true
                 else
                   $KCADM create "authentication/executions/${REDIR_ID}/config" -r "$realm" \
-                  -s "alias=redirect-to-${default_provider}" -s "config.defaultProvider=${default_provider}" || true
+                    -s "alias=${cfg_alias}" -s "config.defaultProvider=${default_provider}" || true
                 fi
               }
 
@@ -1270,8 +1289,14 @@ spec:
               if [ -z "${EXTERNAL_DEFAULT_IDP:-}" ] && [ "$EXTERNAL_GOOGLE_READY" = "true" ]; then
                 EXTERNAL_DEFAULT_IDP="google"
               fi
+              EXTERNAL_IDP_ONLY_READY="false"
               if [ "$EXTERNAL_DISABLE_LOCAL_LOGIN" = "true" ]; then
-                ensure_idp_only_flow "$EXTERNAL_REALM" "$FLOW_BROWSER_EXTERNAL_IDP" "$EXTERNAL_DEFAULT_IDP" "Browser flow that redirects to external IdPs"
+                if [ -n "${EXTERNAL_DEFAULT_IDP:-}" ]; then
+                  ensure_idp_only_flow "$EXTERNAL_REALM" "$FLOW_BROWSER_EXTERNAL_IDP" "$EXTERNAL_DEFAULT_IDP" "Browser flow that redirects to external IdPs"
+                  EXTERNAL_IDP_ONLY_READY="true"
+                else
+                  echo "⚠️  EXTERNAL_DISABLE_LOCAL_LOGIN=true but no default IdP is configured; leaving browserFlow=browser to avoid lockout."
+                fi
               fi
               
               if [ "$INTERNAL_REALM" != "$ADMIN_REALM" ]; then
@@ -1282,7 +1307,7 @@ spec:
                 fi
               fi
               if [ "$EXTERNAL_REALM" != "$ADMIN_REALM" ]; then
-                if [ "$EXTERNAL_DISABLE_LOCAL_LOGIN" = "true" ]; then
+                if [ "$EXTERNAL_DISABLE_LOCAL_LOGIN" = "true" ] && [ "${EXTERNAL_IDP_ONLY_READY:-false}" = "true" ]; then
                   $KCADM update "realms/${EXTERNAL_REALM}" -s "browserFlow=${FLOW_BROWSER_EXTERNAL_IDP}" || true
                 else
                   $KCADM update "realms/${EXTERNAL_REALM}" -s "browserFlow=browser" || true
