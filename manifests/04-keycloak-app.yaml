@@ -57,6 +57,8 @@ metadata:
     argocd.argoproj.io/sync-wave: "5"
 spec:
   replicas: 1
+  strategy:
+    type: Recreate
   selector:
     matchLabels:
       app: keycloak
@@ -222,6 +224,8 @@ spec:
       volumes:
         - name: keycloak-data
           emptyDir: {}
+        - name: kc-preflight-sync
+          emptyDir: {}
         - name: keycloak-client-config-internal
           configMap:
             name: keycloak-client-config-internal
@@ -265,14 +269,10 @@ spec:
                 wait_job "$job"
               done
 
+      containers:
         - name: kc-db-preflight
-          image: alpine:3.20
-          securityContext:
-            runAsUser: 0
-            runAsGroup: 0
-            allowPrivilegeEscalation: false
-            readOnlyRootFilesystem: false
-            capabilities: { drop: ["ALL"] }
+          image: postgres:15-alpine
+          imagePullPolicy: IfNotPresent
           env:
             - name: PGHOST
               value: "yb-tserver-service.yugabyte.svc.cluster.local"
@@ -286,12 +286,11 @@ spec:
               value: "keycloak_app"
             - name: PGADMIN_USER
               value: "vaultadmin"
-            # Optional schema reset controls (leave false to preserve existing data)
-            - name: KC_FORCE_DROP_SCHEMA
-              value: "false"
-            - name: KC_FORCE_RESET_SCHEMA_ON_CONFLICT
+            # Default safe behavior: only reset when there are zero realms (fresh bootstrap).
+            - name: KC_RESET_SCHEMA_IF_NO_REALMS
               value: "true"
-            - name: KC_CLEAR_CHANGELOG_CHECKSUMS
+            # Hard override: if set true, will drop schema even if realms exist (DANGEROUS).
+            - name: KC_FORCE_DROP_SCHEMA
               value: "false"
             - name: KC_BOOTSTRAP_MASTER_DIRECT_GRANT
               value: "true"
@@ -299,133 +298,107 @@ spec:
           args:
             - |
               set -Eeuo pipefail
-              apk add --no-cache postgresql15-client jq bind-tools busybox-extras
 
-              # Wait for Vault agent to write the secret file
-              for i in $(seq 1 60); do
+              sync_dir="/kc-preflight"
+              req_file="${sync_dir}/request"
+              done_file="${sync_dir}/done"
+
+              i=0
+              while [ "$i" -lt 120 ]; do
                 if [ -s /vault/secrets/vaultadmin ]; then break; fi
-                echo "⏳ waiting for /vault/secrets/vaultadmin..."
+                echo "waiting for /vault/secrets/vaultadmin..."
+                i=$((i + 1))
                 sleep 1
               done
               if [ ! -s /vault/secrets/vaultadmin ]; then
-                echo "❌ /vault/secrets/vaultadmin not found or empty"; exit 1
+                echo "ERROR: /vault/secrets/vaultadmin not found or empty"
+                sleep 3600
+                exit 1
               fi
 
               export PGUSER="${PGADMIN_USER}"
               export PGPASSWORD="$(tr -d '\r\n' < /vault/secrets/vaultadmin)"
-              if [ -s /vault/secrets/keycloak-admin ]; then
-                . /vault/secrets/keycloak-admin
-              fi
-              ADMIN_USER="${KEYCLOAK_ADMIN:-admin}"
 
-              echo "🔎 DNS for ${PGHOST}"; getent hosts "${PGHOST}" || true
-              echo "🔎 TCP ${PGHOST}:${PGPORT}"; nc -vz -w 3 "${PGHOST}" "${PGPORT}" || true
-
-              echo "🔎 Preflight (admin): connecting to ${PGHOST}:${PGPORT}/${PGDATABASE} as ${PGUSER}…"
-              until psql -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDATABASE" -tAc "select 1" >/dev/null 2>&1; do
-                echo "  ⏳ waiting for DB…"
+              echo "preflight sidecar: waiting for DB ${PGHOST}:${PGPORT}/${PGDATABASE}..."
+              until psql -h "$PGHOST" -p "$PGPORT" -d "$PGDATABASE" -tAc "select 1" >/dev/null 2>&1; do
                 sleep 2
               done
-              echo "✅ DB reachable"
+              echo "preflight sidecar: DB reachable"
 
-              # Ensure schema exists so DROP works deterministically
-              psql -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDATABASE" -v ON_ERROR_STOP=1 \
-                -c "CREATE SCHEMA IF NOT EXISTS ${PGSCHEMA};"
+              mkdir -p "$sync_dir"
+              echo "ok" > "${sync_dir}/sidecar-ready"
 
-              # Log what exists
-              TABLES=$(
-                psql -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDATABASE" -Atc \
-                  "select table_schema||'.'||table_name
-                    from information_schema.tables
-                    where table_schema='${PGSCHEMA}'
-                    order by 1"
-              )
-              COUNT="$(printf '%s\n' "$TABLES" | sed '/^$/d' | wc -l | tr -d ' ')"
-              echo "ℹ️  ${PGSCHEMA} currently has ${COUNT:-0} table(s)."
-              if [ -n "${TABLES:-}" ]; then echo "$TABLES" | sed 's/^/   • /'; fi
+              while true; do
+                if [ ! -f "$req_file" ]; then
+                  sleep 1
+                  continue
+                fi
 
-              CHANGELOG_EXISTS="$(psql -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDATABASE" -Atc \
-                "select 1 from information_schema.tables where table_schema='${PGSCHEMA}' and table_name='databasechangelog' limit 1" \
-                2>/dev/null || true)"
-              CHANGELOG_EXISTS="${CHANGELOG_EXISTS:-0}"
-              CHANGELOG_ROWS="0"
-              if [ "${CHANGELOG_EXISTS}" = "1" ]; then
-                CHANGELOG_ROWS="$(psql -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDATABASE" -Atc \
-                  "select count(*) from ${PGSCHEMA}.databasechangelog" 2>/dev/null || echo 0)"
-                CHANGELOG_ROWS="${CHANGELOG_ROWS:-0}"
-              fi
+                req="$(cat "$req_file" 2>/dev/null || true)"
+                echo "preflight request received: ${req}"
 
-              if [ "${COUNT:-0}" -gt 0 ] && [ "${KC_FORCE_DROP_SCHEMA:-false}" != "true" ]; then
-                if [ "${KC_FORCE_RESET_SCHEMA_ON_CONFLICT:-false}" = "true" ] && \
-                   { [ "${CHANGELOG_EXISTS}" != "1" ] || [ "${CHANGELOG_ROWS}" = "0" ]; }; then
-                  echo "⚠️  Existing tables without Liquibase history; resetting schema."
+                # Realm row count is our safety valve: if master realm exists, do not drop schema automatically.
+                realm_table="$(psql -h "$PGHOST" -p "$PGPORT" -d "$PGDATABASE" -Atc "select to_regclass('${PGSCHEMA}.realm');" 2>/dev/null || true)"
+                realm_rows="0"
+                if [ -n "${realm_table:-}" ] && [ "${realm_table}" != "null" ]; then
+                  realm_rows="$(psql -h "$PGHOST" -p "$PGPORT" -d "$PGDATABASE" -Atc "select count(*) from ${PGSCHEMA}.realm;" 2>/dev/null || echo 0)"
+                  realm_rows="${realm_rows:-0}"
+                fi
+
+                did_reset="false"
+                if [ "${KC_FORCE_DROP_SCHEMA:-false}" = "true" ]; then
+                  echo "KC_FORCE_DROP_SCHEMA=true; dropping schema ${PGSCHEMA}..."
+                elif [ "${KC_RESET_SCHEMA_IF_NO_REALMS:-true}" = "true" ] && [ "${realm_rows}" = "0" ]; then
+                  echo "no realms detected; dropping schema ${PGSCHEMA} for clean bootstrap..."
                 else
-                  if [ "${KC_CLEAR_CHANGELOG_CHECKSUMS:-false}" = "true" ] && [ "${CHANGELOG_EXISTS}" = "1" ]; then
-                    echo "🧹 Clearing Liquibase checksums in ${PGSCHEMA}.databasechangelog"
-                    psql -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDATABASE" -v ON_ERROR_STOP=1 \
-                      -c "UPDATE ${PGSCHEMA}.databasechangelog SET md5sum=NULL;"
+                  echo "skipping schema reset (realm_rows=${realm_rows})"
+                fi
+
+                if [ "${KC_FORCE_DROP_SCHEMA:-false}" = "true" ] || { [ "${KC_RESET_SCHEMA_IF_NO_REALMS:-true}" = "true" ] && [ "${realm_rows}" = "0" ]; }; then
+                  n=1
+                  while [ "$n" -le 10 ]; do
+                    if psql -h "$PGHOST" -p "$PGPORT" -d "$PGDATABASE" -v ON_ERROR_STOP=1 \
+                      -c "DROP SCHEMA IF EXISTS ${PGSCHEMA} CASCADE; CREATE SCHEMA ${PGSCHEMA} AUTHORIZATION ${PGSCHEMA_OWNER}; ALTER ROLE ${PGSCHEMA_OWNER} SET search_path = ${PGSCHEMA}; GRANT USAGE, CREATE ON SCHEMA ${PGSCHEMA} TO ${PGSCHEMA_OWNER};"
+                    then
+                      did_reset="true"
+                      break
+                    fi
+                    echo "schema reset attempt ${n} failed; retrying..."
+                    sleep $((n * 2))
+                    n=$((n + 1))
+                  done
+                fi
+
+                # Best-effort: keep master direct-grant enabled for the configurator bootstrap.
+                if [ "${KC_BOOTSTRAP_MASTER_DIRECT_GRANT:-true}" = "true" ] && [ "${did_reset}" != "true" ] && [ "${realm_rows}" != "0" ]; then
+                  admin_user="admin"
+                  if [ -s /vault/secrets/keycloak-admin ]; then
+                    . /vault/secrets/keycloak-admin
+                    admin_user="${KEYCLOAK_ADMIN:-admin}"
                   fi
-                  if [ "${KC_BOOTSTRAP_MASTER_DIRECT_GRANT:-true}" = "true" ]; then
-                    HAS_REALM_TABLE="$(psql -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDATABASE" -tAc "SELECT to_regclass('${PGSCHEMA}.realm');" || true)"
-                    if [ -n "${HAS_REALM_TABLE:-}" ] && [ "${HAS_REALM_TABLE}" != "null" ]; then
-                      REALM_ID="$(psql -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDATABASE" -tAc "SELECT id FROM ${PGSCHEMA}.realm WHERE name='master' LIMIT 1;" || true)"
-                      if [ -n "${REALM_ID:-}" ]; then
-                        psql -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDATABASE" -v ON_ERROR_STOP=1 \
-                          -c "UPDATE ${PGSCHEMA}.user_entity SET enabled=true WHERE realm_id='${REALM_ID}' AND username='${ADMIN_USER}';"
-                        psql -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDATABASE" -v ON_ERROR_STOP=1 \
-                          -c "UPDATE ${PGSCHEMA}.client SET direct_access_grants_enabled=true WHERE realm_id='${REALM_ID}' AND client_id='admin-cli';"
-                        DG_ID="$(psql -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDATABASE" -tAc "SELECT id FROM ${PGSCHEMA}.authentication_flow WHERE realm_id='${REALM_ID}' AND lower(alias) IN ('direct grant','direct grant flow','direct-grant') LIMIT 1;" || true)"
-                        if [ -n "${DG_ID:-}" ]; then
-                          psql -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDATABASE" -v ON_ERROR_STOP=1 \
-                            -c "UPDATE ${PGSCHEMA}.realm SET direct_grant_flow='${DG_ID}' WHERE id='${REALM_ID}';"
-                          echo "✅ Enabled master direct-grant flow for configurator bootstrap."
-                        else
-                          echo "⚠️  Direct-grant flow not found in master realm; bootstrap may fail."
-                        fi
-                      fi
+
+                  realm_id="$(psql -h "$PGHOST" -p "$PGPORT" -d "$PGDATABASE" -Atc "select id from ${PGSCHEMA}.realm where name='master' limit 1;" 2>/dev/null || true)"
+                  if [ -n "${realm_id:-}" ]; then
+                    psql -h "$PGHOST" -p "$PGPORT" -d "$PGDATABASE" -v ON_ERROR_STOP=1 \
+                      -c "UPDATE ${PGSCHEMA}.user_entity SET enabled=true WHERE realm_id='${realm_id}' AND username='${admin_user}';" >/dev/null 2>&1 || true
+                    psql -h "$PGHOST" -p "$PGPORT" -d "$PGDATABASE" -v ON_ERROR_STOP=1 \
+                      -c "UPDATE ${PGSCHEMA}.client SET direct_access_grants_enabled=true WHERE realm_id='${realm_id}' AND client_id='admin-cli';" >/dev/null 2>&1 || true
+
+                    dg_id="$(psql -h "$PGHOST" -p "$PGPORT" -d "$PGDATABASE" -Atc "select id from ${PGSCHEMA}.authentication_flow where realm_id='${realm_id}' and lower(alias) in ('direct grant','direct grant flow','direct-grant') limit 1;" 2>/dev/null || true)"
+                    if [ -n "${dg_id:-}" ]; then
+                      psql -h "$PGHOST" -p "$PGPORT" -d "$PGDATABASE" -v ON_ERROR_STOP=1 \
+                        -c "UPDATE ${PGSCHEMA}.realm SET direct_grant_flow='${dg_id}' WHERE id='${realm_id}';" >/dev/null 2>&1 || true
                     fi
                   fi
-                  echo "✅ Existing schema detected; skipping destructive reset."
-                  exit 0
                 fi
-              fi
 
-              echo "🧨 Dropping schema ${PGSCHEMA} (CASCADE) for a clean migration…"
-              psql -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDATABASE" -v ON_ERROR_STOP=1 <<EOSQL
-              DROP SCHEMA IF EXISTS ${PGSCHEMA} CASCADE;
-              CREATE SCHEMA ${PGSCHEMA} AUTHORIZATION ${PGSCHEMA_OWNER};
-              ALTER ROLE ${PGSCHEMA_OWNER} SET search_path = ${PGSCHEMA};
-              GRANT USAGE, CREATE ON SCHEMA ${PGSCHEMA} TO ${PGSCHEMA_OWNER};
-              EOSQL
+                printf 'realm_rows=%s did_reset=%s ts=%s\n' "${realm_rows}" "${did_reset}" "$(date -u +%FT%TZ)" > "${done_file}" || true
+                rm -f "$req_file"
+              done
+          volumeMounts:
+            - name: kc-preflight-sync
+              mountPath: /kc-preflight
 
-              # NOTE: unquoted heredoc so $PGSCHEMA expands in the shell.
-              psql -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDATABASE" -v ON_ERROR_STOP=0 <<EOSQL || true
-              DO \$blk\$
-              DECLARE
-                sch text := quote_ident('$PGSCHEMA');  -- safe identifier quoting
-              BEGIN
-                IF EXISTS (
-                  SELECT 1
-                  FROM information_schema.tables
-                  WHERE table_schema = '$PGSCHEMA' AND table_name = 'databasechangelog'
-                ) THEN
-                  EXECUTE 'TRUNCATE TABLE ' || sch || '.databasechangelog RESTART IDENTITY CASCADE';
-                END IF;
-
-                IF EXISTS (
-                  SELECT 1
-                  FROM information_schema.tables
-                  WHERE table_schema = '$PGSCHEMA' AND table_name = 'databasechangeloglock'
-                ) THEN
-                  EXECUTE 'TRUNCATE TABLE ' || sch || '.databasechangeloglock RESTART IDENTITY CASCADE';
-                END IF;
-              END
-              \$blk\$ LANGUAGE plpgsql;
-              EOSQL
-
-              echo "✅ Preflight complete."
-
-      containers:
         # --- Keycloak runtime ---
         - name: keycloak
           image: ghcr.io/dotcomrow/keycloak-image:sha-6b71290
@@ -450,7 +423,7 @@ spec:
             - name: KC_DB_POOL_INITIAL_SIZE
               value: "1"
             - name: KC_DB_POOL_MAX_SIZE
-              value: "10"
+              value: "5"
 
             # Feature flags
             - name: KC_FEATURES
@@ -617,8 +590,74 @@ spec:
                 export GOOGLE_GROUP_ROLE_MAP="$(append_role_map_entry "$GOOGLE_GROUP_ROLE_MAP" "$EXTERNAL_ADMIN_GROUP" "client:realm-management:realm-admin")"
               fi
 
-              echo "▶️  Starting Keycloak (image already built with provider)…"
-              exec /opt/keycloak/bin/kc.sh start --optimized
+              sync_dir="/kc-preflight"
+              req_file="${sync_dir}/request"
+              done_file="${sync_dir}/done"
+
+              request_preflight() {
+                mkdir -p "$sync_dir"
+                rm -f "$done_file"
+                printf 'ts=%s\n' "$(date -u +%FT%TZ)" > "$req_file"
+                i=0
+                while [ "$i" -lt 900 ]; do
+                  sleep 1
+                  if [ ! -f "$req_file" ]; then
+                    break
+                  fi
+                  i=$((i + 1))
+                done
+                if [ -f "$req_file" ]; then
+                  echo "❌ DB preflight did not complete in time."
+                  exit 1
+                fi
+                if [ -f "$done_file" ]; then
+                  echo "✅ DB preflight: $(tr -d '\n' < "$done_file" || true)"
+                else
+                  echo "✅ DB preflight: done"
+                fi
+              }
+
+              kc_pid=""
+              term_handler() {
+                echo "⏹ received termination signal"
+                if [ -n "${kc_pid:-}" ]; then
+                  kill -TERM "$kc_pid" 2>/dev/null || true
+                  wait "$kc_pid" 2>/dev/null || true
+                fi
+                exit 0
+              }
+              trap term_handler TERM INT
+
+              max_attempts="${KC_STARTUP_MAX_ATTEMPTS:-30}"
+              base_backoff="${KC_STARTUP_BASE_BACKOFF_SECONDS:-5}"
+              max_backoff="${KC_STARTUP_MAX_BACKOFF_SECONDS:-60}"
+              attempt=0
+
+              while true; do
+                attempt=$((attempt + 1))
+                if [ "$attempt" -gt "$max_attempts" ]; then
+                  echo "❌ Keycloak exceeded max startup attempts (${max_attempts}); giving up."
+                  exit 1
+                fi
+
+                echo "▶️  Starting Keycloak (attempt ${attempt}/${max_attempts})..."
+                request_preflight
+
+                /opt/keycloak/bin/kc.sh start --optimized &
+                kc_pid="$!"
+                set +e
+                wait "$kc_pid"
+                rc="$?"
+                set -e
+                kc_pid=""
+
+                backoff="$((base_backoff * attempt))"
+                if [ "$backoff" -gt "$max_backoff" ]; then
+                  backoff="$max_backoff"
+                fi
+                echo "❌ Keycloak exited (code=${rc}); retrying in ${backoff}s..."
+                sleep "$backoff"
+              done
           readinessProbe:
             httpGet:
               path: /health/ready
@@ -627,6 +666,8 @@ spec:
             failureThreshold: 6
             timeoutSeconds: 5
           volumeMounts:
+            - name: kc-preflight-sync
+              mountPath: /kc-preflight
             - name: keycloak-data
               mountPath: /opt/keycloak/data
             - name: keycloak-client-config-internal
