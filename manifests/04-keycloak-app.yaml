@@ -57,6 +57,9 @@ metadata:
     argocd.argoproj.io/sync-wave: "5"
 spec:
   replicas: 1
+  # Initial schema migration on Yugabyte can be slow and may require multiple retries.
+  # Increase the deadline so ArgoCD doesn't fail sync due to ProgressDeadlineExceeded.
+  progressDeadlineSeconds: 3600
   strategy:
     type: Recreate
   selector:
