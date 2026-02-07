@@ -1981,6 +1981,7 @@ spec:
                 local default_resource_id=""
                 local resource_json=""
                 local resource_type=""
+                local default_resource_name="Default Resource"
                 if [ -z "${realm:-}" ] || [ -z "${target_client_id:-}" ] || [ -z "${allowed_client_id:-}" ]; then
                   return 0
                 fi
@@ -2013,12 +2014,39 @@ spec:
                 fi
                 echo "ℹ️  token exchange scope_id=$scope_id"
 
-                default_resource_id=$($KCADM get "clients/$target_uuid/authz/resource-server/resource" -r "$realm" -q "name=Default Resource" --fields _id --format csv 2>/dev/null | tail -n1 || true)
-                default_resource_id="$(clean_id "$default_resource_id")"
+                get_resource_id_by_name() {
+                  local realm="$1"
+                  local client_uuid="$2"
+                  local resource_name="$3"
+                  local rid=""
+                  rid="$($KCADM get "clients/$client_uuid/authz/resource-server/resource" -r "$realm" -q "name=$resource_name" --fields _id --format csv 2>/dev/null | tail -n1 || true)"
+                  rid="$(clean_id "$rid")"
+                  if [ -z "${rid:-}" ]; then
+                    rid="$($KCADM get "clients/$client_uuid/authz/resource-server/resource" -r "$realm" -q "name=$resource_name" --fields id --format csv 2>/dev/null | tail -n1 || true)"
+                    rid="$(clean_id "$rid")"
+                  fi
+                  printf '%s' "$rid"
+                }
+
+                default_resource_id="$(get_resource_id_by_name "$realm" "$target_uuid" "$default_resource_name")"
+                if [ -z "${default_resource_id:-}" ]; then
+                  # Keycloak 26+ does not always create a Default Resource automatically; create it so scope-permissions can bind.
+                  resource_type="urn:${target_client_id}:resources:default"
+                  tmp_resource_json="/tmp/token-exchange-resource-${target_uuid}.json"
+                  printf '%s\n' \
+                    '{' \
+                    '  "name": "Default Resource",' \
+                    "  \"type\": \"${resource_type}\"," \
+                    '  "uris": ["/*"],' \
+                    '  "scopes": ["token-exchange"]' \
+                    '}' > "$tmp_resource_json"
+                  $KCADM create "clients/$target_uuid/authz/resource-server/resource" -r "$realm" -f "$tmp_resource_json" >/dev/null 2>&1 || true
+                  default_resource_id="$(get_resource_id_by_name "$realm" "$target_uuid" "$default_resource_name")"
+                fi
                 echo "ℹ️  token exchange default_resource_id=$default_resource_id"
                 if [ -n "${default_resource_id:-}" ]; then
-                  resource_json=$($KCADM get "clients/$target_uuid/authz/resource-server/resource/$default_resource_id" -r "$realm" 2>/dev/null || true)
-                  if ! printf '%s' "$resource_json" | grep -q '"name"[[:space:]]*:[[:space:]]*"token-exchange"'; then
+                  resource_json="$($KCADM get "clients/$target_uuid/authz/resource-server/resource/$default_resource_id" -r "$realm" 2>/dev/null || true)"
+                  if ! printf '%s' "$resource_json" | grep -q '"token-exchange"'; then
                     resource_type="urn:${target_client_id}:resources:default"
                     tmp_resource_json="/tmp/token-exchange-resource-${target_uuid}.json"
                     printf '%s\n' \
@@ -2031,6 +2059,8 @@ spec:
                     $KCADM update "clients/$target_uuid/authz/resource-server/resource/$default_resource_id" -r "$realm" \
                       -f "$tmp_resource_json" >/dev/null 2>&1 || true
                   fi
+                else
+                  echo "⚠️  token exchange: Default Resource not available; binding permission without resources"
                 fi
 
                 policy_name="token-exchange-${allowed_client_id}"
@@ -2121,11 +2151,19 @@ spec:
                 perm_id="$(get_permission_id_by_name "$realm" "$target_uuid" "$perm_name")"
                 perm_id="$(clean_id "$perm_id")"
                 if [ -n "${perm_id:-}" ]; then
-                  if ! $KCADM update "clients/$target_uuid/authz/resource-server/permission/scope/$perm_id" -r "$realm" \
-                    -s 'resources=["Default Resource"]' \
-                    -s 'scopes=["token-exchange"]' \
-                    -s "policies=[\"${policy_name}\"]"; then
-                    echo "⚠️  token exchange permission name-bind failed: realm=$realm target=$target_client_id allowed=$allowed_client_id perm_id=$perm_id"
+                  if [ -n "${default_resource_id:-}" ]; then
+                    if ! $KCADM update "clients/$target_uuid/authz/resource-server/permission/scope/$perm_id" -r "$realm" \
+                      -s "resources=[\"${default_resource_name}\"]" \
+                      -s 'scopes=["token-exchange"]' \
+                      -s "policies=[\"${policy_name}\"]"; then
+                      echo "⚠️  token exchange permission name-bind failed: realm=$realm target=$target_client_id allowed=$allowed_client_id perm_id=$perm_id"
+                    fi
+                  else
+                    if ! $KCADM update "clients/$target_uuid/authz/resource-server/permission/scope/$perm_id" -r "$realm" \
+                      -s 'scopes=["token-exchange"]' \
+                      -s "policies=[\"${policy_name}\"]"; then
+                      echo "⚠️  token exchange permission name-bind failed (no default resource): realm=$realm target=$target_client_id allowed=$allowed_client_id perm_id=$perm_id"
+                    fi
                   fi
                 else
                   echo "⚠️  token exchange permission not found after create/update: $perm_name"
@@ -2141,16 +2179,39 @@ spec:
                 perm_name_default="token-exchange"
                 perm_id_default="$(get_permission_id_by_name "$realm" "$target_uuid" "$perm_name_default")"
                 perm_id_default="$(clean_id "$perm_id_default")"
+                if [ -z "${perm_id_default:-}" ]; then
+                  # Create the default permission if it doesn't exist (newer Keycloak doesn't always provision it).
+                  tmp_perm_default_json="/tmp/token-exchange-default-permission-${target_uuid}.json"
+                  printf '%s\n' \
+                    '{' \
+                    "  \"name\": \"${perm_name_default}\"," \
+                    '  "type": "scope",' \
+                    '  "logic": "POSITIVE",' \
+                    '  "decisionStrategy": "UNANIMOUS"' \
+                    '}' > "$tmp_perm_default_json"
+                  $KCADM create "clients/$target_uuid/authz/resource-server/permission/scope" -r "$realm" \
+                    -f "$tmp_perm_default_json" >/dev/null 2>&1 || true
+                  perm_id_default="$(get_permission_id_by_name "$realm" "$target_uuid" "$perm_name_default")"
+                  perm_id_default="$(clean_id "$perm_id_default")"
+                fi
                 if [ -n "${perm_id_default:-}" ]; then
-                  if ! $KCADM update "clients/$target_uuid/authz/resource-server/permission/scope/$perm_id_default" -r "$realm" \
-                    -s 'resources=["Default Resource"]' \
-                    -s 'scopes=["token-exchange"]' \
-                    -s "policies=[\"${policy_name}\"]"; then
-                    echo "⚠️  token exchange default permission update failed: realm=$realm target=$target_client_id allowed=$allowed_client_id perm_id=$perm_id_default"
+                  if [ -n "${default_resource_id:-}" ]; then
+                    if ! $KCADM update "clients/$target_uuid/authz/resource-server/permission/scope/$perm_id_default" -r "$realm" \
+                      -s "resources=[\"${default_resource_name}\"]" \
+                      -s 'scopes=["token-exchange"]' \
+                      -s "policies=[\"${policy_name}\"]"; then
+                      echo "⚠️  token exchange default permission update failed: realm=$realm target=$target_client_id allowed=$allowed_client_id perm_id=$perm_id_default"
+                    else
+                      perm_dump_default="$($KCADM get "clients/$target_uuid/authz/resource-server/permission/scope/$perm_id_default" -r "$realm" 2>/dev/null | tr -d '\n' || true)"
+                      if [ -n "${perm_dump_default:-}" ]; then
+                        echo "ℹ️  token exchange default permission dump: ${perm_dump_default}"
+                      fi
+                    fi
                   else
-                    perm_dump_default="$($KCADM get "clients/$target_uuid/authz/resource-server/permission/scope/$perm_id_default" -r "$realm" 2>/dev/null | tr -d '\n' || true)"
-                    if [ -n "${perm_dump_default:-}" ]; then
-                      echo "ℹ️  token exchange default permission dump: ${perm_dump_default}"
+                    if ! $KCADM update "clients/$target_uuid/authz/resource-server/permission/scope/$perm_id_default" -r "$realm" \
+                      -s 'scopes=["token-exchange"]' \
+                      -s "policies=[\"${policy_name}\"]"; then
+                      echo "⚠️  token exchange default permission update failed (no default resource): realm=$realm target=$target_client_id allowed=$allowed_client_id perm_id=$perm_id_default"
                     fi
                   fi
                 else
