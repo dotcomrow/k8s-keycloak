@@ -1517,6 +1517,62 @@ spec:
                   -s "config.\"multivalued\"=true" || true
               }
 
+              # Open WebUI reads roles from the OIDC userinfo response (not the access token),
+              # so we must explicitly include realm roles in userinfo.
+              ensure_realm_roles_in_userinfo_mapper() {
+                local realm="$1"
+                local clientId="$2"
+                local mapper_name="realm-roles-userinfo"
+                CID=$($KCADM get clients -r "$realm" -q "clientId=$clientId" --fields id --format csv 2>/dev/null | tail -n1 || true)
+                CID="$(clean_id "$CID")"
+                [ -z "${CID:-}" ] && return 0
+
+                local mapper_id=""
+                while IFS= read -r line; do
+                  line=${line%$'\r'}
+                  if [ -z "$line" ] || [ "$line" = "id,name" ] || [ "$line" = "\"id\",\"name\"" ]; then
+                    continue
+                  fi
+                  IFS=, read -r id name <<< "$line"
+                  id=${id#\"}
+                  id=${id%\"}
+                  name=${name#\"}
+                  name=${name%\"}
+                  if [ "$name" = "$mapper_name" ]; then
+                    mapper_id="$id"
+                    break
+                  fi
+                done < <($KCADM get "clients/$CID/protocol-mappers/models" -r "$realm" \
+                  --fields id,name --format csv 2>/dev/null || true)
+
+                if [ -n "${mapper_id:-}" ]; then
+                  $KCADM update "clients/$CID/protocol-mappers/models/$mapper_id" -r "$realm" \
+                    -s "name=${mapper_name}" \
+                    -s "protocol=openid-connect" \
+                    -s "protocolMapper=oidc-usermodel-realm-role-mapper" \
+                    -s "config.\"claim.name\"=roles" \
+                    -s "config.\"jsonType.label\"=String" \
+                    -s "config.\"access.token.claim\"=true" \
+                    -s "config.\"id.token.claim\"=true" \
+                    -s "config.\"userinfo.token.claim\"=true" \
+                    -s "config.\"introspection.token.claim\"=true" \
+                    -s "config.\"multivalued\"=true" || true
+                  return 0
+                fi
+
+                $KCADM create "clients/$CID/protocol-mappers/models" -r "$realm" \
+                  -s "name=${mapper_name}" \
+                  -s "protocol=openid-connect" \
+                  -s "protocolMapper=oidc-usermodel-realm-role-mapper" \
+                  -s "config.\"claim.name\"=roles" \
+                  -s "config.\"jsonType.label\"=String" \
+                  -s "config.\"access.token.claim\"=true" \
+                  -s "config.\"id.token.claim\"=true" \
+                  -s "config.\"userinfo.token.claim\"=true" \
+                  -s "config.\"introspection.token.claim\"=true" \
+                  -s "config.\"multivalued\"=true" || true
+              }
+
               ensure_realm_roles_claim_mapper() {
                 local realm="$1"
                 local clientId="$2"
@@ -1657,6 +1713,7 @@ spec:
               enforce_standard_flow_for_client "$EXTERNAL_REALM" "$GRAPHQL_API_CLIENT_ID"
               enforce_pkce_for_client "$EXTERNAL_REALM" "$OPENWEBUI_CLIENT_ID"
               ensure_realm_roles_in_scope_mapper "$EXTERNAL_REALM" "$OPENWEBUI_CLIENT_ID"
+              ensure_realm_roles_in_userinfo_mapper "$EXTERNAL_REALM" "$OPENWEBUI_CLIENT_ID"
               ensure_client_attribute_mapper "$EXTERNAL_REALM" "$OPENWEBUI_CLIENT_ID" "openwebui-picture" "picture" "picture"
               if ! $KCADM get clients -r "$EXTERNAL_REALM" -q "clientId=$OPENWEBUI_CLIENT_ID" --fields id --format csv 2>/dev/null | tail -n1 | grep -q .; then
                 echo "⚠️  openwebui client not present in external realm (${EXTERNAL_REALM})"
