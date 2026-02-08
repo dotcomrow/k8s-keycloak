@@ -95,6 +95,18 @@ spec:
         vault.hashicorp.com/agent-inject-secret-client-secret-graphql-api: "secret/data/keycloak-client-secret-graphql-api"
         vault.hashicorp.com/agent-inject-template-client-secret-graphql-api: |
           {{- with secret "secret/data/keycloak-client-secret-graphql-api" -}}{{ .Data.data.value }}{{- end -}}
+        vault.hashicorp.com/agent-inject-secret-client-id-cms-site-internal: "secret/data/keycloak-client-id-cms-site-internal"
+        vault.hashicorp.com/agent-inject-template-client-id-cms-site-internal: |
+          {{- with secret "secret/data/keycloak-client-id-cms-site-internal" -}}{{ .Data.data.value }}{{- end -}}
+        vault.hashicorp.com/agent-inject-secret-client-secret-cms-site-internal: "secret/data/keycloak-client-secret-cms-site-internal"
+        vault.hashicorp.com/agent-inject-template-client-secret-cms-site-internal: |
+          {{- with secret "secret/data/keycloak-client-secret-cms-site-internal" -}}{{ .Data.data.value }}{{- end -}}
+        vault.hashicorp.com/agent-inject-secret-client-id-cms-site-external: "secret/data/keycloak-client-id-cms-site-external"
+        vault.hashicorp.com/agent-inject-template-client-id-cms-site-external: |
+          {{- with secret "secret/data/keycloak-client-id-cms-site-external" -}}{{ .Data.data.value }}{{- end -}}
+        vault.hashicorp.com/agent-inject-secret-client-secret-cms-site-external: "secret/data/keycloak-client-secret-cms-site-external"
+        vault.hashicorp.com/agent-inject-template-client-secret-cms-site-external: |
+          {{- with secret "secret/data/keycloak-client-secret-cms-site-external" -}}{{ .Data.data.value }}{{- end -}}
         vault.hashicorp.com/agent-inject-secret-client-id-openwebui: "secret/data/keycloak-client-id-openwebui"
         vault.hashicorp.com/agent-inject-template-client-id-openwebui: |
           {{- with secret "secret/data/keycloak-client-id-openwebui" -}}{{ .Data.data.value }}{{- end -}}
@@ -1420,12 +1432,23 @@ spec:
                 ls -al "$dir" || true
                 for f in "$dir"/*.json; do
                   [ -f "$f" ] || continue
-                  client_id=$(sed -n "s/.*\"clientId\"[[:space:]]*:[[:space:]]*\"\\([^\"]*\\)\".*/\\1/p" "$f" | head -n1)
-                  if [ -z "${client_id:-}" ]; then
+                  client_id_raw=$(sed -n "s/.*\"clientId\"[[:space:]]*:[[:space:]]*\"\\([^\"]*\\)\".*/\\1/p" "$f" | head -n1)
+                  if [ -z "${client_id_raw:-}" ]; then
                     echo "info: missing clientId in $f"
                     continue
                   fi
-                  effective_id="$client_id"
+                  client_id="$client_id_raw"
+                  effective_id="$client_id_raw"
+
+                  # If clientId is an AVP placeholder, treat its suffix as the stable key for override/secret files.
+                  path_prefix="<pat"
+                  path_prefix="${path_prefix}h:"
+                  client_id_placeholder="$(printf '%s' "$client_id_raw" | sed -n "s|^${path_prefix}secret/data/keycloak-client-id-\\([^#>]*\\)#value>$|\\1|p")"
+                  if [ -n "${client_id_placeholder:-}" ]; then
+                    client_id="$client_id_placeholder"
+                    effective_id="$client_id_placeholder"
+                  fi
+
                   override_id_file="${CLIENT_ID_DIR:-/vault/secrets}/client-id-${client_id}"
                   if [ -s "$override_id_file" ]; then
                     override_id="$(tr -d '\r\n' < "$override_id_file")"
