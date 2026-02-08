@@ -1180,6 +1180,36 @@ spec:
                   -s "config.\"userAttribute\"=${user_attribute}" \
                   -s "config.\"syncMode\"=${sync_mode}" || true
               }
+
+              # Import OIDC claims from an external IdP (e.g., Google) into Keycloak user attributes.
+              # This is the "incoming" side of profile standardization; protocol mappers/client scopes
+              # handle exposing the stored attributes to apps.
+              ensure_oidc_user_attribute_mapper() {
+                local realm="$1"
+                local idp_alias="$2"
+                local mapper_name="$3"
+                local claim="$4"
+                local user_attribute="$5"
+                local sync_mode="${6:-INHERIT}"
+
+                if [ -z "${realm:-}" ] || [ -z "${idp_alias:-}" ] || [ -z "${mapper_name:-}" ] || [ -z "${claim:-}" ] || [ -z "${user_attribute:-}" ]; then
+                  return 0
+                fi
+                if ! $KCADM get "identity-provider/instances/${idp_alias}" -r "$realm" >/dev/null 2>&1; then
+                  return 0
+                fi
+                if $KCADM get "identity-provider/instances/${idp_alias}/mappers" -r "$realm" 2>/dev/null \
+                  | grep -q "\"name\"[[:space:]]*:[[:space:]]*\"${mapper_name}\""; then
+                  return 0
+                fi
+                $KCADM create "identity-provider/instances/${idp_alias}/mappers" -r "$realm" \
+                  -s "name=${mapper_name}" \
+                  -s "identityProviderAlias=${idp_alias}" \
+                  -s "identityProviderMapper=oidc-user-attribute-idp-mapper" \
+                  -s "config.\"claim\"=${claim}" \
+                  -s "config.\"user.attribute\"=${user_attribute}" \
+                  -s "config.\"syncMode\"=${sync_mode}" >/dev/null 2>&1 || true
+              }
               
               echo "Configuring admin realm: ${ADMIN_REALM}"
               echo "admin: load providers"
@@ -1187,6 +1217,17 @@ spec:
               if [ "$ADMIN_GITHUB_ENABLED" = "true" ]; then
                 echo "admin: ensure github idp"
                 ensure_github_idp "$ADMIN_REALM" "false" || true
+                ensure_github_user_attribute_mapper "$ADMIN_REALM" "github-avatar-url" "avatar_url" "picture" "INHERIT"
+                ensure_github_user_attribute_mapper "$ADMIN_REALM" "github-profile-url" "html_url" "profile" "INHERIT"
+                ensure_github_user_attribute_mapper "$ADMIN_REALM" "github-website" "blog" "website" "INHERIT"
+                ensure_github_user_attribute_mapper "$ADMIN_REALM" "github-company" "company" "company" "INHERIT"
+                ensure_github_user_attribute_mapper "$ADMIN_REALM" "github-location" "location" "location" "INHERIT"
+                ensure_github_user_attribute_mapper "$ADMIN_REALM" "github-bio" "bio" "bio" "INHERIT"
+                ensure_github_user_attribute_mapper "$ADMIN_REALM" "github-twitter-username" "twitter_username" "twitter_username" "INHERIT"
+                ensure_github_user_attribute_mapper "$ADMIN_REALM" "github-name" "name" "name" "INHERIT"
+                ensure_github_user_attribute_mapper "$ADMIN_REALM" "github-login" "login" "preferred_username" "INHERIT"
+                ensure_github_user_attribute_mapper "$ADMIN_REALM" "github-id" "id" "github_id" "INHERIT"
+                ensure_github_user_attribute_mapper "$ADMIN_REALM" "github-node-id" "node_id" "github_node_id" "INHERIT"
                 echo "admin: ensure first-broker flow"
                 ensure_first_broker_flow_autolink "$ADMIN_REALM" || true
                 echo "admin: ensure post-broker flow"
@@ -1233,6 +1274,16 @@ spec:
               if [ "$INTERNAL_GITHUB_ENABLED" = "true" ]; then
                 ensure_github_idp "$INTERNAL_REALM" "$INTERNAL_GITHUB_HIDE_ON_LOGIN"
                 ensure_github_user_attribute_mapper "$INTERNAL_REALM" "github-avatar-url" "avatar_url" "picture" "INHERIT"
+                ensure_github_user_attribute_mapper "$INTERNAL_REALM" "github-profile-url" "html_url" "profile" "INHERIT"
+                ensure_github_user_attribute_mapper "$INTERNAL_REALM" "github-website" "blog" "website" "INHERIT"
+                ensure_github_user_attribute_mapper "$INTERNAL_REALM" "github-company" "company" "company" "INHERIT"
+                ensure_github_user_attribute_mapper "$INTERNAL_REALM" "github-location" "location" "location" "INHERIT"
+                ensure_github_user_attribute_mapper "$INTERNAL_REALM" "github-bio" "bio" "bio" "INHERIT"
+                ensure_github_user_attribute_mapper "$INTERNAL_REALM" "github-twitter-username" "twitter_username" "twitter_username" "INHERIT"
+                ensure_github_user_attribute_mapper "$INTERNAL_REALM" "github-name" "name" "name" "INHERIT"
+                ensure_github_user_attribute_mapper "$INTERNAL_REALM" "github-login" "login" "preferred_username" "INHERIT"
+                ensure_github_user_attribute_mapper "$INTERNAL_REALM" "github-id" "id" "github_id" "INHERIT"
+                ensure_github_user_attribute_mapper "$INTERNAL_REALM" "github-node-id" "node_id" "github_node_id" "INHERIT"
               else
                 echo "ℹ️  GitHub IdP disabled in internal realm by config."
                 if $KCADM get identity-provider/instances/github -r "$INTERNAL_REALM" >/dev/null 2>&1; then
@@ -1264,6 +1315,15 @@ spec:
               ensure_first_broker_flow_autolink "$EXTERNAL_REALM"
               if ensure_google_idp "$EXTERNAL_REALM"; then
                 EXTERNAL_GOOGLE_READY="true"
+                ensure_oidc_user_attribute_mapper "$EXTERNAL_REALM" "google" "google-picture" "picture" "picture" "INHERIT"
+                ensure_oidc_user_attribute_mapper "$EXTERNAL_REALM" "google" "google-profile" "profile" "profile" "INHERIT"
+                ensure_oidc_user_attribute_mapper "$EXTERNAL_REALM" "google" "google-locale" "locale" "locale" "INHERIT"
+                ensure_oidc_user_attribute_mapper "$EXTERNAL_REALM" "google" "google-name" "name" "name" "INHERIT"
+                ensure_oidc_user_attribute_mapper "$EXTERNAL_REALM" "google" "google-given-name" "given_name" "given_name" "INHERIT"
+                ensure_oidc_user_attribute_mapper "$EXTERNAL_REALM" "google" "google-family-name" "family_name" "family_name" "INHERIT"
+                ensure_oidc_user_attribute_mapper "$EXTERNAL_REALM" "google" "google-email-verified" "email_verified" "email_verified" "INHERIT"
+                ensure_oidc_user_attribute_mapper "$EXTERNAL_REALM" "google" "google-hd" "hd" "hd" "INHERIT"
+                ensure_oidc_user_attribute_mapper "$EXTERNAL_REALM" "google" "google-sub" "sub" "google_sub" "INHERIT"
                 ensure_flow "$EXTERNAL_REALM" "$FLOW_GGL" "Post-broker: Google groups only"
                 if provider_exists "$PROVIDER_GGL"; then
                   add_exec_required "$EXTERNAL_REALM" "$FLOW_GGL" "$PROVIDER_GGL"
@@ -1842,6 +1902,84 @@ spec:
                 $KCADM update "clients/$CLIENT_UUID/default-client-scopes/$SCOPE_UUID" -r "$realm" >/dev/null 2>&1 || true
               }
 
+              ensure_client_scope_attribute_mapper() {
+                local realm="$1"
+                local scope_uuid="$2"
+                local mapper_name="$3"
+                local user_attribute="$4"
+                local claim_name="$5"
+                local json_type="${6:-String}"
+                local mapper_line=""
+                local mapper_id=""
+
+                if [ -z "${realm:-}" ] || [ -z "${scope_uuid:-}" ] || [ -z "${mapper_name:-}" ] || [ -z "${user_attribute:-}" ] || [ -z "${claim_name:-}" ]; then
+                  return 0
+                fi
+
+                mapper_line=$($KCADM get "client-scopes/$scope_uuid/protocol-mappers/models" -r "$realm" \
+                  --fields id,name --format csv 2>/dev/null | grep -m1 "\"${mapper_name}\"" || true)
+                mapper_id="$(printf '%s' "$mapper_line" | cut -d',' -f1 | tr -d '\"' | tr -d '[:space:]')"
+                if [ -z "${mapper_id:-}" ]; then
+                  mapper_id=$($KCADM create "client-scopes/$scope_uuid/protocol-mappers/models" -r "$realm" \
+                    -s "name=${mapper_name}" \
+                    -s "protocol=openid-connect" \
+                    -s "protocolMapper=oidc-usermodel-attribute-mapper" \
+                    -i 2>/dev/null || true)
+                  mapper_id="$(clean_id "$mapper_id")"
+                fi
+                [ -z "${mapper_id:-}" ] && return 0
+                $KCADM update "client-scopes/$scope_uuid/protocol-mappers/models/$mapper_id" -r "$realm" \
+                  -s "name=${mapper_name}" \
+                  -s "protocol=openid-connect" \
+                  -s "protocolMapper=oidc-usermodel-attribute-mapper" \
+                  -s "config.\"user.attribute\"=${user_attribute}" \
+                  -s "config.\"claim.name\"=${claim_name}" \
+                  -s "config.\"jsonType.label\"=${json_type}" \
+                  -s "config.\"access.token.claim\"=true" \
+                  -s "config.\"id.token.claim\"=true" \
+                  -s "config.\"userinfo.token.claim\"=true" >/dev/null 2>&1 || true
+              }
+
+              # Common profile scope: attach to clients so apps can depend on consistent, high-signal profile claims.
+              # Values come from user attributes populated by IdP mappers (GitHub, Google, etc).
+              ensure_user_profile_scope() {
+                local realm="$1"
+                local scopeName="user-profile"
+                local SCOPE_UUID=""
+                local scope_line=""
+
+                scope_line=$($KCADM get client-scopes -r "$realm" --fields id,name --format csv 2>/dev/null | grep -m1 "\"${scopeName}\"" || true)
+                SCOPE_UUID="$(printf '%s' "$scope_line" | cut -d',' -f1 | tr -d '\"' | tr -d '[:space:]')"
+                if [ -z "${SCOPE_UUID:-}" ]; then
+                  SCOPE_UUID=$($KCADM create client-scopes -r "$realm" \
+                    -s "name=$scopeName" \
+                    -s "protocol=openid-connect" \
+                    -i 2>/dev/null || true)
+                  SCOPE_UUID="$(clean_id "$SCOPE_UUID")"
+                fi
+                [ -z "${SCOPE_UUID:-}" ] && return 0
+
+                ensure_client_scope_attribute_mapper "$realm" "$SCOPE_UUID" "picture" "picture" "picture"
+                ensure_client_scope_attribute_mapper "$realm" "$SCOPE_UUID" "profile" "profile" "profile"
+                ensure_client_scope_attribute_mapper "$realm" "$SCOPE_UUID" "website" "website" "website"
+                ensure_client_scope_attribute_mapper "$realm" "$SCOPE_UUID" "locale" "locale" "locale"
+                ensure_client_scope_attribute_mapper "$realm" "$SCOPE_UUID" "name" "name" "name"
+                ensure_client_scope_attribute_mapper "$realm" "$SCOPE_UUID" "given_name" "given_name" "given_name"
+                ensure_client_scope_attribute_mapper "$realm" "$SCOPE_UUID" "family_name" "family_name" "family_name"
+                ensure_client_scope_attribute_mapper "$realm" "$SCOPE_UUID" "preferred_username" "preferred_username" "preferred_username"
+
+                # Provider-specific extras (may be unset depending on IdP).
+                ensure_client_scope_attribute_mapper "$realm" "$SCOPE_UUID" "company" "company" "company"
+                ensure_client_scope_attribute_mapper "$realm" "$SCOPE_UUID" "location" "location" "location"
+                ensure_client_scope_attribute_mapper "$realm" "$SCOPE_UUID" "bio" "bio" "bio"
+                ensure_client_scope_attribute_mapper "$realm" "$SCOPE_UUID" "twitter_username" "twitter_username" "twitter_username"
+                ensure_client_scope_attribute_mapper "$realm" "$SCOPE_UUID" "email_verified" "email_verified" "email_verified" "boolean"
+                ensure_client_scope_attribute_mapper "$realm" "$SCOPE_UUID" "hd" "hd" "hd"
+                ensure_client_scope_attribute_mapper "$realm" "$SCOPE_UUID" "google_sub" "google_sub" "google_sub"
+                ensure_client_scope_attribute_mapper "$realm" "$SCOPE_UUID" "github_id" "github_id" "github_id"
+                ensure_client_scope_attribute_mapper "$realm" "$SCOPE_UUID" "github_node_id" "github_node_id" "github_node_id"
+              }
+
               ensure_groups_scope() {
                 local realm="$1"
                 local scopeName="groups"
@@ -1889,6 +2027,25 @@ spec:
               ensure_realm_roles_claim_mapper "$INTERNAL_REALM" "$DROOLS_WORKBENCH_CLIENT_ID"
               ensure_client_roles_claim_mapper "$INTERNAL_REALM" "$DROOLS_WORKBENCH_CLIENT_ID"
               ensure_default_client_role_member "$INTERNAL_REALM" "$DROOLS_WORKBENCH_CLIENT_ID" "user"
+
+              # Standardize profile claims for apps via a shared client scope in both realms.
+              ensure_user_profile_scope "$INTERNAL_REALM"
+              ensure_user_profile_scope "$EXTERNAL_REALM"
+
+              # Attach as a default client scope so apps always receive the profile claims.
+              ensure_client_scope "$INTERNAL_REALM" "$DROOLS_WORKBENCH_CLIENT_ID" "user-profile"
+              ensure_client_scope "$INTERNAL_REALM" "$HASURA_CONSOLE_PROXY_CLIENT_ID" "user-profile"
+              # Optional: OpenWebUI may exist in internal realm depending on deployment.
+              ensure_client_scope "$INTERNAL_REALM" "$OPENWEBUI_CLIENT_ID" "user-profile"
+              ensure_client_scope "$EXTERNAL_REALM" "$OPENWEBUI_CLIENT_ID" "user-profile"
+              ensure_client_scope "$EXTERNAL_REALM" "$GRAPHQL_API_CLIENT_ID" "user-profile"
+
+              # Ensure common OIDC email scope remains attached for apps that expect the standard 'email' claim.
+              ensure_client_scope "$INTERNAL_REALM" "$DROOLS_WORKBENCH_CLIENT_ID" "email"
+              ensure_client_scope "$INTERNAL_REALM" "$HASURA_CONSOLE_PROXY_CLIENT_ID" "email"
+              ensure_client_scope "$INTERNAL_REALM" "$OPENWEBUI_CLIENT_ID" "email"
+              ensure_client_scope "$EXTERNAL_REALM" "$OPENWEBUI_CLIENT_ID" "email"
+              ensure_client_scope "$EXTERNAL_REALM" "$GRAPHQL_API_CLIENT_ID" "email"
 
               ensure_admin_auth_for_service_account_roles() {
                 if login_with_admin; then
