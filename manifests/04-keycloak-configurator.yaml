@@ -968,6 +968,144 @@ spec:
               add_exec_alternative() {
                 add_exec_with_requirement "$1" "$2" "$3" "ALTERNATIVE"
               }
+
+              # Deny broker logins when the IdP provides an email verification flag and it's unverified.
+              #
+              # Policy:
+              # - If the IdP imports an `email_verified` attribute and it is "false", deny access.
+              # - If the attribute is missing (IdP doesn't provide verification), allow login (trust).
+              #
+              # This uses built-in conditional executions:
+              # - conditional-user-attribute: only runs subflow when attribute exists AND matches expected value
+              # - deny-access-authenticator: hard fail with configurable error message
+              ensure_deny_unverified_idp_email_flow() {
+                local realm="$1"
+                local parent_flow="$2"
+                local subflow="${parent_flow}-deny-unverified-idp-email"
+                local desc="Deny when IdP reports unverified email (email_verified=false)"
+                local exec_id=""
+                local COND_OBJ=""
+                local COND_ID=""
+                local COND_CFG_ID=""
+                local cond_cfg_alias=""
+                local DENY_OBJ=""
+                local DENY_ID=""
+                local DENY_CFG_ID=""
+                local deny_cfg_alias=""
+                local deny_msg=""
+
+                if [ -z "${realm:-}" ] || [ -z "${parent_flow:-}" ]; then
+                  return 0
+                fi
+
+                if ! provider_exists "conditional-user-attribute" || ! provider_exists "deny-access-authenticator"; then
+                  if [ "$PROVIDER_WARN" = "true" ]; then
+                    echo "⚠️  Missing built-in conditional providers; cannot enforce email_verified in ${realm}/${parent_flow}."
+                  fi
+                  return 0
+                fi
+
+                # Create a subflow bound to the parent flow (idempotent).
+                if ! flow_alias_exists "$realm" "$subflow"; then
+                  $KCADM create "authentication/flows/${parent_flow}/executions/flow" -r "$realm" \
+                    -s "alias=${subflow}" \
+                    -s "type=basic-flow" \
+                    -s "description=${desc}" >/dev/null 2>&1 || true
+                fi
+
+                # Mark the subflow execution as CONDITIONAL so it only runs when its conditions match.
+                exec_id="$(
+                  $KCADM get "authentication/flows/${parent_flow}/executions" -r "$realm" 2>/dev/null \
+                    | tr -d "\n" \
+                    | sed "s/},[[:space:]]*{/}\n{/g" \
+                    | grep -E "\"displayName\"[[:space:]]*:[[:space:]]*\"${subflow}\"" \
+                    | grep -E "\"authenticationFlow\"[[:space:]]*:[[:space:]]*true" \
+                    | sed -n "s/.*\"id\"[[:space:]]*:[[:space:]]*\"\\([^\"]\\+\\)\".*/\\1/p" \
+                    | head -n1 || true
+                )"
+                exec_id="$(clean_id "${exec_id:-}")"
+                if [ -n "${exec_id:-}" ]; then
+                  printf '{ "id":"%s", "requirement":"%s" }\n' "$exec_id" "CONDITIONAL" >/tmp/subflow_req.json
+                  $KCADM update "authentication/flows/${parent_flow}/executions" -r "$realm" -f /tmp/subflow_req.json >/dev/null 2>&1 || true
+                fi
+
+                # Condition: only execute when the imported `email_verified` attribute exists and matches false.
+                add_exec_required "$realm" "$subflow" "conditional-user-attribute"
+                COND_OBJ="$(
+                  $KCADM get "authentication/flows/${subflow}/executions" -r "$realm" 2>/dev/null \
+                    | tr -d "\n" \
+                    | sed "s/},[[:space:]]*{/}\n{/g" \
+                    | grep -E "\"providerId\"[[:space:]]*:[[:space:]]*\"conditional-user-attribute\"" \
+                    | head -n1 || true
+                )"
+                COND_ID="$(
+                  printf '%s' "$COND_OBJ" \
+                    | sed -n "s/.*\"id\"[[:space:]]*:[[:space:]]*\"\\([^\"]\\+\\)\".*/\\1/p" \
+                    | head -n1 || true
+                )"
+                COND_CFG_ID="$(
+                  printf '%s' "$COND_OBJ" \
+                    | sed -n "s/.*\"authenticationConfig\"[[:space:]]*:[[:space:]]*\"\\([^\"]\\+\\)\".*/\\1/p" \
+                    | head -n1 || true
+                )"
+                COND_ID="$(clean_id "${COND_ID:-}")"
+                COND_CFG_ID="$(clean_id "${COND_CFG_ID:-}")"
+                cond_cfg_alias="deny-unverified-email-condition-${subflow}"
+                if [ -n "${COND_ID:-}" ]; then
+                  if [ -n "${COND_CFG_ID:-}" ]; then
+                    $KCADM update "authentication/config/${COND_CFG_ID}" -r "$realm" \
+                      -s "alias=${cond_cfg_alias}" \
+                      -s "config.attribute_name=email_verified" \
+                      -s "config.attribute_expected_value=(?i:false)" \
+                      -s "config.include_group_attributes=false" \
+                      -s "config.not=false" \
+                      -s "config.regex=true" >/dev/null 2>&1 || true
+                  else
+                    $KCADM create "authentication/executions/${COND_ID}/config" -r "$realm" \
+                      -s "alias=${cond_cfg_alias}" \
+                      -s "config.attribute_name=email_verified" \
+                      -s "config.attribute_expected_value=(?i:false)" \
+                      -s "config.include_group_attributes=false" \
+                      -s "config.not=false" \
+                      -s "config.regex=true" >/dev/null 2>&1 || true
+                  fi
+                fi
+
+                # Deny access when condition matches.
+                add_exec_required "$realm" "$subflow" "deny-access-authenticator"
+                DENY_OBJ="$(
+                  $KCADM get "authentication/flows/${subflow}/executions" -r "$realm" 2>/dev/null \
+                    | tr -d "\n" \
+                    | sed "s/},[[:space:]]*{/}\n{/g" \
+                    | grep -E "\"providerId\"[[:space:]]*:[[:space:]]*\"deny-access-authenticator\"" \
+                    | head -n1 || true
+                )"
+                DENY_ID="$(
+                  printf '%s' "$DENY_OBJ" \
+                    | sed -n "s/.*\"id\"[[:space:]]*:[[:space:]]*\"\\([^\"]\\+\\)\".*/\\1/p" \
+                    | head -n1 || true
+                )"
+                DENY_CFG_ID="$(
+                  printf '%s' "$DENY_OBJ" \
+                    | sed -n "s/.*\"authenticationConfig\"[[:space:]]*:[[:space:]]*\"\\([^\"]\\+\\)\".*/\\1/p" \
+                    | head -n1 || true
+                )"
+                DENY_ID="$(clean_id "${DENY_ID:-}")"
+                DENY_CFG_ID="$(clean_id "${DENY_CFG_ID:-}")"
+                deny_cfg_alias="deny-unverified-email-${subflow}"
+                deny_msg="Email is not verified with the identity provider."
+                if [ -n "${DENY_ID:-}" ]; then
+                  if [ -n "${DENY_CFG_ID:-}" ]; then
+                    $KCADM update "authentication/config/${DENY_CFG_ID}" -r "$realm" \
+                      -s "alias=${deny_cfg_alias}" \
+                      -s "config.denyErrorMessage=${deny_msg}" >/dev/null 2>&1 || true
+                  else
+                    $KCADM create "authentication/executions/${DENY_ID}/config" -r "$realm" \
+                      -s "alias=${deny_cfg_alias}" \
+                      -s "config.denyErrorMessage=${deny_msg}" >/dev/null 2>&1 || true
+                  fi
+                fi
+              }
               
               ensure_redirect_flow() {
                 local realm="$1"
@@ -1125,21 +1263,23 @@ spec:
                 if $KCADM get identity-provider/instances/github -r "$realm" >/dev/null 2>&1; then
                   $KCADM update identity-provider/instances/github -r "$realm" \
                     -s enabled=true -s storeToken=true -s alias=github -s providerId=github \
+                    -s trustEmail=true \
+                    -s syncMode=FORCE \
                     -s "config.clientId=$CLIENT_ID" \
                     -s "config.clientSecret=$CLIENT_SECRET" \
                     -s 'config.defaultScope=read:user user:email read:org' \
-                    -s 'config.trustEmail=true' \
                     -s 'config.guiOrder=1' -s "config.hideOnLoginPage=${hide_on_login}" \
-                    -s 'config.syncMode=FORCE' || true
+                    || true
                 else
                   $KCADM create identity-provider/instances -r "$realm" \
                     -s enabled=true -s storeToken=true -s alias=github -s providerId=github \
+                    -s trustEmail=true \
+                    -s syncMode=FORCE \
                     -s "config.clientId=$CLIENT_ID" \
                     -s "config.clientSecret=$CLIENT_SECRET" \
                     -s 'config.defaultScope=read:user user:email read:org' \
-                    -s 'config.trustEmail=true' \
                     -s 'config.guiOrder=1' -s "config.hideOnLoginPage=${hide_on_login}" \
-                    -s 'config.syncMode=FORCE' || true
+                    || true
                 fi
               }
               
@@ -1152,21 +1292,23 @@ spec:
                 if $KCADM get identity-provider/instances/google -r "$realm" >/dev/null 2>&1; then
                   $KCADM update identity-provider/instances/google -r "$realm" \
                     -s enabled=true -s storeToken=false -s alias=google -s providerId=google \
+                    -s trustEmail=true \
+                    -s syncMode=FORCE \
                     -s "config.clientId=$GOOGLE_CLIENT_ID" \
                     -s "config.clientSecret=$GOOGLE_CLIENT_SECRET" \
                     -s 'config.defaultScope=openid email profile' \
-                    -s 'config.trustEmail=true' \
                     -s 'config.guiOrder=2' -s 'config.hideOnLoginPage=false' \
-                    -s 'config.syncMode=FORCE' || true
+                    || true
                 else
                   $KCADM create identity-provider/instances -r "$realm" \
                     -s enabled=true -s storeToken=false -s alias=google -s providerId=google \
+                    -s trustEmail=true \
+                    -s syncMode=FORCE \
                     -s "config.clientId=$GOOGLE_CLIENT_ID" \
                     -s "config.clientSecret=$GOOGLE_CLIENT_SECRET" \
                     -s 'config.defaultScope=openid email profile' \
-                    -s 'config.trustEmail=true' \
                     -s 'config.guiOrder=2' -s 'config.hideOnLoginPage=false' \
-                    -s 'config.syncMode=FORCE' || true
+                    || true
                 fi
               }
 
@@ -1312,6 +1454,7 @@ spec:
                   echo "⚠️  Missing provider in ${INTERNAL_REALM}: ${PROVIDER_GH} (skipping execution)"
                 fi
               fi
+              ensure_deny_unverified_idp_email_flow "$INTERNAL_REALM" "$FLOW_GH" || true
               if [ "$INTERNAL_GITHUB_ENABLED" = "true" ] && flow_has_execution "$INTERNAL_REALM" "$FLOW_GH"; then
               $KCADM update identity-provider/instances/github -r "$INTERNAL_REALM" \
                 -s "postBrokerLoginFlowAlias=$FLOW_GH" || true
@@ -1344,6 +1487,7 @@ spec:
                     echo "⚠️  Missing provider in ${EXTERNAL_REALM}: ${PROVIDER_GGL} (skipping execution)"
                   fi
                 fi
+                ensure_deny_unverified_idp_email_flow "$EXTERNAL_REALM" "$FLOW_GGL" || true
                 if flow_has_execution "$EXTERNAL_REALM" "$FLOW_GGL"; then
                   $KCADM update identity-provider/instances/google -r "$EXTERNAL_REALM" \
                     -s "postBrokerLoginFlowAlias=$FLOW_GGL" || true
