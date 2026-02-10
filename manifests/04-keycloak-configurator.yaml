@@ -1264,20 +1264,20 @@ spec:
                   $KCADM update identity-provider/instances/github -r "$realm" \
                     -s enabled=true -s storeToken=true -s alias=github -s providerId=github \
                     -s trustEmail=true \
-                    -s syncMode=FORCE \
                     -s "config.clientId=$CLIENT_ID" \
                     -s "config.clientSecret=$CLIENT_SECRET" \
                     -s 'config.defaultScope=read:user user:email read:org' \
+                    -s 'config.syncMode=FORCE' \
                     -s 'config.guiOrder=1' -s "config.hideOnLoginPage=${hide_on_login}" \
                     || true
                 else
                   $KCADM create identity-provider/instances -r "$realm" \
                     -s enabled=true -s storeToken=true -s alias=github -s providerId=github \
                     -s trustEmail=true \
-                    -s syncMode=FORCE \
                     -s "config.clientId=$CLIENT_ID" \
                     -s "config.clientSecret=$CLIENT_SECRET" \
                     -s 'config.defaultScope=read:user user:email read:org' \
+                    -s 'config.syncMode=FORCE' \
                     -s 'config.guiOrder=1' -s "config.hideOnLoginPage=${hide_on_login}" \
                     || true
                 fi
@@ -1293,20 +1293,20 @@ spec:
                   $KCADM update identity-provider/instances/google -r "$realm" \
                     -s enabled=true -s storeToken=false -s alias=google -s providerId=google \
                     -s trustEmail=true \
-                    -s syncMode=FORCE \
                     -s "config.clientId=$GOOGLE_CLIENT_ID" \
                     -s "config.clientSecret=$GOOGLE_CLIENT_SECRET" \
                     -s 'config.defaultScope=openid email profile' \
+                    -s 'config.syncMode=FORCE' \
                     -s 'config.guiOrder=2' -s 'config.hideOnLoginPage=false' \
                     || true
                 else
                   $KCADM create identity-provider/instances -r "$realm" \
                     -s enabled=true -s storeToken=false -s alias=google -s providerId=google \
                     -s trustEmail=true \
-                    -s syncMode=FORCE \
                     -s "config.clientId=$GOOGLE_CLIENT_ID" \
                     -s "config.clientSecret=$GOOGLE_CLIENT_SECRET" \
                     -s 'config.defaultScope=openid email profile' \
+                    -s 'config.syncMode=FORCE' \
                     -s 'config.guiOrder=2' -s 'config.hideOnLoginPage=false' \
                     || true
                 fi
