@@ -20,11 +20,12 @@ spec:
         - serviceName: keycloak
           servicePort: 8080
       plugins:
-        - name: redirect
+        - name: proxy-rewrite
           enable: true
           config:
-            uri: "/realms/external/account"
-            ret_code: 302
+            regex_uri:
+              - "^/$"
+              - "/realms/external/account"
     - name: keycloak-auth-external
       priority: 100
       match:
