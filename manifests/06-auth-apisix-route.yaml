@@ -9,13 +9,32 @@ metadata:
 spec:
   ingressClassName: apisix
   http:
+    - name: keycloak-auth-entry-redirect
+      priority: 200
+      match:
+        hosts:
+          - "auth.suncoast.systems"
+        paths:
+          - "/"
+      backends:
+        - serviceName: keycloak
+          servicePort: 8080
+      plugins:
+        - name: redirect
+          enable: true
+          config:
+            uri: "/realms/external/account"
+            ret_code: 302
     - name: keycloak-auth-external
+      priority: 100
       match:
         hosts:
           - "auth.suncoast.systems"
         paths:
           - "/realms/external"
           - "/realms/external/*"
+          - "/realms/master"
+          - "/realms/master/*"
           - "/resources"
           - "/resources/*"
       backends:
