@@ -71,6 +71,7 @@ spec:
         app: keycloak
       annotations:
         reloader.stakater.com/auto: "true"
+        linkerd.io/inject: "enabled"
         # Vault agent for secret files
         vault.hashicorp.com/agent-inject: "true"
         vault.hashicorp.com/role: "keycloak"

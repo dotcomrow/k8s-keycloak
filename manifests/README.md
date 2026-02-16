@@ -10,6 +10,7 @@ kubectl apply -f manifests/02-keycloak-configmaps.yaml
 kubectl apply -f manifests/03-vault-bootstrap-jobs.yaml
 kubectl apply -f manifests/04-keycloak-app.yaml
 kubectl apply -f manifests/05-admin-redirect.yaml
+kubectl apply -f manifests/06-auth-apisix-route.yaml
 
 Notes
 - The `vault` namespace (and Vault itself) must already exist before applying the vault bootstrap jobs.
@@ -21,3 +22,4 @@ What lives where
 - 03-vault-bootstrap-jobs.yaml: vault/Yugabyte bootstrap jobs for Keycloak.
 - 04-keycloak-app.yaml: keycloak services and deployment.
 - 05-admin-redirect.yaml: admin redirect config, services, and deployment.
+- 06-auth-apisix-route.yaml: APISIX route for external auth access to the `external` realm.

@@ -1,0 +1,100 @@
+apiVersion: apisix.apache.org/v2
+kind: ApisixRoute
+metadata:
+  name: keycloak-auth-external
+  namespace: keycloak
+  annotations:
+    argocd.argoproj.io/sync-wave: "6"
+    apisix.apache.org/timeout: "950"
+spec:
+  ingressClassName: apisix
+  http:
+    - name: keycloak-auth-external
+      match:
+        hosts:
+          - "auth.suncoast.systems"
+        paths:
+          - "/realms/external"
+          - "/realms/external/*"
+          - "/resources"
+          - "/resources/*"
+      backends:
+        - serviceName: keycloak
+          servicePort: 8080
+      plugins:
+        - name: serverless-pre-function
+          enable: true
+          config:
+            phase: rewrite
+            functions:
+              - |-
+                return function(conf, ctx)
+                  local headers = ngx.req.get_headers()
+                  local tp = headers["traceparent"] or headers["x-traceparent"] or headers["x-keycloak-traceparent"]
+                  if not tp or tp == "" then
+                    local rand = require("resty.random")
+                    local str = require("resty.string")
+                    local trace_id = str.to_hex(rand.bytes(16))
+                    local span_id = str.to_hex(rand.bytes(8))
+                    tp = "00-" .. trace_id .. "-" .. span_id .. "-01"
+                  end
+                  local trace_id = string.sub(tp or "", 4, 35)
+                  local span_id = string.sub(tp or "", 37, 52)
+                  local ts = headers["tracestate"] or headers["x-tracestate"]
+                  local bag = headers["baggage"] or headers["x-baggage"]
+
+                  ngx.req.set_header("traceparent", tp)
+                  ngx.req.set_header("x-traceparent", tp)
+                  ngx.req.set_header("x-keycloak-traceparent", tp)
+                  ngx.req.set_header("x-forwarded-traceparent", tp)
+                  ngx.req.set_header("x-request-id", tp)
+
+                  if trace_id and trace_id ~= "" then
+                    ngx.req.set_header("x-trace-id", trace_id)
+                  end
+                  if span_id and span_id ~= "" then
+                    ngx.req.set_header("x-span-id", span_id)
+                  end
+                  if ts and ts ~= "" then
+                    ngx.req.set_header("tracestate", ts)
+                    ngx.req.set_header("x-tracestate", ts)
+                    ngx.req.set_header("x-keycloak-tracestate", ts)
+                    ngx.req.set_header("x-forwarded-tracestate", ts)
+                  end
+                  if bag and bag ~= "" then
+                    ngx.req.set_header("baggage", bag)
+                    ngx.req.set_header("x-baggage", bag)
+                    ngx.req.set_header("x-keycloak-baggage", bag)
+                    ngx.req.set_header("x-forwarded-baggage", bag)
+                  end
+                end
+        - name: opentelemetry
+          enable: true
+          config:
+            collector:
+              address: otel-collector.observability.svc.cluster.local:4318
+            resource:
+              service.name: keycloak
+              service.namespace: keycloak
+            sampler:
+              name: always_on
+        - name: real-ip
+          enable: true
+          config:
+            source: X-Forwarded-For
+            recursive: true
+            trusted_addresses:
+              - 0.0.0.0/0
+              - "::/0"
+        - name: proxy-rewrite
+          enable: true
+          config:
+            headers:
+              X-Forwarded-For: "$proxy_add_x_forwarded_for"
+              X-Real-IP: "$remote_addr"
+              X-Client-IP: "$remote_addr"
+              X-Original-Forwarded-For: "$http_x_forwarded_for"
+              X-Forwarded-Proto: "$scheme"
+              X-Forwarded-Host: "$host"
+              X-Forwarded-Port: "$server_port"
+              X-Forwarded-Uri: "$request_uri"
