@@ -218,6 +218,20 @@ data:
             "access.token.claim": "true",
             "id.token.claim": "false"
           }
+        },
+        {
+          "name": "hasura-claims",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-hardcoded-claim-mapper",
+          "consentRequired": false,
+          "config": {
+            "claim.name": "https://hasura.io/jwt/claims",
+            "claim.value": "{\"x-hasura-default-role\":\"user\",\"x-hasura-allowed-roles\":[\"user\"],\"x-hasura-role\":\"user\"}",
+            "jsonType.label": "JSON",
+            "access.token.claim": "true",
+            "id.token.claim": "false",
+            "userinfo.token.claim": "false"
+          }
         }
       ]
     }
@@ -243,6 +257,20 @@ data:
             "included.client.audience": "<path:secret/data/keycloak-client-id-graphql-api#value>",
             "access.token.claim": "true",
             "id.token.claim": "false"
+          }
+        },
+        {
+          "name": "hasura-claims",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-hardcoded-claim-mapper",
+          "consentRequired": false,
+          "config": {
+            "claim.name": "https://hasura.io/jwt/claims",
+            "claim.value": "{\"x-hasura-default-role\":\"user\",\"x-hasura-allowed-roles\":[\"user\"],\"x-hasura-role\":\"user\"}",
+            "jsonType.label": "JSON",
+            "access.token.claim": "true",
+            "id.token.claim": "false",
+            "userinfo.token.claim": "false"
           }
         }
       ]
