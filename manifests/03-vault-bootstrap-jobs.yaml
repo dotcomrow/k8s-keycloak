@@ -264,6 +264,17 @@ spec:
                 policies="keycloak" \
                 ttl="48h"
 
+              vault policy write "externalsecrets-keycloak" - <<'EOF'
+              path "secret/data/keycloak-cloudflare-tunnel-token" { capabilities = ["read"] }
+              path "secret/metadata/keycloak-cloudflare-tunnel-token" { capabilities = ["read", "list"] }
+              EOF
+
+              vault write auth/kubernetes/role/externalsecrets-keycloak \
+                bound_service_account_names="cloudflare-tunnel-external-secrets" \
+                bound_service_account_namespaces="keycloak" \
+                policies="externalsecrets-keycloak" \
+                ttl="24h"
+
               CREDS_JSON=""
               for i in $(seq 1 "${MAX_CMD_RETRIES:-10}"); do
                 CREDS_JSON="$(vault read -format=json yugabyte-db/static-creds/keycloak-app 2>/dev/null || true)"
@@ -362,6 +373,17 @@ spec:
                 bound_service_account_namespaces="keycloak" \
                 policies="keycloak" \
                 ttl="48h"
+
+              vault policy write "externalsecrets-keycloak" - <<'EOF'
+              path "secret/data/keycloak-cloudflare-tunnel-token" { capabilities = ["read"] }
+              path "secret/metadata/keycloak-cloudflare-tunnel-token" { capabilities = ["read", "list"] }
+              EOF
+
+              vault write auth/kubernetes/role/externalsecrets-keycloak \
+                bound_service_account_names="cloudflare-tunnel-external-secrets" \
+                bound_service_account_namespaces="keycloak" \
+                policies="externalsecrets-keycloak" \
+                ttl="24h"
 
               vault read auth/kubernetes/role/keycloak >/dev/null
               echo "🎉 Vault Kubernetes role 'keycloak' ready."
