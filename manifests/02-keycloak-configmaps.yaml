@@ -34,7 +34,8 @@ data:
       "redirectUris": [
         "https://workbench-drools.teleport.app.suncoast.systems/*",
         "https://workbench-drools.teleport.app.suncoast.systems/oauth2/callback",
-        "https://workbench-drools.teleport.app.suncoast.systems/business-central/*"
+        "https://workbench-drools.teleport.app.suncoast.systems/business-central/*",
+        "http://localhost/*"
       ],
       "webOrigins": ["https://workbench-drools.teleport.app.suncoast.systems"]
     }
@@ -75,7 +76,8 @@ data:
       "directAccessGrantsEnabled": false,
       "serviceAccountsEnabled": false,
       "redirectUris": [
-        "https://workbench-drools.teleport.app.suncoast.systems/oauth2/callback"
+        "https://workbench-drools.teleport.app.suncoast.systems/oauth2/callback",
+        "http://localhost/*"
       ],
       "webOrigins": [
         "https://workbench-drools.teleport.app.suncoast.systems"
@@ -106,7 +108,8 @@ data:
       "directAccessGrantsEnabled": false,
       "serviceAccountsEnabled": false,
       "redirectUris": [
-        "https://graphql-gui.teleport.app.suncoast.systems/oauth2/callback"
+        "https://graphql-gui.teleport.app.suncoast.systems/oauth2/callback",
+        "http://localhost/*"
       ],
       "webOrigins": [
         "https://graphql-gui.teleport.app.suncoast.systems"
@@ -185,7 +188,8 @@ data:
       "serviceAccountsEnabled": true,
       "authorizationServicesEnabled": true,
       "redirectUris": [
-        "https://open-webui.teleport.app.suncoast.systems/*"
+        "https://open-webui.teleport.app.suncoast.systems/*",
+        "http://localhost/*"
       ],
       "webOrigins": [
         "https://open-webui.teleport.app.suncoast.systems"
@@ -290,7 +294,8 @@ data:
       "directAccessGrantsEnabled": false,
       "serviceAccountsEnabled": false,
       "redirectUris": [
-        "https://oauth.pstmn.io/v1/callback"
+        "https://oauth.pstmn.io/v1/callback",
+        "http://localhost/*"
       ],
       "webOrigins": [],
       "protocolMappers": [
