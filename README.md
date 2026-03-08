@@ -1,6 +1,22 @@
 # k8s-keycloak
 Suncoast Systems Keycloak Auth server
 
+## Public SPA Client (External Realm)
+
+`manifests/02-keycloak-configmaps.yaml` defines a shared public OIDC client for browser apps:
+
+- client id: `shell-spa-public`
+- realm: `external`
+- issuer URL: `https://auth.suncoast.systems/realms/external`
+- discovery URL: `https://auth.suncoast.systems/realms/external/.well-known/openid-configuration`
+
+This client is configured for Authorization Code + PKCE (`S256`) and includes redirect/web-origin patterns for:
+
+- `http://localhost/*`
+- `http://127.0.0.1/*`
+- `https://*.suncoast.systems/*`
+- `https://*.app.suncoast.systems/*`
+
 ## Profile Field Standard (IdP -> Keycloak -> Apps)
 
 `manifests/04-keycloak-configurator.yaml` configures IdPs and imports as much profile data as is available from
