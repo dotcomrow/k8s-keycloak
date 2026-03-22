@@ -199,6 +199,28 @@ data:
         "standard.token.exchange.enabled": "true"
       }
     }
+  auth-gateway-public.json: |
+    {
+      "clientId": "auth-gateway-public",
+      "name": "Auth Gateway Public Client",
+      "protocol": "openid-connect",
+      "publicClient": true,
+      "standardFlowEnabled": true,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": false,
+      "implicitFlowEnabled": false,
+      "redirectUris": [
+        "https://login.suncoast.systems/callback",
+        "http://localhost:8080/callback"
+      ],
+      "webOrigins": [
+        "https://login.suncoast.systems",
+        "http://localhost:8080"
+      ],
+      "attributes": {
+        "pkce.code.challenge.method": "S256"
+      }
+    }
   shell-spa-public.json: |
     {
       "clientId": "shell-spa-public",

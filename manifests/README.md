@@ -11,6 +11,7 @@ kubectl apply -f manifests/03-vault-bootstrap-jobs.yaml
 kubectl apply -f manifests/04-keycloak-app.yaml
 kubectl apply -f manifests/05-admin-redirect.yaml
 kubectl apply -f manifests/06-cloudflare-tunnel.yaml
+kubectl apply -f manifests/07-auth-gateway.yaml
 
 Notes
 - The `vault` namespace (and Vault itself) must already exist before applying the vault bootstrap jobs.
@@ -23,3 +24,5 @@ What lives where
 - 04-keycloak-app.yaml: keycloak services and deployment.
 - 05-admin-redirect.yaml: admin redirect config, services, and deployment.
 - 06-cloudflare-tunnel.yaml: Cloudflare Tunnel deployment and External Secrets wiring for Keycloak.
+- 07-auth-gateway.yaml: shared login callback/auth gateway service with DB-backed allowed app config APIs (image from GHCR `keycloak-auth-gateway` repo).
+- 08-auth-gateway-apisix-route.example.yaml: optional APISIX route example for exposing login.suncoast.systems externally.

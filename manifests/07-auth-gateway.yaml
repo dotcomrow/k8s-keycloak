@@ -1,0 +1,131 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: keycloak-auth-gateway-config
+  namespace: keycloak
+  annotations:
+    argocd.argoproj.io/sync-wave: "6"
+data:
+  LISTEN_ADDR: ":8080"
+  EXTERNAL_BASE_URL: "https://login.suncoast.systems"
+  CALLBACK_PATH: "/callback"
+  KEYCLOAK_ISSUER: "https://auth.suncoast.systems/realms/external"
+  OIDC_CLIENT_ID: "auth-gateway-public"
+  OIDC_SCOPE: "openid profile email"
+  STATE_TTL: "10m"
+  EXCHANGE_CODE_TTL: "2m"
+  APP_CODE_PARAM: "gateway_code"
+  CLEANUP_INTERVAL: "5m"
+  DB_HOST: "yb-tserver-service.yugabyte.svc.cluster.local"
+  DB_PORT: "5433"
+  DB_NAME: "keycloak"
+  DB_SEARCH_PATH: "keycloak"
+  DB_SSLMODE: "disable"
+  # Comma-separated list of allowed browser origins for API calls.
+  # Example: "https://admin.suncoast.systems,https://shell.suncoast.systems"
+  CORS_ALLOW_ORIGINS: ""
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: keycloak-auth-gateway
+  namespace: keycloak
+  annotations:
+    argocd.argoproj.io/sync-wave: "7"
+  labels:
+    app: keycloak-auth-gateway
+    app.kubernetes.io/name: keycloak-auth-gateway
+    app.kubernetes.io/component: authentication
+spec:
+  type: ClusterIP
+  selector:
+    app: keycloak-auth-gateway
+  ports:
+    - name: http
+      port: 8080
+      targetPort: 8080
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: keycloak-auth-gateway
+  namespace: keycloak
+  labels:
+    app: keycloak-auth-gateway
+    app.kubernetes.io/name: keycloak-auth-gateway
+    app.kubernetes.io/component: authentication
+  annotations:
+    reloader.stakater.com/auto: "true"
+    argocd.argoproj.io/sync-wave: "8"
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: keycloak-auth-gateway
+  template:
+    metadata:
+      labels:
+        app: keycloak-auth-gateway
+      annotations:
+        reloader.stakater.com/auto: "true"
+        linkerd.io/inject: "enabled"
+
+        vault.hashicorp.com/agent-inject: "true"
+        vault.hashicorp.com/role: "keycloak"
+        vault.hashicorp.com/agent-init-first: "true"
+        vault.hashicorp.com/agent-pre-populate: "true"
+
+        vault.hashicorp.com/agent-inject-secret-db-username: "yugabyte-db/static-creds/keycloak-app"
+        vault.hashicorp.com/agent-inject-template-db-username: |
+          {{- with secret "yugabyte-db/static-creds/keycloak-app" -}}{{ .Data.username }}{{- end -}}
+        vault.hashicorp.com/agent-inject-secret-db-password: "yugabyte-db/static-creds/keycloak-app"
+        vault.hashicorp.com/agent-inject-template-db-password: |
+          {{- with secret "yugabyte-db/static-creds/keycloak-app" -}}{{ .Data.password }}{{- end -}}
+    spec:
+      serviceAccountName: keycloak
+      containers:
+        - name: auth-gateway
+          image: ghcr.io/dotcomrow/keycloak-auth-gateway:latest
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 8080
+              name: http
+          envFrom:
+            - configMapRef:
+                name: keycloak-auth-gateway-config
+          env:
+            - name: DB_USER_FILE
+              value: /vault/secrets/db-username
+            - name: DB_PASSWORD_FILE
+              value: /vault/secrets/db-password
+            - name: ADMIN_API_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: auth-gateway-admin-api
+                  key: token
+                  optional: true
+            - name: OIDC_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: auth-gateway-oidc-client
+                  key: client-secret
+                  optional: true
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi

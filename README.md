@@ -17,6 +17,66 @@ This client is configured for Authorization Code + PKCE (`S256`) and includes re
 - `https://*.suncoast.systems/*`
 - `https://*.app.suncoast.systems/*`
 
+## Auth Gateway Service (Shared Callback + GUI APIs)
+
+The dedicated auth gateway source now lives in:
+`https://github.com/suncoast-systems/keycloak-auth-gateway`
+
+This repo keeps the deployment manifest at `manifests/07-auth-gateway.yaml`.
+The Keycloak external realm client `auth-gateway-public` is defined in `manifests/02-keycloak-configmaps.yaml`.
+
+Purpose:
+- Centralize Keycloak redirect handling to a single callback URL (for example `https://login.suncoast.systems/callback`).
+- Store allowed apps in a database so a GUI can manage them dynamically.
+- Expose APIs for CRUD management of allowed apps.
+
+Database tables created automatically at startup:
+- `auth_gateway_allowed_apps`
+- `auth_gateway_login_state`
+- `auth_gateway_exchange_codes`
+
+Runtime flow:
+1. App sends users to `GET /start?app=<slug>&return_to=<url-or-path>`.
+2. Gateway redirects to Keycloak and receives callback at `GET /callback`.
+3. Gateway redirects back to app with one-time `gateway_code` query param.
+4. App exchanges that code with `POST /v1/auth/exchange`.
+
+Management APIs (for GUI):
+- `GET /v1/apps`
+- `POST /v1/apps`
+- `GET /v1/apps/{slug}`
+- `PUT /v1/apps/{slug}`
+- `DELETE /v1/apps/{slug}`
+
+If `ADMIN_API_TOKEN` is set, management APIs require:
+- `Authorization: Bearer <ADMIN_API_TOKEN>`
+
+### Build and Publish Auth Gateway Image
+
+Build/publish is managed in the `keycloak-auth-gateway` repo via GitHub Actions.
+Deployment in this repo expects:
+
+- `ghcr.io/dotcomrow/keycloak-auth-gateway:latest`
+
+### Deploy Auth Gateway
+
+```sh
+kubectl apply -f manifests/07-auth-gateway.yaml
+```
+
+Optional secrets:
+
+```sh
+kubectl -n keycloak create secret generic auth-gateway-admin-api \
+  --from-literal=token='<strong-admin-token>'
+
+kubectl -n keycloak create secret generic auth-gateway-oidc-client \
+  --from-literal=client-secret='<client-secret-if-using-confidential-client>'
+```
+
+APISIX example route:
+- `manifests/08-auth-gateway-apisix-route.example.yaml`
+
 ## Profile Field Standard (IdP -> Keycloak -> Apps)
 
 `manifests/04-keycloak-configurator.yaml` configures IdPs and imports as much profile data as is available from

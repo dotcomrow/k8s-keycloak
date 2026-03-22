@@ -1,0 +1,18 @@
+# Example APISIX route for publishing the auth-gateway externally.
+# Apply this only if APISIX CRDs are installed in this cluster.
+apiVersion: apisix.apache.org/v2
+kind: ApisixRoute
+metadata:
+  name: keycloak-auth-gateway-external
+  namespace: keycloak
+spec:
+  http:
+    - name: keycloak-auth-gateway
+      match:
+        hosts:
+          - login.suncoast.systems
+        paths:
+          - /*
+      backends:
+        - serviceName: keycloak-auth-gateway
+          servicePort: 8080
