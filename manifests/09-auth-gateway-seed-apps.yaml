@@ -71,7 +71,7 @@ spec:
                   echo "auth gateway app seed completed"
                   exit 0
                 fi
-                echo "seed attempt ${attempt}/120 failed; retrying..."
+                echo "seed attempt ${attempt}/120 failed; retrying....."
                 sleep 5
               done
 
