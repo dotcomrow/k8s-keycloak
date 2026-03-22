@@ -17,6 +17,7 @@ spec:
         vault.hashicorp.com/role: "keycloak"
         vault.hashicorp.com/agent-init-first: "true"
         vault.hashicorp.com/agent-pre-populate: "true"
+        # Run Vault as init-only so the Job can complete without a long-running sidecar.
         vault.hashicorp.com/agent-pre-populate-only: "true"
         vault.hashicorp.com/agent-inject-secret-db-username: "yugabyte-db/static-creds/keycloak-app"
         vault.hashicorp.com/agent-inject-template-db-username: |
