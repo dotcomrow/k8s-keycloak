@@ -12,9 +12,7 @@ data:
   KEYCLOAK_ISSUER: "https://auth.suncoast.systems/realms/external"
   OIDC_CLIENT_ID: "auth-gateway-public"
   OIDC_SCOPE: "openid profile email"
-  VAULT_ADDR: "http://vault.vault.svc.cluster.local:8200"
-  HASURA_TOKEN_AUDIENCE_VAULT_PATH: "secret/data/keycloak-client-id-graphql-api"
-  HASURA_TOKEN_AUDIENCE_VAULT_KEY: "value"
+  HASURA_TOKEN_AUDIENCE_FILE: "/vault/secrets/client-id-graphql-api"
   STATE_TTL: "10m"
   EXCHANGE_CODE_TTL: "2m"
   APP_CODE_PARAM: "gateway_code"
@@ -77,8 +75,6 @@ spec:
         vault.hashicorp.com/role: "keycloak"
         vault.hashicorp.com/agent-init-first: "true"
         vault.hashicorp.com/agent-pre-populate: "true"
-        vault.hashicorp.com/agent-inject-token: "true"
-        vault.hashicorp.com/agent-inject-perms-token: "0644"
 
         vault.hashicorp.com/agent-inject-secret-db-username: "yugabyte-db/static-creds/keycloak-app"
         vault.hashicorp.com/agent-inject-template-db-username: |
@@ -86,6 +82,9 @@ spec:
         vault.hashicorp.com/agent-inject-secret-db-password: "yugabyte-db/static-creds/keycloak-app"
         vault.hashicorp.com/agent-inject-template-db-password: |
           {{- with secret "yugabyte-db/static-creds/keycloak-app" -}}{{ .Data.password }}{{- end -}}
+        vault.hashicorp.com/agent-inject-secret-client-id-graphql-api: "secret/data/keycloak-client-id-graphql-api"
+        vault.hashicorp.com/agent-inject-template-client-id-graphql-api: |
+          {{- with secret "secret/data/keycloak-client-id-graphql-api" -}}{{ .Data.data.value }}{{- end -}}
     spec:
       serviceAccountName: keycloak
       containers:
@@ -103,8 +102,6 @@ spec:
               value: /vault/secrets/db-username
             - name: DB_PASSWORD_FILE
               value: /vault/secrets/db-password
-            - name: VAULT_TOKEN_FILE
-              value: /vault/secrets/token
             - name: ADMIN_API_TOKEN
               valueFrom:
                 secretKeyRef:
