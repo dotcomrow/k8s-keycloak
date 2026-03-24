@@ -78,6 +78,7 @@ spec:
         vault.hashicorp.com/agent-init-first: "true"
         vault.hashicorp.com/agent-pre-populate: "true"
         vault.hashicorp.com/agent-inject-token: "true"
+        vault.hashicorp.com/agent-inject-perms-token: "0644"
 
         vault.hashicorp.com/agent-inject-secret-db-username: "yugabyte-db/static-creds/keycloak-app"
         vault.hashicorp.com/agent-inject-template-db-username: |
