@@ -294,9 +294,9 @@ spec:
               value: "keycloak_app"
             - name: PGADMIN_USER
               value: "vaultadmin"
-            # Safe automatic recovery: allow schema reset only when no realms exist.
+            # Default safe behavior: never auto-reset schema.
             - name: KC_RESET_SCHEMA_IF_NO_REALMS
-              value: "true"
+              value: "false"
             # Hard override: if set true, will drop schema even if realms exist (DANGEROUS).
             - name: KC_FORCE_DROP_SCHEMA
               value: "false"
@@ -537,9 +537,9 @@ spec:
               value: "1"
             - name: KC_DB_POOL_MIN_SIZE
               value: "1"
-            # Yugabyte is sensitive to concurrent DDL; serialize startup migrations to a single DB connection.
+            # Keep this small but >1 to avoid startup pool starvation.
             - name: KC_DB_POOL_MAX_SIZE
-              value: "1"
+              value: "2"
             # Recovery (DANGEROUS): reset the entire DB after a failed start to clear partial Liquibase state.
             # Options: never | once | always
             - name: KC_RESET_DB_ON_FAILURE_MODE
@@ -547,10 +547,10 @@ spec:
             # If Yugabyte returns catalog mismatch / serialization conflicts during migration,
             # restart from a clean schema immediately (only applies when realm_rows=0 guard allows reset).
             - name: KC_RESET_SCHEMA_ON_CATALOG_MISMATCH
-              value: "true"
+              value: "false"
             # Preferred recovery: on duplicate-object startup errors, reset schema only (not DB).
             - name: KC_RESET_SCHEMA_ON_DUPLICATE_ERRORS
-              value: "true"
+              value: "false"
             # Legacy fallback if an operator explicitly wants full DB reset on duplicate objects.
             - name: KC_RESET_DB_ON_DUPLICATE_ERRORS
               value: "false"
@@ -765,8 +765,8 @@ spec:
               base_backoff="${KC_STARTUP_BASE_BACKOFF_SECONDS:-5}"
               max_backoff="${KC_STARTUP_MAX_BACKOFF_SECONDS:-60}"
               reset_mode="${KC_RESET_DB_ON_FAILURE_MODE:-never}"
-              reset_schema_on_catalog_mismatch="${KC_RESET_SCHEMA_ON_CATALOG_MISMATCH:-true}"
-              reset_schema_on_dupe="${KC_RESET_SCHEMA_ON_DUPLICATE_ERRORS:-true}"
+              reset_schema_on_catalog_mismatch="${KC_RESET_SCHEMA_ON_CATALOG_MISMATCH:-false}"
+              reset_schema_on_dupe="${KC_RESET_SCHEMA_ON_DUPLICATE_ERRORS:-false}"
               reset_db_on_dupe="${KC_RESET_DB_ON_DUPLICATE_ERRORS:-false}"
               reset_marker_file="${sync_dir}/reset-db-performed"
               attempt=0
