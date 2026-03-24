@@ -373,15 +373,17 @@ spec:
                 if [ "$exists" != "1" ]; then
                   echo "creating database ${PGDATABASE} (owner=${PGSCHEMA_OWNER})..."
                   retry 10 psql_admin "$maint_db" -v ON_ERROR_STOP=1 -c "CREATE DATABASE \"${PGDATABASE}\" OWNER \"${PGSCHEMA_OWNER}\";" >/dev/null
-                else
-                  # Best-effort: align DB owner.
-                  psql_admin "$maint_db" -v ON_ERROR_STOP=1 -c "ALTER DATABASE \"${PGDATABASE}\" OWNER TO \"${PGSCHEMA_OWNER}\";" >/dev/null 2>&1 || true
                 fi
               }
 
               ensure_schema() {
                 ensure_database
-                retry 10 psql_admin "$PGDATABASE" -v ON_ERROR_STOP=1 -c "CREATE SCHEMA IF NOT EXISTS ${PGSCHEMA} AUTHORIZATION ${PGSCHEMA_OWNER}; ALTER SCHEMA ${PGSCHEMA} OWNER TO ${PGSCHEMA_OWNER}; ALTER ROLE ${PGSCHEMA_OWNER} SET search_path = ${PGSCHEMA}; GRANT USAGE, CREATE ON SCHEMA ${PGSCHEMA} TO ${PGSCHEMA_OWNER};" >/dev/null
+                local schema_exists=""
+                schema_exists="$(psql_admin "$PGDATABASE" -Atc "select 1 from pg_namespace where nspname='${PGSCHEMA}' limit 1;" 2>/dev/null || true)"
+                if [ "$schema_exists" != "1" ]; then
+                  echo "creating schema ${PGSCHEMA}..."
+                  retry 10 psql_admin "$PGDATABASE" -v ON_ERROR_STOP=1 -c "CREATE SCHEMA ${PGSCHEMA} AUTHORIZATION ${PGSCHEMA_OWNER}; ALTER ROLE ${PGSCHEMA_OWNER} SET search_path = ${PGSCHEMA}; GRANT USAGE, CREATE ON SCHEMA ${PGSCHEMA} TO ${PGSCHEMA_OWNER};" >/dev/null
+                fi
               }
 
               schema_realm_rows() {
@@ -533,13 +535,19 @@ spec:
               value: "currentSchema=keycloak&sslmode=disable"
             - name: KC_DB_POOL_INITIAL_SIZE
               value: "1"
-            # Keep a small pool but allow more than one checkout during startup/migration phases.
+            - name: KC_DB_POOL_MIN_SIZE
+              value: "1"
+            # Yugabyte is sensitive to concurrent DDL; serialize startup migrations to a single DB connection.
             - name: KC_DB_POOL_MAX_SIZE
-              value: "5"
+              value: "1"
             # Recovery (DANGEROUS): reset the entire DB after a failed start to clear partial Liquibase state.
             # Options: never | once | always
             - name: KC_RESET_DB_ON_FAILURE_MODE
               value: "never"
+            # If Yugabyte returns catalog mismatch / serialization conflicts during migration,
+            # restart from a clean schema immediately (only applies when realm_rows=0 guard allows reset).
+            - name: KC_RESET_SCHEMA_ON_CATALOG_MISMATCH
+              value: "true"
             # Preferred recovery: on duplicate-object startup errors, reset schema only (not DB).
             - name: KC_RESET_SCHEMA_ON_DUPLICATE_ERRORS
               value: "true"
@@ -757,6 +765,7 @@ spec:
               base_backoff="${KC_STARTUP_BASE_BACKOFF_SECONDS:-5}"
               max_backoff="${KC_STARTUP_MAX_BACKOFF_SECONDS:-60}"
               reset_mode="${KC_RESET_DB_ON_FAILURE_MODE:-never}"
+              reset_schema_on_catalog_mismatch="${KC_RESET_SCHEMA_ON_CATALOG_MISMATCH:-true}"
               reset_schema_on_dupe="${KC_RESET_SCHEMA_ON_DUPLICATE_ERRORS:-true}"
               reset_db_on_dupe="${KC_RESET_DB_ON_DUPLICATE_ERRORS:-false}"
               reset_marker_file="${sync_dir}/reset-db-performed"
@@ -771,6 +780,10 @@ spec:
 
               is_duplicate_object_failure() {
                 log_tail 2500 | grep -Eqi '(already exists|duplicate key value|duplicate object|relation[[:space:]].*already exists|constraint[[:space:]].*already exists|multiple primary keys)'
+              }
+
+              is_catalog_mismatch_failure() {
+                log_tail 2500 | grep -Eqi '(Catalog Version Mismatch|MISMATCHED_SCHEMA|could not serialize access due to concurrent update)'
               }
 
               while true; do
@@ -799,11 +812,18 @@ spec:
                 preflight_action="ensure"
                 preflight_reason="attempt=${attempt} rc=${rc}"
                 duplicate_failure="false"
+                catalog_mismatch_failure="false"
                 if is_duplicate_object_failure; then
                   duplicate_failure="true"
                 fi
+                if is_catalog_mismatch_failure; then
+                  catalog_mismatch_failure="true"
+                fi
 
-                if [ "${duplicate_failure}" = "true" ] && [ "${reset_schema_on_dupe}" = "true" ]; then
+                if [ "${catalog_mismatch_failure}" = "true" ] && [ "${reset_schema_on_catalog_mismatch}" = "true" ]; then
+                  preflight_action="reset-schema"
+                  preflight_reason="catalog mismatch during migration"
+                elif [ "${duplicate_failure}" = "true" ] && [ "${reset_schema_on_dupe}" = "true" ]; then
                   preflight_action="reset-schema"
                   preflight_reason="duplicate objects detected in logs"
                 elif [ "${duplicate_failure}" = "true" ] && [ "${reset_db_on_dupe}" = "true" ]; then
