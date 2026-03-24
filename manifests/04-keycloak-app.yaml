@@ -294,9 +294,9 @@ spec:
               value: "keycloak_app"
             - name: PGADMIN_USER
               value: "vaultadmin"
-            # Default safe behavior: do not reset automatically; the Keycloak wrapper requests actions explicitly.
+            # Safe automatic recovery: allow schema reset only when no realms exist.
             - name: KC_RESET_SCHEMA_IF_NO_REALMS
-              value: "false"
+              value: "true"
             # Hard override: if set true, will drop schema even if realms exist (DANGEROUS).
             - name: KC_FORCE_DROP_SCHEMA
               value: "false"
@@ -384,15 +384,39 @@ spec:
                 retry 10 psql_admin "$PGDATABASE" -v ON_ERROR_STOP=1 -c "CREATE SCHEMA IF NOT EXISTS ${PGSCHEMA} AUTHORIZATION ${PGSCHEMA_OWNER}; ALTER SCHEMA ${PGSCHEMA} OWNER TO ${PGSCHEMA_OWNER}; ALTER ROLE ${PGSCHEMA_OWNER} SET search_path = ${PGSCHEMA}; GRANT USAGE, CREATE ON SCHEMA ${PGSCHEMA} TO ${PGSCHEMA_OWNER};" >/dev/null
               }
 
+              schema_realm_rows() {
+                local realm_table=""
+                local realm_rows="0"
+                realm_table="$(psql_admin "$PGDATABASE" -Atc "select to_regclass('${PGSCHEMA}.realm');" 2>/dev/null || true)"
+                if [ -n "${realm_table:-}" ] && [ "${realm_table}" != "null" ]; then
+                  realm_rows="$(psql_admin "$PGDATABASE" -Atc "select count(*) from ${PGSCHEMA}.realm;" 2>/dev/null || echo 0)"
+                  realm_rows="${realm_rows:-0}"
+                fi
+                printf '%s' "${realm_rows}"
+              }
+
               reset_schema() {
                 ensure_database
+                local realm_rows="0"
+                realm_rows="$(schema_realm_rows)"
+                if [ "${KC_FORCE_DROP_SCHEMA:-false}" != "true" ]; then
+                  if [ "${KC_RESET_SCHEMA_IF_NO_REALMS:-false}" != "true" ]; then
+                    echo "KC_RESET_SCHEMA_IF_NO_REALMS is not true; refusing reset-schema"
+                    return 1
+                  fi
+                  if [ "${realm_rows}" != "0" ]; then
+                    echo "refusing reset-schema: realm_rows=${realm_rows} (set KC_FORCE_DROP_SCHEMA=true to override)"
+                    return 1
+                  fi
+                fi
+                echo "dropping and recreating schema ${PGSCHEMA} (realm_rows=${realm_rows})..."
                 retry 10 psql_admin "$PGDATABASE" -v ON_ERROR_STOP=1 -c "DROP SCHEMA IF EXISTS ${PGSCHEMA} CASCADE; CREATE SCHEMA ${PGSCHEMA} AUTHORIZATION ${PGSCHEMA_OWNER}; ALTER ROLE ${PGSCHEMA_OWNER} SET search_path = ${PGSCHEMA}; GRANT USAGE, CREATE ON SCHEMA ${PGSCHEMA} TO ${PGSCHEMA_OWNER};"
               }
 
               reset_database() {
                 if [ "${KC_ENABLE_RESET_DB:-false}" != "true" ]; then
                   echo "KC_ENABLE_RESET_DB is not true; refusing reset-db"
-                  return 0
+                  return 1
                 fi
 
                 echo "dropping and recreating database ${PGDATABASE}..."
@@ -431,12 +455,18 @@ spec:
                 did_reset="false"
                 case "$action" in
                   reset-db)
-                    reset_database
-                    did_reset="true"
+                    if reset_database; then
+                      did_reset="true"
+                    else
+                      echo "reset-db skipped/refused"
+                    fi
                     ;;
                   reset-schema)
-                    reset_schema
-                    did_reset="true"
+                    if reset_schema; then
+                      did_reset="true"
+                    else
+                      echo "reset-schema skipped/refused"
+                    fi
                     ;;
                   ensure|"")
                     ensure_schema
@@ -448,12 +478,7 @@ spec:
                 esac
 
                 # Realm row count is our safety valve: if master realm exists, don't do destructive actions implicitly.
-                realm_table="$(psql_admin "$PGDATABASE" -Atc "select to_regclass('${PGSCHEMA}.realm');" 2>/dev/null || true)"
-                realm_rows="0"
-                if [ -n "${realm_table:-}" ] && [ "${realm_table}" != "null" ]; then
-                  realm_rows="$(psql_admin "$PGDATABASE" -Atc "select count(*) from ${PGSCHEMA}.realm;" 2>/dev/null || echo 0)"
-                  realm_rows="${realm_rows:-0}"
-                fi
+                realm_rows="$(schema_realm_rows)"
 
                 # Best-effort: keep master direct-grant enabled for the configurator bootstrap.
                 if [ "${KC_BOOTSTRAP_MASTER_DIRECT_GRANT:-true}" = "true" ] && [ "${did_reset}" != "true" ] && [ "${realm_rows}" != "0" ]; then
@@ -515,6 +540,10 @@ spec:
             # Options: never | once | always
             - name: KC_RESET_DB_ON_FAILURE_MODE
               value: "never"
+            # Preferred recovery: on duplicate-object startup errors, reset schema only (not DB).
+            - name: KC_RESET_SCHEMA_ON_DUPLICATE_ERRORS
+              value: "true"
+            # Legacy fallback if an operator explicitly wants full DB reset on duplicate objects.
             - name: KC_RESET_DB_ON_DUPLICATE_ERRORS
               value: "false"
 
@@ -728,7 +757,8 @@ spec:
               base_backoff="${KC_STARTUP_BASE_BACKOFF_SECONDS:-5}"
               max_backoff="${KC_STARTUP_MAX_BACKOFF_SECONDS:-60}"
               reset_mode="${KC_RESET_DB_ON_FAILURE_MODE:-never}"
-              reset_on_dupe="${KC_RESET_DB_ON_DUPLICATE_ERRORS:-false}"
+              reset_schema_on_dupe="${KC_RESET_SCHEMA_ON_DUPLICATE_ERRORS:-true}"
+              reset_db_on_dupe="${KC_RESET_DB_ON_DUPLICATE_ERRORS:-false}"
               reset_marker_file="${sync_dir}/reset-db-performed"
               attempt=0
 
@@ -768,8 +798,15 @@ spec:
 
                 preflight_action="ensure"
                 preflight_reason="attempt=${attempt} rc=${rc}"
+                duplicate_failure="false"
+                if is_duplicate_object_failure; then
+                  duplicate_failure="true"
+                fi
 
-                if [ "${reset_on_dupe}" = "true" ] && is_duplicate_object_failure; then
+                if [ "${duplicate_failure}" = "true" ] && [ "${reset_schema_on_dupe}" = "true" ]; then
+                  preflight_action="reset-schema"
+                  preflight_reason="duplicate objects detected in logs"
+                elif [ "${duplicate_failure}" = "true" ] && [ "${reset_db_on_dupe}" = "true" ]; then
                   preflight_action="reset-db"
                   preflight_reason="duplicate objects detected in logs"
                 elif [ "${reset_mode}" = "always" ]; then
@@ -780,10 +817,12 @@ spec:
                   preflight_reason="KC_RESET_DB_ON_FAILURE_MODE=once (first failure)"
                 fi
 
-                if [ "${preflight_action}" = "reset-db" ]; then
-                  echo "🧨 Scheduling DB reset before next attempt (${preflight_reason})"
-                  request_preflight "reset-db" "${preflight_reason}"
-                  touch "${reset_marker_file}" || true
+                if [ "${preflight_action}" != "ensure" ]; then
+                  echo "🧨 Scheduling ${preflight_action} before next attempt (${preflight_reason})"
+                  request_preflight "${preflight_action}" "${preflight_reason}"
+                  if [ "${preflight_action}" = "reset-db" ]; then
+                    touch "${reset_marker_file}" || true
+                  fi
                 fi
 
                 backoff="$((base_backoff * attempt))"
