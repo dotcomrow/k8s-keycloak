@@ -518,8 +518,9 @@ spec:
               value: "true"
 
             # Feature flags
+            # Legacy token exchange permissions require FGAP v1 (FGAP v2 does not support token exchange permissions).
             - name: KC_FEATURES
-              value: "token-exchange,token-exchange-standard,token-exchange-external-internal"
+              value: "token-exchange,token-exchange-standard,token-exchange-external-internal,admin-fine-grained-authz:v1"
 
             # Logging
             - name: KC_LOG

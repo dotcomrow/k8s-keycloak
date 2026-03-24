@@ -165,6 +165,7 @@ data:
     # Format: <realm>:<allowed-client>=<target1>,<target2>
     # Client IDs can be overridden via /vault/secrets/client-id-<name> files.
     # Example: external:gravitee-introspection=openwebui,ollama
+    external:auth-gateway-public=graphql-api
     external:graphql-api=openwebui
 ---
 apiVersion: v1
@@ -218,7 +219,8 @@ data:
         "http://localhost:8080"
       ],
       "attributes": {
-        "pkce.code.challenge.method": "S256"
+        "pkce.code.challenge.method": "S256",
+        "standard.token.exchange.enabled": "true"
       }
     }
   shell-spa-public.json: |
@@ -416,6 +418,7 @@ data:
       "standardFlowEnabled": true,
       "directAccessGrantsEnabled": false,
       "serviceAccountsEnabled": false,
+      "authorizationServicesEnabled": true,
       "redirectUris": [
         "https://oauth.pstmn.io/v1/callback",
         "http://localhost/*"
