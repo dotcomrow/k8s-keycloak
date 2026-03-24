@@ -752,7 +752,8 @@ spec:
                 echo "▶️  Starting Keycloak (attempt ${attempt}/${max_attempts})..."
                 request_preflight "ensure" "attempt=${attempt}"
 
-                /opt/keycloak/bin/kc.sh start --optimized &
+                # Do not force optimized startup here: feature flags are build-time options and must be rebuilt when they change.
+                /opt/keycloak/bin/kc.sh start &
                 kc_pid="$!"
                 set +e
                 wait "$kc_pid"
