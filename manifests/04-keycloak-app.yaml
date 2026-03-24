@@ -505,12 +505,12 @@ spec:
             - name: KC_DB_SCHEMA
               value: "keycloak"
             - name: KC_DB_URL_PROPERTIES
-              value: "currentSchema=keycloak"
+              value: "currentSchema=keycloak&sslmode=disable"
             - name: KC_DB_POOL_INITIAL_SIZE
               value: "1"
-            # Yugabyte catalog version invalidation is sensitive to concurrent DDL; keep startup DDL single-connection.
+            # Keep a small pool but allow more than one checkout during startup/migration phases.
             - name: KC_DB_POOL_MAX_SIZE
-              value: "1"
+              value: "5"
             # Recovery (DANGEROUS): reset the entire DB after a failed start to clear partial Liquibase state.
             # Options: never | once | always
             - name: KC_RESET_DB_ON_FAILURE_MODE
