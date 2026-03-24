@@ -302,7 +302,7 @@ spec:
               value: "false"
             # Allow the preflight sidecar to DROP/CREATE the entire DB when requested (DANGEROUS).
             - name: KC_ENABLE_RESET_DB
-              value: "true"
+              value: "false"
             - name: KC_BOOTSTRAP_MASTER_DIRECT_GRANT
               value: "true"
           command: ["/bin/sh","-lc"]
@@ -508,14 +508,15 @@ spec:
               value: "currentSchema=keycloak"
             - name: KC_DB_POOL_INITIAL_SIZE
               value: "1"
+            # Yugabyte catalog version invalidation is sensitive to concurrent DDL; keep startup DDL single-connection.
             - name: KC_DB_POOL_MAX_SIZE
-              value: "5"
+              value: "1"
             # Recovery (DANGEROUS): reset the entire DB after a failed start to clear partial Liquibase state.
             # Options: never | once | always
             - name: KC_RESET_DB_ON_FAILURE_MODE
-              value: "once"
+              value: "never"
             - name: KC_RESET_DB_ON_DUPLICATE_ERRORS
-              value: "true"
+              value: "false"
 
             # Feature flags
             # Legacy token exchange permissions require FGAP v1 (FGAP v2 does not support token exchange permissions).
@@ -726,8 +727,8 @@ spec:
               max_attempts="${KC_STARTUP_MAX_ATTEMPTS:-30}"
               base_backoff="${KC_STARTUP_BASE_BACKOFF_SECONDS:-5}"
               max_backoff="${KC_STARTUP_MAX_BACKOFF_SECONDS:-60}"
-              reset_mode="${KC_RESET_DB_ON_FAILURE_MODE:-once}"
-              reset_on_dupe="${KC_RESET_DB_ON_DUPLICATE_ERRORS:-true}"
+              reset_mode="${KC_RESET_DB_ON_FAILURE_MODE:-never}"
+              reset_on_dupe="${KC_RESET_DB_ON_DUPLICATE_ERRORS:-false}"
               reset_marker_file="${sync_dir}/reset-db-performed"
               attempt=0
 
