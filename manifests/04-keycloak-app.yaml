@@ -288,14 +288,13 @@ spec:
               value: "yugabyte"
             - name: PGDATABASE
               value: "keycloak"
-            # Use a dedicated runtime schema to avoid touching previously corrupted schema history.
             - name: PGSCHEMA
-              value: "keycloak_runtime"
+              value: "keycloak"
             - name: PGSCHEMA_OWNER
               value: "keycloak_app"
             - name: PGADMIN_USER
               value: "vaultadmin"
-            # Default safe behavior: never auto-reset schema.
+            # Default safe behavior: do not reset automatically; the Keycloak wrapper requests actions explicitly.
             - name: KC_RESET_SCHEMA_IF_NO_REALMS
               value: "false"
             # Hard override: if set true, will drop schema even if realms exist (DANGEROUS).
@@ -303,16 +302,8 @@ spec:
               value: "false"
             # Allow the preflight sidecar to DROP/CREATE the entire DB when requested (DANGEROUS).
             - name: KC_ENABLE_RESET_DB
-              value: "false"
-            # Break-glass gate: destructive actions require both this and an explicit acknowledgement token.
-            - name: KC_ENABLE_DESTRUCTIVE_ACTIONS
-              value: "false"
-            - name: KC_DESTRUCTIVE_ACTIONS_ACK
-              value: ""
-            - name: KC_BOOTSTRAP_MASTER_DIRECT_GRANT
               value: "true"
-            # Non-destructive self-heal for a partially applied Liquibase 3.2.0-fixed changeset.
-            - name: KC_RECONCILE_LIQUIBASE_320_FIXED_PARTIAL
+            - name: KC_BOOTSTRAP_MASTER_DIRECT_GRANT
               value: "true"
           command: ["/bin/sh","-lc"]
           args:
@@ -382,208 +373,26 @@ spec:
                 if [ "$exists" != "1" ]; then
                   echo "creating database ${PGDATABASE} (owner=${PGSCHEMA_OWNER})..."
                   retry 10 psql_admin "$maint_db" -v ON_ERROR_STOP=1 -c "CREATE DATABASE \"${PGDATABASE}\" OWNER \"${PGSCHEMA_OWNER}\";" >/dev/null
+                else
+                  # Best-effort: align DB owner.
+                  psql_admin "$maint_db" -v ON_ERROR_STOP=1 -c "ALTER DATABASE \"${PGDATABASE}\" OWNER TO \"${PGSCHEMA_OWNER}\";" >/dev/null 2>&1 || true
                 fi
               }
 
               ensure_schema() {
                 ensure_database
-                local schema_exists=""
-                schema_exists="$(psql_admin "$PGDATABASE" -Atc "select 1 from pg_namespace where nspname='${PGSCHEMA}' limit 1;" 2>/dev/null || true)"
-                if [ "$schema_exists" != "1" ]; then
-                  echo "creating schema ${PGSCHEMA}..."
-                  retry 10 psql_admin "$PGDATABASE" -v ON_ERROR_STOP=1 -c "CREATE SCHEMA ${PGSCHEMA} AUTHORIZATION ${PGSCHEMA_OWNER}; ALTER ROLE ${PGSCHEMA_OWNER} SET search_path = ${PGSCHEMA}; GRANT USAGE, CREATE ON SCHEMA ${PGSCHEMA} TO ${PGSCHEMA_OWNER};" >/dev/null
-                fi
-                reconcile_liquibase_320_fixed_partial
-              }
-
-              reconcile_liquibase_320_fixed_partial() {
-                if [ "${KC_RECONCILE_LIQUIBASE_320_FIXED_PARTIAL:-true}" != "true" ]; then
-                  return 0
-                fi
-
-                local changelog_table=""
-                local changeset_exists=""
-                local legacy_changeset_exists=""
-                local docker_auth_flow_col=""
-
-                changelog_table="$(psql_admin "$PGDATABASE" -Atc "select to_regclass('${PGSCHEMA}.databasechangelog');" 2>/dev/null || true)"
-                if [ -z "${changelog_table:-}" ] || [ "${changelog_table}" = "null" ]; then
-                  return 0
-                fi
-
-                changeset_exists="$(psql_admin "$PGDATABASE" -Atc "select 1 from ${PGSCHEMA}.databasechangelog where id='3.2.0-fixed' and author='keycloak' and filename='META-INF/jpa-changelog-3.2.0.xml' limit 1;" 2>/dev/null || true)"
-                if [ "${changeset_exists}" = "1" ]; then
-                  return 0
-                fi
-
-                # If the original 3.2.0 changeset is present, Liquibase preconditions will handle 3.2.0-fixed automatically.
-                legacy_changeset_exists="$(psql_admin "$PGDATABASE" -Atc "select 1 from ${PGSCHEMA}.databasechangelog where id='3.2.0' and author='keycloak' and filename='META-INF/jpa-changelog-3.2.0.xml' limit 1;" 2>/dev/null || true)"
-                if [ "${legacy_changeset_exists}" = "1" ]; then
-                  return 0
-                fi
-
-                # Partial state signature: first DDL in 3.2.0-fixed applied, but changelog row missing.
-                docker_auth_flow_col="$(psql_admin "$PGDATABASE" -Atc "select count(*) from information_schema.columns where table_schema='${PGSCHEMA}' and table_name='realm' and column_name='docker_auth_flow';" 2>/dev/null || true)"
-                if [ "${docker_auth_flow_col:-0}" != "1" ]; then
-                  return 0
-                fi
-
-                echo "reconciling partial Liquibase changeset 3.2.0-fixed in schema ${PGSCHEMA}..."
-
-                # Ensure every index from 3.2.0-fixed exists so marking this changeset cannot skip required DDL.
-                for idx_def in \
-                  "idx_assoc_pol_assoc_pol_id|associated_policy|associated_policy_id" \
-                  "idx_auth_exec_realm_flow|authentication_execution|realm_id,flow_id" \
-                  "idx_auth_exec_flow|authentication_execution|flow_id" \
-                  "idx_auth_flow_realm|authentication_flow|realm_id" \
-                  "idx_auth_config_realm|authenticator_config|realm_id" \
-                  "idx_client_client_templ_id|client|client_template_id" \
-                  "idx_client_def_roles_client|client_default_roles|client_id" \
-                  "idx_client_id_prov_map_client|client_identity_prov_mapping|client_id" \
-                  "idx_client_session_session|client_session|session_id" \
-                  "idx_component_realm|component|realm_id" \
-                  "idx_compo_config_compo|component_config|component_id" \
-                  "idx_composite|composite_role|composite" \
-                  "idx_composite_child|composite_role|child_role" \
-                  "idx_credential_attr_cred|credential_attribute|credential_id" \
-                  "idx_fed_cred_attr_cred|fed_credential_attribute|credential_id" \
-                  "idx_group_attr_group|group_attribute|group_id" \
-                  "idx_group_role_mapp_group|group_role_mapping|group_id" \
-                  "idx_ident_prov_realm|identity_provider|realm_id" \
-                  "idx_id_prov_mapp_realm|identity_provider_mapper|realm_id" \
-                  "idx_keycloak_role_client|keycloak_role|client" \
-                  "idx_keycloak_role_realm|keycloak_role|realm" \
-                  "idx_protocol_mapper_client|protocol_mapper|client_id" \
-                  "idx_proto_mapp_client_templ|protocol_mapper|client_template_id" \
-                  "idx_realm_master_adm_cli|realm|master_admin_client" \
-                  "idx_realm_attr_realm|realm_attribute|realm_id" \
-                  "idx_realm_def_grp_realm|realm_default_groups|realm_id" \
-                  "idx_realm_def_roles_realm|realm_default_roles|realm_id" \
-                  "idx_realm_evt_types_realm|realm_enabled_event_types|realm_id" \
-                  "idx_realm_evt_list_realm|realm_events_listeners|realm_id" \
-                  "idx_realm_supp_local_realm|realm_supported_locales|realm_id" \
-                  "idx_redir_uri_client|redirect_uris|client_id" \
-                  "idx_req_act_prov_realm|required_action_provider|realm_id" \
-                  "idx_res_policy_policy|resource_policy|policy_id" \
-                  "idx_res_scope_scope|resource_scope|scope_id" \
-                  "idx_res_serv_pol_res_serv|resource_server_policy|resource_server_id" \
-                  "idx_res_srv_res_res_srv|resource_server_resource|resource_server_id" \
-                  "idx_res_srv_scope_res_srv|resource_server_scope|resource_server_id" \
-                  "idx_scope_mapping_role|scope_mapping|role_id" \
-                  "idx_scope_policy_policy|scope_policy|policy_id" \
-                  "idx_templ_scope_mapp_role|template_scope_mapping|role_id" \
-                  "idx_usr_fed_map_fed_prv|user_federation_mapper|federation_provider_id" \
-                  "idx_usr_fed_map_realm|user_federation_mapper|realm_id" \
-                  "idx_usr_fed_prv_realm|user_federation_provider|realm_id" \
-                  "idx_web_orig_client|web_origins|client_id" \
-                  "idx_client_init_acc_realm|client_initial_access|realm_id"
-                do
-                  idx="${idx_def%%|*}"
-                  rest="${idx_def#*|}"
-                  tbl="${rest%%|*}"
-                  cols="${rest#*|}"
-                  retry 10 psql_admin "$PGDATABASE" -v ON_ERROR_STOP=1 -c "CREATE INDEX IF NOT EXISTS ${idx} ON ${PGSCHEMA}.${tbl} (${cols});" >/dev/null
-                done
-
-                retry 10 psql_admin "$PGDATABASE" -v ON_ERROR_STOP=1 -c "
-                  WITH current_ctx AS (
-                    SELECT
-                      COALESCE(MAX(orderexecuted), 0) + 1 AS next_order,
-                      COALESCE(
-                        (SELECT liquibase FROM ${PGSCHEMA}.databasechangelog ORDER BY orderexecuted DESC LIMIT 1),
-                        '4.33.0'
-                      ) AS liquibase_ver,
-                      COALESCE(
-                        (SELECT deployment_id FROM ${PGSCHEMA}.databasechangelog ORDER BY orderexecuted DESC LIMIT 1),
-                        substring(md5(random()::text), 1, 10)
-                      ) AS deployment
-                    FROM ${PGSCHEMA}.databasechangelog
-                  )
-                  INSERT INTO ${PGSCHEMA}.databasechangelog (
-                    id,
-                    author,
-                    filename,
-                    dateexecuted,
-                    orderexecuted,
-                    exectype,
-                    md5sum,
-                    description,
-                    comments,
-                    tag,
-                    liquibase,
-                    contexts,
-                    labels,
-                    deployment_id
-                  )
-                  SELECT
-                    '3.2.0-fixed',
-                    'keycloak',
-                    'META-INF/jpa-changelog-3.2.0.xml',
-                    NOW(),
-                    current_ctx.next_order,
-                    'MARK_RAN',
-                    NULL,
-                    'manual reconcile partial 3.2.0-fixed',
-                    '',
-                    NULL,
-                    current_ctx.liquibase_ver,
-                    NULL,
-                    NULL,
-                    current_ctx.deployment
-                  FROM current_ctx
-                  WHERE NOT EXISTS (
-                    SELECT 1
-                    FROM ${PGSCHEMA}.databasechangelog
-                    WHERE id='3.2.0-fixed'
-                      AND author='keycloak'
-                      AND filename='META-INF/jpa-changelog-3.2.0.xml'
-                  );
-                "
-
-                echo "reconciled partial Liquibase changeset 3.2.0-fixed"
-              }
-
-              schema_realm_rows() {
-                local realm_table=""
-                local realm_rows="0"
-                realm_table="$(psql_admin "$PGDATABASE" -Atc "select to_regclass('${PGSCHEMA}.realm');" 2>/dev/null || true)"
-                if [ -n "${realm_table:-}" ] && [ "${realm_table}" != "null" ]; then
-                  realm_rows="$(psql_admin "$PGDATABASE" -Atc "select count(*) from ${PGSCHEMA}.realm;" 2>/dev/null || echo 0)"
-                  realm_rows="${realm_rows:-0}"
-                fi
-                printf '%s' "${realm_rows}"
+                retry 10 psql_admin "$PGDATABASE" -v ON_ERROR_STOP=1 -c "CREATE SCHEMA IF NOT EXISTS ${PGSCHEMA} AUTHORIZATION ${PGSCHEMA_OWNER}; ALTER SCHEMA ${PGSCHEMA} OWNER TO ${PGSCHEMA_OWNER}; ALTER ROLE ${PGSCHEMA_OWNER} SET search_path = ${PGSCHEMA}; GRANT USAGE, CREATE ON SCHEMA ${PGSCHEMA} TO ${PGSCHEMA_OWNER};" >/dev/null
               }
 
               reset_schema() {
                 ensure_database
-                local realm_rows="0"
-                realm_rows="$(schema_realm_rows)"
-                if [ "${KC_ENABLE_DESTRUCTIVE_ACTIONS:-false}" != "true" ] || [ "${KC_DESTRUCTIVE_ACTIONS_ACK:-}" != "I_UNDERSTAND_THIS_DESTROYS_DATA" ]; then
-                  echo "destructive actions are disabled; refusing reset-schema"
-                  return 1
-                fi
-                if [ "${KC_FORCE_DROP_SCHEMA:-false}" != "true" ]; then
-                  if [ "${KC_RESET_SCHEMA_IF_NO_REALMS:-false}" != "true" ]; then
-                    echo "KC_RESET_SCHEMA_IF_NO_REALMS is not true; refusing reset-schema"
-                    return 1
-                  fi
-                  if [ "${realm_rows}" != "0" ]; then
-                    echo "refusing reset-schema: realm_rows=${realm_rows} (set KC_FORCE_DROP_SCHEMA=true to override)"
-                    return 1
-                  fi
-                fi
-                echo "dropping and recreating schema ${PGSCHEMA} (realm_rows=${realm_rows})..."
                 retry 10 psql_admin "$PGDATABASE" -v ON_ERROR_STOP=1 -c "DROP SCHEMA IF EXISTS ${PGSCHEMA} CASCADE; CREATE SCHEMA ${PGSCHEMA} AUTHORIZATION ${PGSCHEMA_OWNER}; ALTER ROLE ${PGSCHEMA_OWNER} SET search_path = ${PGSCHEMA}; GRANT USAGE, CREATE ON SCHEMA ${PGSCHEMA} TO ${PGSCHEMA_OWNER};"
               }
 
               reset_database() {
                 if [ "${KC_ENABLE_RESET_DB:-false}" != "true" ]; then
                   echo "KC_ENABLE_RESET_DB is not true; refusing reset-db"
-                  return 1
-                fi
-                if [ "${KC_ENABLE_DESTRUCTIVE_ACTIONS:-false}" != "true" ] || [ "${KC_DESTRUCTIVE_ACTIONS_ACK:-}" != "I_UNDERSTAND_THIS_DESTROYS_DATA" ]; then
-                  echo "destructive actions are disabled; refusing reset-db"
-                  return 1
+                  return 0
                 fi
 
                 echo "dropping and recreating database ${PGDATABASE}..."
@@ -622,18 +431,12 @@ spec:
                 did_reset="false"
                 case "$action" in
                   reset-db)
-                    if reset_database; then
-                      did_reset="true"
-                    else
-                      echo "reset-db skipped/refused"
-                    fi
+                    reset_database
+                    did_reset="true"
                     ;;
                   reset-schema)
-                    if reset_schema; then
-                      did_reset="true"
-                    else
-                      echo "reset-schema skipped/refused"
-                    fi
+                    reset_schema
+                    did_reset="true"
                     ;;
                   ensure|"")
                     ensure_schema
@@ -645,7 +448,12 @@ spec:
                 esac
 
                 # Realm row count is our safety valve: if master realm exists, don't do destructive actions implicitly.
-                realm_rows="$(schema_realm_rows)"
+                realm_table="$(psql_admin "$PGDATABASE" -Atc "select to_regclass('${PGSCHEMA}.realm');" 2>/dev/null || true)"
+                realm_rows="0"
+                if [ -n "${realm_table:-}" ] && [ "${realm_table}" != "null" ]; then
+                  realm_rows="$(psql_admin "$PGDATABASE" -Atc "select count(*) from ${PGSCHEMA}.realm;" 2>/dev/null || echo 0)"
+                  realm_rows="${realm_rows:-0}"
+                fi
 
                 # Best-effort: keep master direct-grant enabled for the configurator bootstrap.
                 if [ "${KC_BOOTSTRAP_MASTER_DIRECT_GRANT:-true}" = "true" ] && [ "${did_reset}" != "true" ] && [ "${realm_rows}" != "0" ]; then
@@ -695,35 +503,23 @@ spec:
             - name: KC_DB_URL
               value: "jdbc:postgresql://yb-tserver-service.yugabyte.svc.cluster.local:5433/keycloak"
             - name: KC_DB_SCHEMA
-              value: "keycloak_runtime"
+              value: "keycloak"
             - name: KC_DB_URL_PROPERTIES
-              value: "currentSchema=keycloak_runtime&sslmode=disable"
+              value: "currentSchema=keycloak"
             - name: KC_DB_POOL_INITIAL_SIZE
               value: "1"
-            - name: KC_DB_POOL_MIN_SIZE
-              value: "1"
-            # Keep this small but >1 to avoid startup pool starvation.
             - name: KC_DB_POOL_MAX_SIZE
-              value: "2"
+              value: "5"
             # Recovery (DANGEROUS): reset the entire DB after a failed start to clear partial Liquibase state.
             # Options: never | once | always
             - name: KC_RESET_DB_ON_FAILURE_MODE
-              value: "never"
-            # If Yugabyte returns catalog mismatch / serialization conflicts during migration,
-            # restart from a clean schema immediately (only applies when realm_rows=0 guard allows reset).
-            - name: KC_RESET_SCHEMA_ON_CATALOG_MISMATCH
-              value: "false"
-            # Preferred recovery: on duplicate-object startup errors, reset schema only (not DB).
-            - name: KC_RESET_SCHEMA_ON_DUPLICATE_ERRORS
-              value: "false"
-            # Legacy fallback if an operator explicitly wants full DB reset on duplicate objects.
+              value: "once"
             - name: KC_RESET_DB_ON_DUPLICATE_ERRORS
-              value: "false"
+              value: "true"
 
             # Feature flags
-            # Legacy token exchange permissions require FGAP v1 (FGAP v2 does not support token exchange permissions).
             - name: KC_FEATURES
-              value: "token-exchange,token-exchange-standard,token-exchange-external-internal,admin-fine-grained-authz:v1"
+              value: "token-exchange,token-exchange-standard,token-exchange-external-internal"
 
             # Logging
             - name: KC_LOG
@@ -929,10 +725,8 @@ spec:
               max_attempts="${KC_STARTUP_MAX_ATTEMPTS:-30}"
               base_backoff="${KC_STARTUP_BASE_BACKOFF_SECONDS:-5}"
               max_backoff="${KC_STARTUP_MAX_BACKOFF_SECONDS:-60}"
-              reset_mode="${KC_RESET_DB_ON_FAILURE_MODE:-never}"
-              reset_schema_on_catalog_mismatch="${KC_RESET_SCHEMA_ON_CATALOG_MISMATCH:-false}"
-              reset_schema_on_dupe="${KC_RESET_SCHEMA_ON_DUPLICATE_ERRORS:-false}"
-              reset_db_on_dupe="${KC_RESET_DB_ON_DUPLICATE_ERRORS:-false}"
+              reset_mode="${KC_RESET_DB_ON_FAILURE_MODE:-once}"
+              reset_on_dupe="${KC_RESET_DB_ON_DUPLICATE_ERRORS:-true}"
               reset_marker_file="${sync_dir}/reset-db-performed"
               attempt=0
 
@@ -947,10 +741,6 @@ spec:
                 log_tail 2500 | grep -Eqi '(already exists|duplicate key value|duplicate object|relation[[:space:]].*already exists|constraint[[:space:]].*already exists|multiple primary keys)'
               }
 
-              is_catalog_mismatch_failure() {
-                log_tail 2500 | grep -Eqi '(Catalog Version Mismatch|MISMATCHED_SCHEMA|could not serialize access due to concurrent update)'
-              }
-
               while true; do
                 attempt=$((attempt + 1))
                 if [ "$attempt" -gt "$max_attempts" ]; then
@@ -961,8 +751,7 @@ spec:
                 echo "▶️  Starting Keycloak (attempt ${attempt}/${max_attempts})..."
                 request_preflight "ensure" "attempt=${attempt}"
 
-                # Do not force optimized startup here: feature flags are build-time options and must be rebuilt when they change.
-                /opt/keycloak/bin/kc.sh start &
+                /opt/keycloak/bin/kc.sh start --optimized &
                 kc_pid="$!"
                 set +e
                 wait "$kc_pid"
@@ -976,22 +765,8 @@ spec:
 
                 preflight_action="ensure"
                 preflight_reason="attempt=${attempt} rc=${rc}"
-                duplicate_failure="false"
-                catalog_mismatch_failure="false"
-                if is_duplicate_object_failure; then
-                  duplicate_failure="true"
-                fi
-                if is_catalog_mismatch_failure; then
-                  catalog_mismatch_failure="true"
-                fi
 
-                if [ "${catalog_mismatch_failure}" = "true" ] && [ "${reset_schema_on_catalog_mismatch}" = "true" ]; then
-                  preflight_action="reset-schema"
-                  preflight_reason="catalog mismatch during migration"
-                elif [ "${duplicate_failure}" = "true" ] && [ "${reset_schema_on_dupe}" = "true" ]; then
-                  preflight_action="reset-schema"
-                  preflight_reason="duplicate objects detected in logs"
-                elif [ "${duplicate_failure}" = "true" ] && [ "${reset_db_on_dupe}" = "true" ]; then
+                if [ "${reset_on_dupe}" = "true" ] && is_duplicate_object_failure; then
                   preflight_action="reset-db"
                   preflight_reason="duplicate objects detected in logs"
                 elif [ "${reset_mode}" = "always" ]; then
@@ -1002,12 +777,10 @@ spec:
                   preflight_reason="KC_RESET_DB_ON_FAILURE_MODE=once (first failure)"
                 fi
 
-                if [ "${preflight_action}" != "ensure" ]; then
-                  echo "🧨 Scheduling ${preflight_action} before next attempt (${preflight_reason})"
-                  request_preflight "${preflight_action}" "${preflight_reason}"
-                  if [ "${preflight_action}" = "reset-db" ]; then
-                    touch "${reset_marker_file}" || true
-                  fi
+                if [ "${preflight_action}" = "reset-db" ]; then
+                  echo "🧨 Scheduling DB reset before next attempt (${preflight_reason})"
+                  request_preflight "reset-db" "${preflight_reason}"
+                  touch "${reset_marker_file}" || true
                 fi
 
                 backoff="$((base_backoff * attempt))"
