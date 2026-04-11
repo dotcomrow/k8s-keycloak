@@ -300,9 +300,9 @@ spec:
             # Hard override: if set true, will drop schema even if realms exist (DANGEROUS).
             - name: KC_FORCE_DROP_SCHEMA
               value: "false"
-            # Allow the preflight sidecar to DROP/CREATE the entire DB when requested (DANGEROUS).
+            # Default-safe: disable reset-db unless explicitly overridden by operators.
             - name: KC_ENABLE_RESET_DB
-              value: "true"
+              value: "false"
             - name: KC_BOOTSTRAP_MASTER_DIRECT_GRANT
               value: "true"
           command: ["/bin/sh","-lc"]
@@ -404,6 +404,47 @@ spec:
                 reset_schema
               }
 
+              reconcile_liquibase_compat() {
+                # Keycloak Liquibase may try to drop legacy constraint UK_RU8... during
+                # 2.5.0-unicode-other-dbs even when it does not exist in partially-migrated DBs.
+                # Add a no-op placeholder constraint only when needed so the migration can proceed.
+                local legacy_constraint="uk_ru8tt6t700s9v50bu18ws5ha6"
+                local changeset_id="2.5.0-unicode-other-dbs"
+                local changeset_author="hmlnarik@redhat.com"
+
+                psql_admin "$PGDATABASE" -v ON_ERROR_STOP=1 <<SQL
+                DO \$\$
+                BEGIN
+                  IF to_regclass('${PGSCHEMA}.user_entity') IS NULL THEN
+                    RETURN;
+                  END IF;
+
+                  IF to_regclass('${PGSCHEMA}.databasechangelog') IS NOT NULL
+                     AND EXISTS (
+                       SELECT 1
+                       FROM ${PGSCHEMA}.databasechangelog
+                       WHERE id = '${changeset_id}'
+                         AND author = '${changeset_author}'
+                     ) THEN
+                    RETURN;
+                  END IF;
+
+                  IF NOT EXISTS (
+                    SELECT 1
+                    FROM pg_constraint c
+                    JOIN pg_class t ON t.oid = c.conrelid
+                    JOIN pg_namespace n ON n.oid = t.relnamespace
+                    WHERE n.nspname = '${PGSCHEMA}'
+                      AND t.relname = 'user_entity'
+                      AND lower(c.conname) = lower('${legacy_constraint}')
+                  ) THEN
+                    EXECUTE 'ALTER TABLE ${PGSCHEMA}.user_entity ADD CONSTRAINT ${legacy_constraint} CHECK (1=1)';
+                  END IF;
+                END
+                \$\$;
+              SQL
+              }
+
               mkdir -p "$sync_dir"
               echo "ok" > "${sync_dir}/sidecar-ready"
 
@@ -446,6 +487,8 @@ spec:
                     ensure_schema
                     ;;
                 esac
+
+                reconcile_liquibase_compat
 
                 # Realm row count is our safety valve: if master realm exists, don't do destructive actions implicitly.
                 realm_table="$(psql_admin "$PGDATABASE" -Atc "select to_regclass('${PGSCHEMA}.realm');" 2>/dev/null || true)"
@@ -510,12 +553,12 @@ spec:
               value: "1"
             - name: KC_DB_POOL_MAX_SIZE
               value: "5"
-            # Recovery (DANGEROUS): reset the entire DB after a failed start to clear partial Liquibase state.
-            # Options: never | once | always
+            # Recovery reset defaults are non-destructive.
+            # Options (if explicitly overridden): never | once | always
             - name: KC_RESET_DB_ON_FAILURE_MODE
-              value: "once"
+              value: "never"
             - name: KC_RESET_DB_ON_DUPLICATE_ERRORS
-              value: "true"
+              value: "false"
 
             # Feature flags
             - name: KC_FEATURES
@@ -725,8 +768,8 @@ spec:
               max_attempts="${KC_STARTUP_MAX_ATTEMPTS:-30}"
               base_backoff="${KC_STARTUP_BASE_BACKOFF_SECONDS:-5}"
               max_backoff="${KC_STARTUP_MAX_BACKOFF_SECONDS:-60}"
-              reset_mode="${KC_RESET_DB_ON_FAILURE_MODE:-once}"
-              reset_on_dupe="${KC_RESET_DB_ON_DUPLICATE_ERRORS:-true}"
+              reset_mode="${KC_RESET_DB_ON_FAILURE_MODE:-never}"
+              reset_on_dupe="${KC_RESET_DB_ON_DUPLICATE_ERRORS:-false}"
               reset_marker_file="${sync_dir}/reset-db-performed"
               attempt=0
 
