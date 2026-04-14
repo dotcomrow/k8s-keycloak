@@ -302,7 +302,7 @@ spec:
               value: "false"
             # Default-safe: disable reset-db unless explicitly overridden by operators.
             - name: KC_ENABLE_RESET_DB
-              value: "false"
+              value: "true"
             - name: KC_BOOTSTRAP_MASTER_DIRECT_GRANT
               value: "true"
           command: ["/bin/sh","-lc"]
@@ -558,7 +558,7 @@ spec:
             - name: KC_RESET_DB_ON_FAILURE_MODE
               value: "never"
             - name: KC_RESET_DB_ON_DUPLICATE_ERRORS
-              value: "false"
+              value: "true"
 
             # Feature flags
             - name: KC_FEATURES
@@ -794,7 +794,8 @@ spec:
                 echo "▶️  Starting Keycloak (attempt ${attempt}/${max_attempts})..."
                 request_preflight "ensure" "attempt=${attempt}"
 
-                /opt/keycloak/bin/kc.sh start --optimized &
+                /opt/keycloak/bin/kc.sh start --optimized \
+                  --spi-connections-liquibase--quarkus--index-creation-threshold=0 &
                 kc_pid="$!"
                 set +e
                 wait "$kc_pid"
