@@ -50,7 +50,7 @@ Management APIs (for GUI):
 
 GitOps seed job for baseline app registrations:
 - `manifests/09-auth-gateway-seed-apps.yaml`
-- Upserts `shell` and `example-mfe-preview` on each Argo sync so they survive rebuilds.
+- Upserts `shell`, `shell-prod`, and `example-mfe-preview` on each Argo sync so they survive rebuilds.
 
 If `ADMIN_API_TOKEN` is set, management APIs require:
 - `Authorization: Bearer <ADMIN_API_TOKEN>`
