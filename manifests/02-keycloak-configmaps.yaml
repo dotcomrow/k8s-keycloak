@@ -215,6 +215,9 @@ data:
         "http://localhost:8080/callback"
       ],
       "webOrigins": [
+        "https://cloudflare-shell-template-app-preview.suncoast.systems",
+        "https://cloudflare-shell-template-app.suncoast.systems",
+        "http://localhost:4173",
         "https://login.suncoast.systems",
         "http://localhost:8080"
       ],
@@ -417,7 +420,7 @@ data:
       },
       "standardFlowEnabled": true,
       "directAccessGrantsEnabled": false,
-      "serviceAccountsEnabled": false,
+      "serviceAccountsEnabled": true,
       "authorizationServicesEnabled": true,
       "redirectUris": [
         "https://oauth.pstmn.io/v1/callback",
