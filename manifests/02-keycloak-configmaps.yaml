@@ -240,7 +240,20 @@ data:
       "attributes": {
         "pkce.code.challenge.method": "S256",
         "standard.token.exchange.enabled": "true"
-      }
+      },
+      "protocolMappers": [
+        {
+          "name": "audience-auth-gateway-exchange",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "consentRequired": false,
+          "config": {
+            "included.client.audience": "auth-gateway-exchange",
+            "access.token.claim": "true",
+            "id.token.claim": "false"
+          }
+        }
+      ]
     }
   shell-spa-public.json: |
     {
@@ -276,6 +289,17 @@ data:
         "standard.token.exchange.enabled": "true"
       },
       "protocolMappers": [
+        {
+          "name": "audience-auth-gateway-exchange",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "consentRequired": false,
+          "config": {
+            "included.client.audience": "auth-gateway-exchange",
+            "access.token.claim": "true",
+            "id.token.claim": "false"
+          }
+        },
         {
           "name": "audience-graphql-api",
           "protocol": "openid-connect",
@@ -357,6 +381,17 @@ data:
       "authorizationServicesEnabled": false,
       "protocolMappers": [
         {
+          "name": "audience-auth-gateway-exchange",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "consentRequired": false,
+          "config": {
+            "included.client.audience": "auth-gateway-exchange",
+            "access.token.claim": "true",
+            "id.token.claim": "false"
+          }
+        },
+        {
           "name": "audience-graphql-api",
           "protocol": "openid-connect",
           "protocolMapper": "oidc-audience-mapper",
@@ -396,6 +431,17 @@ data:
       "serviceAccountsEnabled": true,
       "authorizationServicesEnabled": false,
       "protocolMappers": [
+        {
+          "name": "audience-auth-gateway-exchange",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "consentRequired": false,
+          "config": {
+            "included.client.audience": "auth-gateway-exchange",
+            "access.token.claim": "true",
+            "id.token.claim": "false"
+          }
+        },
         {
           "name": "audience-graphql-api",
           "protocol": "openid-connect",
