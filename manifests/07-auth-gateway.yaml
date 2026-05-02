@@ -12,7 +12,7 @@ data:
   KEYCLOAK_ISSUER: "https://auth.suncoast.systems/realms/external"
   OIDC_CLIENT_ID: "auth-gateway-public"
   OIDC_EXCHANGE_CLIENT_ID: "auth-gateway-exchange"
-  OIDC_EXCHANGE_CLIENT_SECRET: "xV8qR9nL2sT4yK7mP3dH6fJ1wB5cE0uA"
+  OIDC_EXCHANGE_CLIENT_SECRET_FILE: "/vault/secrets/oidc-exchange-client-secret"
   OIDC_SCOPE: "openid profile email"
   HASURA_TOKEN_AUDIENCE_FILE: "/vault/secrets/client-id-graphql-api"
   STATE_TTL: "10m"
@@ -87,6 +87,9 @@ spec:
         vault.hashicorp.com/agent-inject-secret-client-id-graphql-api: "secret/data/keycloak-client-id-graphql-api"
         vault.hashicorp.com/agent-inject-template-client-id-graphql-api: |
           {{- with secret "secret/data/keycloak-client-id-graphql-api" -}}{{ .Data.data.value }}{{- end -}}
+        vault.hashicorp.com/agent-inject-secret-oidc-exchange-client-secret: "secret/data/k8s-keycloak-oidc-exchange-client-secret"
+        vault.hashicorp.com/agent-inject-template-oidc-exchange-client-secret: |
+          {{- with secret "secret/data/k8s-keycloak-oidc-exchange-client-secret" -}}{{ .Data.data.value }}{{- end -}}
     spec:
       serviceAccountName: keycloak
       containers:

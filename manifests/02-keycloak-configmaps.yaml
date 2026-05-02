@@ -207,7 +207,7 @@ data:
       "protocol": "openid-connect",
       "publicClient": false,
       "clientAuthenticatorType": "client-secret",
-      "secret": "xV8qR9nL2sT4yK7mP3dH6fJ1wB5cE0uA",
+      "secret": "<path:secret/data/k8s-keycloak-oidc-exchange-client-secret#value>",
       "standardFlowEnabled": false,
       "directAccessGrantsEnabled": false,
       "serviceAccountsEnabled": true,
