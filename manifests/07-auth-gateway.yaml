@@ -89,7 +89,7 @@ spec:
       serviceAccountName: keycloak
       containers:
         - name: auth-gateway
-          image: ghcr.io/dotcomrow/keycloak-auth-gateway:sha-d419dcf
+          image: ghcr.io/dotcomrow/keycloak-auth-gateway:sha-56c2245
           imagePullPolicy: Always
           ports:
             - containerPort: 8080
