@@ -87,9 +87,9 @@ spec:
         vault.hashicorp.com/agent-inject-secret-client-id-graphql-api: "secret/data/keycloak-client-id-graphql-api"
         vault.hashicorp.com/agent-inject-template-client-id-graphql-api: |
           {{- with secret "secret/data/keycloak-client-id-graphql-api" -}}{{ .Data.data.value }}{{- end -}}
-        vault.hashicorp.com/agent-inject-secret-oidc-exchange-client-secret: "secret/data/k8s-keycloak-oidc-exchange-client-secret"
+        vault.hashicorp.com/agent-inject-secret-oidc-exchange-client-secret: "secret/data/keycloak-client-secret-auth-gateway-exchange"
         vault.hashicorp.com/agent-inject-template-oidc-exchange-client-secret: |
-          {{- with secret "secret/data/k8s-keycloak-oidc-exchange-client-secret" -}}{{ .Data.data.value }}{{- end -}}
+          {{- with secret "secret/data/keycloak-client-secret-auth-gateway-exchange" -}}{{ .Data.data.value }}{{- end -}}
     spec:
       serviceAccountName: keycloak
       containers:

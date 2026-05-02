@@ -69,6 +69,12 @@ kubectl apply -f manifests/07-auth-gateway.yaml
 kubectl apply -f manifests/09-auth-gateway-seed-apps.yaml
 ```
 
+Required Vault secret (KVv2 path `secret/data/keycloak-client-secret-auth-gateway-exchange`):
+
+```sh
+vault kv put secret/keycloak-client-secret-auth-gateway-exchange value='<strong-client-secret>'
+```
+
 Optional secrets:
 
 ```sh
