@@ -165,7 +165,7 @@ data:
     # Format: <realm>:<allowed-client>=<target1>,<target2>
     # Client IDs can be overridden via /vault/secrets/client-id-<name> files.
     # Example: external:gravitee-introspection=openwebui,ollama
-    external:auth-gateway-public=graphql-api
+    external:auth-gateway-exchange=graphql-api
     external:graphql-api=openwebui
 ---
 apiVersion: v1
@@ -197,6 +197,22 @@ data:
       ],
       "attributes": {
         "pkce.code.challenge.method": "S256",
+        "standard.token.exchange.enabled": "true"
+      }
+    }
+  auth-gateway-exchange.json: |
+    {
+      "clientId": "auth-gateway-exchange",
+      "name": "Auth Gateway Exchange Client",
+      "protocol": "openid-connect",
+      "publicClient": false,
+      "clientAuthenticatorType": "client-secret",
+      "secret": "xV8qR9nL2sT4yK7mP3dH6fJ1wB5cE0uA",
+      "standardFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": true,
+      "authorizationServicesEnabled": false,
+      "attributes": {
         "standard.token.exchange.enabled": "true"
       }
     }

@@ -11,6 +11,8 @@ data:
   CALLBACK_PATH: "/callback"
   KEYCLOAK_ISSUER: "https://auth.suncoast.systems/realms/external"
   OIDC_CLIENT_ID: "auth-gateway-public"
+  OIDC_EXCHANGE_CLIENT_ID: "auth-gateway-exchange"
+  OIDC_EXCHANGE_CLIENT_SECRET: "xV8qR9nL2sT4yK7mP3dH6fJ1wB5cE0uA"
   OIDC_SCOPE: "openid profile email"
   HASURA_TOKEN_AUDIENCE_FILE: "/vault/secrets/client-id-graphql-api"
   STATE_TTL: "10m"
