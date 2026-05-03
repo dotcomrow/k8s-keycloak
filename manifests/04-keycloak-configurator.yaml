@@ -2022,9 +2022,59 @@ spec:
                   esac
                 done <<<"$specs"
               }
+
+              ensure_google_group_role_composites_from_map() {
+                local realm="$1"
+                local json="$2"
+                if [ -z "${json:-}" ]; then
+                  return 0
+                fi
+                local entries
+                entries="$(printf '%s' "$json" | tr -d '\n' | grep -o '"[^"]*"[[:space:]]*:[[:space:]]*\[[^]]*\]' || true)"
+                if [ -z "${entries:-}" ]; then
+                  return 0
+                fi
+                while IFS= read -r entry; do
+                  [ -z "${entry:-}" ] && continue
+                  local group_key=""
+                  local group_slug=""
+                  local group_role=""
+                  local specs=""
+                  group_key="$(printf '%s' "$entry" | sed -n 's/^"\([^"]*\)".*/\1/p')"
+                  [ -z "${group_key:-}" ] && continue
+                  group_slug="$(printf '%s' "$group_key" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9]/-/g; s/-\{2,\}/-/g; s/^-//; s/-$//')"
+                  [ -z "${group_slug:-}" ] && continue
+                  group_role="ggl:${group_slug}"
+                  if ! $KCADM get "roles/$group_role" -r "$realm" >/dev/null 2>&1; then
+                    continue
+                  fi
+                  specs="$(printf '%s' "$entry" | grep -o '"\\(realm\\|client\\):[^"]*"' | tr -d '"' || true)"
+                  [ -z "${specs:-}" ] && continue
+                  while read -r spec; do
+                    [ -z "${spec:-}" ] && continue
+                    case "$spec" in
+                      realm:*)
+                        role="${spec#realm:}"
+                        [ -z "${role:-}" ] && continue
+                        $KCADM add-roles -r "$realm" --rname "$group_role" --rolename "$role" >/dev/null 2>&1 || true
+                        ;;
+                      client:*)
+                        rest="${spec#client:}"
+                        cid="${rest%%:*}"
+                        role="${rest#*:}"
+                        if [ -z "${cid:-}" ] || [ -z "${role:-}" ] || [ "$cid" = "$role" ]; then
+                          continue
+                        fi
+                        $KCADM add-roles -r "$realm" --rname "$group_role" --cclientid "$cid" --rolename "$role" >/dev/null 2>&1 || true
+                        ;;
+                    esac
+                  done <<<"$specs"
+                done <<<"$entries"
+              }
               
               ensure_roles_from_map "$INTERNAL_REALM" "$GITHUB_ROLE_MAP_JSON"
               ensure_roles_from_map "$EXTERNAL_REALM" "$GOOGLE_GROUP_ROLE_MAP_JSON"
+              ensure_google_group_role_composites_from_map "$EXTERNAL_REALM" "$GOOGLE_GROUP_ROLE_MAP_JSON"
 
               ensure_client_roles() {
                 local realm="$1"
