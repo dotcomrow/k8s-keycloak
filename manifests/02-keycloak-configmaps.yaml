@@ -273,7 +273,9 @@ data:
       "implicitFlowEnabled": false,
       "redirectUris": [
         "https://login.suncoast.systems/callback",
-        "http://localhost:8080/callback"
+        "http://localhost:8080/callback",
+        "https://cloudflare-shell-template-app-preview.suncoast.systems/*",
+        "https://cloudflare-shell-template-app.suncoast.systems/*"
       ],
       "webOrigins": [
         "https://cloudflare-shell-template-app-preview.suncoast.systems",
@@ -284,7 +286,8 @@ data:
       ],
       "attributes": {
         "pkce.code.challenge.method": "S256",
-        "standard.token.exchange.enabled": "true"
+        "standard.token.exchange.enabled": "true",
+        "post.logout.redirect.uris": "+"
       },
       "protocolMappers": [
         {
