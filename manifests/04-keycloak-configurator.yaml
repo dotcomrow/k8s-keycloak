@@ -2011,6 +2011,7 @@ spec:
                         continue
                       fi
                       CLIENT_UUID=$($KCADM get clients -r "$realm" -q "clientId=$cid" --fields id --format csv 2>/dev/null | tail -n1 || true)
+                      CLIENT_UUID="$(clean_id "$CLIENT_UUID")"
                       if [ -n "${CLIENT_UUID:-}" ]; then
                         $KCADM get "clients/$CLIENT_UUID/roles/$role" -r "$realm" >/dev/null 2>&1 || \
                           $KCADM create "clients/$CLIENT_UUID/roles" -r "$realm" -s "name=$role" || true
