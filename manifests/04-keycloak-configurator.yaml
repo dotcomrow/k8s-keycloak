@@ -1537,6 +1537,10 @@ spec:
               $KCADM update "realms/$EXTERNAL_REALM" \
                 -s sslRequired=EXTERNAL -s loginWithEmailAllowed=true -s registrationAllowed=false \
                 -s rememberMe=false -s resetPasswordAllowed=false -s bruteForceProtected=true -s permanentLockout=false || true
+              # External app access tokens are kept short (15 minutes) and refreshed by shell runtime.
+              $KCADM update "realms/$EXTERNAL_REALM" \
+                -s accessTokenLifespan=900 \
+                -s accessTokenLifespanForImplicitFlow=900 || true
               
               # 1) Disable Direct Access Grants (password grant)
               DG="disabled-direct-grant"
