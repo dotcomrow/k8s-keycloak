@@ -530,7 +530,7 @@ spec:
 
         # --- Keycloak runtime ---
         - name: keycloak
-          image: ghcr.io/dotcomrow/keycloak-image:sha-6b71290
+          image: ghcr.io/dotcomrow/keycloak-image:sha-a9789d9
           imagePullPolicy: Always
           ports:
             - containerPort: 8080
