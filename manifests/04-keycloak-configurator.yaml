@@ -13,7 +13,8 @@ metadata:
     argocd.argoproj.io/sync-wave: "5"
     argocd.argoproj.io/sync-options: Replace=true
 spec:
-  backoffLimit: 2
+  # Never give up quickly: keep retrying until configuration succeeds.
+  backoffLimit: 1000000
   template:
     metadata:
       labels:
@@ -188,7 +189,8 @@ spec:
         runAsGroup: 1000
         fsGroup: 1000
         fsGroupChangePolicy: "OnRootMismatch"
-      restartPolicy: Never
+      # Retry container execution in the same Pod until it succeeds.
+      restartPolicy: OnFailure
 
       containers:
         # --- One-time configuration sidecar (IdPs + flows + attach providers) ---
@@ -2134,10 +2136,20 @@ spec:
                 local json_type="${6:-String}"
                 local mapper_line=""
                 local mapper_id=""
+                local mapper_json=""
+                local mapper_name_re=""
+                local user_attribute_re=""
+                local claim_name_re=""
+                local json_type_re=""
 
                 if [ -z "${realm:-}" ] || [ -z "${scope_uuid:-}" ] || [ -z "${mapper_name:-}" ] || [ -z "${user_attribute:-}" ] || [ -z "${claim_name:-}" ]; then
                   return 0
                 fi
+
+                mapper_name_re="$(printf '%s' "$mapper_name" | sed 's/[][(){}.^$*+?|\\]/\\&/g')"
+                user_attribute_re="$(printf '%s' "$user_attribute" | sed 's/[][(){}.^$*+?|\\]/\\&/g')"
+                claim_name_re="$(printf '%s' "$claim_name" | sed 's/[][(){}.^$*+?|\\]/\\&/g')"
+                json_type_re="$(printf '%s' "$json_type" | sed 's/[][(){}.^$*+?|\\]/\\&/g')"
 
                 mapper_line=$($KCADM get "client-scopes/$scope_uuid/protocol-mappers/models" -r "$realm" \
                   --fields id,name --format csv 2>/dev/null | grep -m1 "\"${mapper_name}\"" || true)
@@ -2147,10 +2159,35 @@ spec:
                     -s "name=${mapper_name}" \
                     -s "protocol=openid-connect" \
                     -s "protocolMapper=oidc-usermodel-attribute-mapper" \
+                    -s "config.\"user.attribute\"=${user_attribute}" \
+                    -s "config.\"claim.name\"=${claim_name}" \
+                    -s "config.\"jsonType.label\"=${json_type}" \
+                    -s "config.\"access.token.claim\"=true" \
+                    -s "config.\"id.token.claim\"=true" \
+                    -s "config.\"userinfo.token.claim\"=true" \
                     -i 2>/dev/null || true)
                   mapper_id="$(clean_id "$mapper_id")"
+                  [ -n "${mapper_id:-}" ] && return 0
+                  mapper_line=$($KCADM get "client-scopes/$scope_uuid/protocol-mappers/models" -r "$realm" \
+                    --fields id,name --format csv 2>/dev/null | grep -m1 "\"${mapper_name}\"" || true)
+                  mapper_id="$(printf '%s' "$mapper_line" | cut -d',' -f1 | tr -d '\"' | tr -d '[:space:]')"
                 fi
                 [ -z "${mapper_id:-}" ] && return 0
+
+                # Avoid expensive mapper updates when configuration is already correct.
+                mapper_json="$($KCADM get "client-scopes/$scope_uuid/protocol-mappers/models/$mapper_id" -r "$realm" 2>/dev/null || true)"
+                if [ -n "${mapper_json:-}" ] \
+                  && printf '%s' "$mapper_json" | grep -Eq "\"name\"[[:space:]]*:[[:space:]]*\"${mapper_name_re}\"" \
+                  && printf '%s' "$mapper_json" | grep -Eq "\"protocolMapper\"[[:space:]]*:[[:space:]]*\"oidc-usermodel-attribute-mapper\"" \
+                  && printf '%s' "$mapper_json" | grep -Eq "\"user\\.attribute\"[[:space:]]*:[[:space:]]*\"${user_attribute_re}\"" \
+                  && printf '%s' "$mapper_json" | grep -Eq "\"claim\\.name\"[[:space:]]*:[[:space:]]*\"${claim_name_re}\"" \
+                  && printf '%s' "$mapper_json" | grep -Eq "\"jsonType\\.label\"[[:space:]]*:[[:space:]]*\"${json_type_re}\"" \
+                  && printf '%s' "$mapper_json" | grep -Eq "\"access\\.token\\.claim\"[[:space:]]*:[[:space:]]*\"true\"" \
+                  && printf '%s' "$mapper_json" | grep -Eq "\"id\\.token\\.claim\"[[:space:]]*:[[:space:]]*\"true\"" \
+                  && printf '%s' "$mapper_json" | grep -Eq "\"userinfo\\.token\\.claim\"[[:space:]]*:[[:space:]]*\"true\""; then
+                  return 0
+                fi
+
                 $KCADM update "client-scopes/$scope_uuid/protocol-mappers/models/$mapper_id" -r "$realm" \
                   -s "name=${mapper_name}" \
                   -s "protocol=openid-connect" \
