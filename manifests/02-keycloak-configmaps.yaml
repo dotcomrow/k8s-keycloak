@@ -334,12 +334,16 @@ data:
       "directAccessGrantsEnabled": false,
       "serviceAccountsEnabled": false,
       "redirectUris": [
+        "https://nifi-gui.teleport.app.suncoast.systems/nifi-api/access/oidc/callback",
         "https://nifi-gui.teleport.app.suncoast.systems/nifi-api/access/oidc/callback/consumer",
+        "https://nifi-gui.teleport.app.suncoast.systems:443/nifi-api/access/oidc/callback",
+        "https://nifi-gui.teleport.app.suncoast.systems:443/*",
         "https://nifi-gui.teleport.app.suncoast.systems/*",
         "http://localhost/*"
       ],
       "webOrigins": [
-        "https://nifi-gui.teleport.app.suncoast.systems"
+        "https://nifi-gui.teleport.app.suncoast.systems",
+        "https://nifi-gui.teleport.app.suncoast.systems:443"
       ]
     }
   shell-spa-public.json: |
