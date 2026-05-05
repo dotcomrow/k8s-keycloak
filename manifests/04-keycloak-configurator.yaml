@@ -381,6 +381,10 @@ spec:
               declare -A CLIENT_SCOPE_UUID_CACHE=()
               declare -A CLIENT_DEFAULT_SCOPES_CACHE=()
               declare -A SCOPE_MAPPER_CSV_CACHE=()
+              declare -A CLIENT_MAPPER_CSV_CACHE=()
+              declare -A SA_ID_CACHE=()
+              declare -A SA_REALM_ROLES_CACHE=()
+              declare -A SA_CLIENT_ROLES_CACHE=()
 
               client_uuid() {
                 local realm="$1"
@@ -433,6 +437,31 @@ spec:
                 if [ -z "${csv:-}" ]; then
                   refresh_scope_mapper_cache "$realm" "$scope_uuid"
                   csv="${SCOPE_MAPPER_CSV_CACHE[$key]-}"
+                fi
+                line="$(printf '%s\n' "$csv" | grep -m1 "\"${mapper_name}\"" || true)"
+                printf '%s' "$line" | cut -d',' -f1 | tr -d '"' | tr -d '[:space:]'
+              }
+
+              refresh_client_mapper_cache() {
+                local realm="$1"
+                local client_uuid="$2"
+                local key="${realm}|${client_uuid}"
+                local csv=""
+                csv="$($KCADM get "clients/$client_uuid/protocol-mappers/models" -r "$realm" --fields id,name --format csv 2>/dev/null || true)"
+                CLIENT_MAPPER_CSV_CACHE[$key]="$csv"
+              }
+
+              client_mapper_id() {
+                local realm="$1"
+                local client_uuid="$2"
+                local mapper_name="$3"
+                local key="${realm}|${client_uuid}"
+                local csv=""
+                local line=""
+                csv="${CLIENT_MAPPER_CSV_CACHE[$key]-}"
+                if [ -z "${csv:-}" ]; then
+                  refresh_client_mapper_cache "$realm" "$client_uuid"
+                  csv="${CLIENT_MAPPER_CSV_CACHE[$key]-}"
                 fi
                 line="$(printf '%s\n' "$csv" | grep -m1 "\"${mapper_name}\"" || true)"
                 printf '%s' "$line" | cut -d',' -f1 | tr -d '"' | tr -d '[:space:]'
@@ -1673,19 +1702,20 @@ spec:
                     json_file="$(mktemp)"
                     sed "s|\"clientId\"[[:space:]]*:[[:space:]]*\"[^\"]*\"|\"clientId\":\"$esc_id\"|" "$f" > "$json_file"
                   fi
-                  CID=$($KCADM get clients -r "$realm" -q "clientId=$effective_id" --fields id --format csv 2>/dev/null | tail -n1 || true)
-                  CID="$(clean_id "$CID")"
+                  CID="$(client_uuid "$realm" "$effective_id")"
                   if [ -n "${CID:-}" ]; then
                     $KCADM update "clients/$CID" -r "$realm" -f "$json_file" || true
                   else
                     $KCADM create clients -r "$realm" -f "$json_file" || true
-                    CID=$($KCADM get clients -r "$realm" -q "clientId=$effective_id" --fields id --format csv 2>/dev/null | tail -n1 || true)
-                    CID="$(clean_id "$CID")"
+                    CLIENT_UUID_CACHE["${realm}|${effective_id}"]=""
+                    CID="$(client_uuid "$realm" "$effective_id")"
                   fi
                   if [ -z "${CID:-}" ]; then
                     echo "⚠️  client not found after apply: ${effective_id} in realm ${realm}"
                   fi
                   if [ -n "${CID:-}" ]; then
+                    CLIENT_UUID_CACHE["${realm}|${effective_id}"]="$CID"
+                    CLIENT_UUID_CACHE["${realm}|${client_id}"]="$CID"
                     secret=""
                     # Prefer explicit secret from client JSON; fall back to secret files.
                     secret_from_json="$(sed -n "s/.*\"secret\"[[:space:]]*:[[:space:]]*\"\\([^\"]*\\)\".*/\\1/p" "$json_file" | head -n1 || true)"
@@ -1788,10 +1818,11 @@ spec:
                 local realm="$1"
                 local clientId="$2"
                 local mapper_name="realm-roles-as-scope"
+                local mapper_id=""
                 CID="$(client_uuid "$realm" "$clientId")"
                 [ -z "${CID:-}" ] && return 0
-                if $KCADM get "clients/$CID/protocol-mappers/models" -r "$realm" 2>/dev/null \
-                  | grep -q "\"name\"[[:space:]]*:[[:space:]]*\"${mapper_name}\""; then
+                mapper_id="$(client_mapper_id "$realm" "$CID" "$mapper_name")"
+                if [ -n "${mapper_id:-}" ]; then
                   return 0
                 fi
                 $KCADM create "clients/$CID/protocol-mappers/models" -r "$realm" \
@@ -1804,6 +1835,7 @@ spec:
                   -s "config.\"id.token.claim\"=false" \
                   -s "config.\"userinfo.token.claim\"=false" \
                   -s "config.\"multivalued\"=true" || true
+                refresh_client_mapper_cache "$realm" "$CID"
               }
 
               # Open WebUI reads roles from the OIDC userinfo response (not the access token),
@@ -1816,22 +1848,7 @@ spec:
                 [ -z "${CID:-}" ] && return 0
 
                 local mapper_id=""
-                while IFS= read -r line; do
-                  line=${line%$'\r'}
-                  if [ -z "$line" ] || [ "$line" = "id,name" ] || [ "$line" = "\"id\",\"name\"" ]; then
-                    continue
-                  fi
-                  IFS=, read -r id name <<< "$line"
-                  id=${id#\"}
-                  id=${id%\"}
-                  name=${name#\"}
-                  name=${name%\"}
-                  if [ "$name" = "$mapper_name" ]; then
-                    mapper_id="$id"
-                    break
-                  fi
-                done < <($KCADM get "clients/$CID/protocol-mappers/models" -r "$realm" \
-                  --fields id,name --format csv 2>/dev/null || true)
+                mapper_id="$(client_mapper_id "$realm" "$CID" "$mapper_name")"
 
                 if [ -n "${mapper_id:-}" ]; then
                   $KCADM update "clients/$CID/protocol-mappers/models/$mapper_id" -r "$realm" \
@@ -1845,6 +1862,7 @@ spec:
                     -s "config.\"userinfo.token.claim\"=true" \
                     -s "config.\"introspection.token.claim\"=true" \
                     -s "config.\"multivalued\"=true" || true
+                  refresh_client_mapper_cache "$realm" "$CID"
                   return 0
                 fi
 
@@ -1859,6 +1877,7 @@ spec:
                   -s "config.\"userinfo.token.claim\"=true" \
                   -s "config.\"introspection.token.claim\"=true" \
                   -s "config.\"multivalued\"=true" || true
+                refresh_client_mapper_cache "$realm" "$CID"
               }
 
               ensure_realm_roles_claim_mapper() {
@@ -1868,22 +1887,7 @@ spec:
                 CID="$(client_uuid "$realm" "$clientId")"
                 [ -z "${CID:-}" ] && return 0
                 local mapper_id=""
-                while IFS= read -r line; do
-                  line=${line%$'\r'}
-                  if [ -z "$line" ] || [ "$line" = "id,name" ] || [ "$line" = "\"id\",\"name\"" ]; then
-                    continue
-                  fi
-                  IFS=, read -r id name <<< "$line"
-                  id=${id#\"}
-                  id=${id%\"}
-                  name=${name#\"}
-                  name=${name%\"}
-                  if [ "$name" = "$mapper_name" ]; then
-                    mapper_id="$id"
-                    break
-                  fi
-                done < <($KCADM get "clients/$CID/protocol-mappers/models" -r "$realm" \
-                  --fields id,name --format csv 2>/dev/null || true)
+                mapper_id="$(client_mapper_id "$realm" "$CID" "$mapper_name")"
 
                 if [ -n "${mapper_id:-}" ]; then
                   $KCADM update "clients/$CID/protocol-mappers/models/$mapper_id" -r "$realm" \
@@ -1896,6 +1900,7 @@ spec:
                     -s "config.\"id.token.claim\"=true" \
                     -s "config.\"userinfo.token.claim\"=false" \
                     -s "config.\"multivalued\"=true" || true
+                  refresh_client_mapper_cache "$realm" "$CID"
                   return 0
                 fi
                 $KCADM create "clients/$CID/protocol-mappers/models" -r "$realm" \
@@ -1908,6 +1913,7 @@ spec:
                   -s "config.\"id.token.claim\"=true" \
                   -s "config.\"userinfo.token.claim\"=false" \
                   -s "config.\"multivalued\"=true" || true
+                refresh_client_mapper_cache "$realm" "$CID"
               }
 
               ensure_client_roles_claim_mapper() {
@@ -1917,22 +1923,7 @@ spec:
                 CID="$(client_uuid "$realm" "$clientId")"
                 [ -z "${CID:-}" ] && return 0
                 local mapper_id=""
-                while IFS= read -r line; do
-                  line=${line%$'\r'}
-                  if [ -z "$line" ] || [ "$line" = "id,name" ] || [ "$line" = "\"id\",\"name\"" ]; then
-                    continue
-                  fi
-                  IFS=, read -r id name <<< "$line"
-                  id=${id#\"}
-                  id=${id%\"}
-                  name=${name#\"}
-                  name=${name%\"}
-                  if [ "$name" = "$mapper_name" ]; then
-                    mapper_id="$id"
-                    break
-                  fi
-                done < <($KCADM get "clients/$CID/protocol-mappers/models" -r "$realm" \
-                  --fields id,name --format csv 2>/dev/null || true)
+                mapper_id="$(client_mapper_id "$realm" "$CID" "$mapper_name")"
 
                 if [ -n "${mapper_id:-}" ]; then
                   $KCADM update "clients/$CID/protocol-mappers/models/$mapper_id" -r "$realm" \
@@ -1946,6 +1937,7 @@ spec:
                     -s "config.\"id.token.claim\"=true" \
                     -s "config.\"userinfo.token.claim\"=false" \
                     -s "config.\"multivalued\"=true" || true
+                  refresh_client_mapper_cache "$realm" "$CID"
                   return 0
                 fi
                 $KCADM create "clients/$CID/protocol-mappers/models" -r "$realm" \
@@ -1959,6 +1951,7 @@ spec:
                   -s "config.\"id.token.claim\"=true" \
                   -s "config.\"userinfo.token.claim\"=false" \
                   -s "config.\"multivalued\"=true" || true
+                refresh_client_mapper_cache "$realm" "$CID"
               }
 
               ensure_client_attribute_mapper() {
@@ -1967,10 +1960,11 @@ spec:
                 local mapper_name="$3"
                 local user_attribute="$4"
                 local claim_name="$5"
+                local mapper_id=""
                 CID="$(client_uuid "$realm" "$clientId")"
                 [ -z "${CID:-}" ] && return 0
-                if $KCADM get "clients/$CID/protocol-mappers/models" -r "$realm" 2>/dev/null \
-                  | grep -q "\"name\"[[:space:]]*:[[:space:]]*\"${mapper_name}\""; then
+                mapper_id="$(client_mapper_id "$realm" "$CID" "$mapper_name")"
+                if [ -n "${mapper_id:-}" ]; then
                   return 0
                 fi
                 $KCADM create "clients/$CID/protocol-mappers/models" -r "$realm" \
@@ -1983,6 +1977,7 @@ spec:
                   -s "config.\"access.token.claim\"=true" \
                   -s "config.\"id.token.claim\"=true" \
                   -s "config.\"userinfo.token.claim\"=true" || true
+                refresh_client_mapper_cache "$realm" "$CID"
               }
 
               log_progress() {
@@ -2402,13 +2397,19 @@ spec:
               get_service_account_id() {
                 local realm="$1"
                 local client_uuid="$2"
+                local cache_key="${realm}|${client_uuid}"
                 local sa_id=""
                 local attempt=""
+                if [ "${SA_ID_CACHE[$cache_key]+set}" = "set" ]; then
+                  printf '%s' "${SA_ID_CACHE[$cache_key]}"
+                  return 0
+                fi
                 for attempt in 1 2 3 4 5; do
                   sa_id=$($KCADM get "clients/$client_uuid/service-account-user" -r "$realm" 2>/dev/null \
                     | sed -n "s/.*\"id\"[[:space:]]*:[[:space:]]*\"\\([^\"]*\\)\".*/\\1/p" | head -n1 || true)
                   sa_id="$(clean_id "$sa_id")"
                   if [ -n "${sa_id:-}" ]; then
+                    SA_ID_CACHE[$cache_key]="$sa_id"
                     printf '%s' "$sa_id"
                     return 0
                   fi
@@ -2417,16 +2418,66 @@ spec:
                 return 1
               }
 
+              refresh_sa_realm_roles_cache() {
+                local realm="$1"
+                local sa_id="$2"
+                local key="${realm}|${sa_id}"
+                SA_REALM_ROLES_CACHE[$key]="$($KCADM get "users/$sa_id/role-mappings/realm" -r "$realm" 2>/dev/null || true)"
+              }
+
+              sa_has_realm_role() {
+                local realm="$1"
+                local sa_id="$2"
+                local role="$3"
+                local key="${realm}|${sa_id}"
+                local json="${SA_REALM_ROLES_CACHE[$key]-}"
+                if [ -z "${json:-}" ]; then
+                  refresh_sa_realm_roles_cache "$realm" "$sa_id"
+                  json="${SA_REALM_ROLES_CACHE[$key]-}"
+                fi
+                printf '%s' "$json" | grep -q "\"name\"[[:space:]]*:[[:space:]]*\"${role}\""
+              }
+
+              refresh_sa_client_roles_cache() {
+                local realm="$1"
+                local sa_id="$2"
+                local target_uuid="$3"
+                local target_client_id="$4"
+                local key="${realm}|${sa_id}|${target_client_id}"
+                SA_CLIENT_ROLES_CACHE[$key]="$($KCADM get "users/$sa_id/role-mappings/clients/$target_uuid" -r "$realm" 2>/dev/null || true)"
+              }
+
+              sa_has_client_role() {
+                local realm="$1"
+                local sa_id="$2"
+                local target_uuid="$3"
+                local target_client_id="$4"
+                local role="$5"
+                local key="${realm}|${sa_id}|${target_client_id}"
+                local json="${SA_CLIENT_ROLES_CACHE[$key]-}"
+                if [ -z "${json:-}" ]; then
+                  refresh_sa_client_roles_cache "$realm" "$sa_id" "$target_uuid" "$target_client_id"
+                  json="${SA_CLIENT_ROLES_CACHE[$key]-}"
+                fi
+                printf '%s' "$json" | grep -q "\"name\"[[:space:]]*:[[:space:]]*\"${role}\""
+              }
+
               assign_realm_role_to_service_account() {
                 local realm="$1"
                 local clientId="$2"
                 local role="$3"
+                local cache_key=""
                 log_progress "service-account realm role: client=${clientId} role=${role} realm=${realm}"
                 CLIENT_UUID="$(client_uuid "$realm" "$clientId")"
                 [ -z "${CLIENT_UUID:-}" ] && return 0
                 SA_ID="$(get_service_account_id "$realm" "$CLIENT_UUID" || true)"
                 [ -z "${SA_ID:-}" ] && return 0
+                if sa_has_realm_role "$realm" "$SA_ID" "$role"; then
+                  return 0
+                fi
                 $KCADM add-roles -r "$realm" --uid "$SA_ID" --rolename "$role" >/dev/null 2>&1 || true
+                cache_key="${realm}|${SA_ID}"
+                SA_REALM_ROLES_CACHE[$cache_key]="${SA_REALM_ROLES_CACHE[$cache_key]-} {\"name\":\"${role}\"}"
               }
 
               assign_client_role_to_service_account() {
@@ -2438,13 +2489,19 @@ spec:
                 local service_uuid=""
                 local target_uuid=""
                 local sa_id=""
+                local cache_key=""
                 service_uuid="$(client_uuid "$realm" "$serviceClientId")"
                 [ -z "${service_uuid:-}" ] && return 0
                 target_uuid="$(client_uuid "$realm" "$targetClientId")"
                 [ -z "${target_uuid:-}" ] && return 0
                 sa_id="$(get_service_account_id "$realm" "$service_uuid" || true)"
                 [ -z "${sa_id:-}" ] && return 0
+                if sa_has_client_role "$realm" "$sa_id" "$target_uuid" "$targetClientId" "$role"; then
+                  return 0
+                fi
                 $KCADM add-roles -r "$realm" --uid "$sa_id" --cclientid "$targetClientId" --rolename "$role" >/dev/null 2>&1 || true
+                cache_key="${realm}|${sa_id}|${targetClientId}"
+                SA_CLIENT_ROLES_CACHE[$cache_key]="${SA_CLIENT_ROLES_CACHE[$cache_key]-} {\"name\":\"${role}\"}"
               }
 
               ensure_admin_auth_for_service_account_roles || true
