@@ -303,6 +303,45 @@ data:
         }
       ]
     }
+  flink-gui-proxy.json: |
+    {
+      "clientId": "<path:secret/data/keycloak-client-id-flink-gui-proxy#value>",
+      "name": "Flink GUI OAuth2 Proxy",
+      "protocol": "openid-connect",
+      "publicClient": false,
+      "clientAuthenticatorType": "client-secret",
+      "secret": "<path:secret/data/keycloak-client-secret-flink-gui-proxy#value>",
+      "standardFlowEnabled": true,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": false,
+      "redirectUris": [
+        "https://flink-gui.teleport.app.suncoast.systems/oauth2/callback",
+        "http://localhost/*"
+      ],
+      "webOrigins": [
+        "https://flink-gui.teleport.app.suncoast.systems"
+      ]
+    }
+  nifi-gui.json: |
+    {
+      "clientId": "<path:secret/data/keycloak-client-id-nifi-gui#value>",
+      "name": "NiFi GUI",
+      "protocol": "openid-connect",
+      "publicClient": false,
+      "clientAuthenticatorType": "client-secret",
+      "secret": "<path:secret/data/keycloak-client-secret-nifi-gui#value>",
+      "standardFlowEnabled": true,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": false,
+      "redirectUris": [
+        "https://nifi-gui.teleport.app.suncoast.systems/nifi-api/access/oidc/callback/consumer",
+        "https://nifi-gui.teleport.app.suncoast.systems/*",
+        "http://localhost/*"
+      ],
+      "webOrigins": [
+        "https://nifi-gui.teleport.app.suncoast.systems"
+      ]
+    }
   shell-spa-public.json: |
     {
       "clientId": "shell-spa-public",
