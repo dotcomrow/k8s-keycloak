@@ -1932,13 +1932,19 @@ spec:
                   -s "config.\"id.token.claim\"=true" \
                   -s "config.\"userinfo.token.claim\"=true" || true
               }
+
+              log_progress() {
+                echo "⏱️  $(date -u +%FT%TZ) $*"
+              }
               
+              log_progress "Applying internal realm clients and auth settings..."
               apply_clients_from_dir "$INTERNAL_REALM" "$CLIENT_CONFIG_DIR_INTERNAL"
               if [ "$INTERNAL_DISABLE_DIRECT_GRANTS" = "true" ]; then
                 disable_direct_grants_for_clients "$INTERNAL_REALM"
               fi
               clear_pkce_for_client "$INTERNAL_REALM" "$DROOLS_WORKBENCH_CLIENT_ID"
 
+              log_progress "Applying external realm clients and auth settings..."
               apply_clients_from_dir "$EXTERNAL_REALM" "$CLIENT_CONFIG_DIR_EXTERNAL"
               if [ "$EXTERNAL_DISABLE_DIRECT_GRANTS" = "true" ]; then
                 disable_direct_grants_for_clients "$EXTERNAL_REALM"
@@ -1952,21 +1958,25 @@ spec:
                 echo "⚠️  openwebui client not present in external realm (${EXTERNAL_REALM})"
               fi
 
+              log_progress "Ensuring baseline realm roles..."
               # Sample roles for mapping (edit/remove as needed)
               if [ -n "${INTERNAL_REALM_ROLES_RAW:-}" ]; then
                 roles_list="$(echo "$INTERNAL_REALM_ROLES_RAW" | tr ',\n' ' ')"
                 for role in $roles_list; do
                   [ -z "${role:-}" ] && continue
+                  log_progress "internal realm role: ${role}"
                   $KCADM get "roles/$role" -r "$INTERNAL_REALM" >/dev/null 2>&1 || \
                     $KCADM create roles -r "$INTERNAL_REALM" -s "name=$role" || true
                 done
               else
                 for role in openwebui_access ollama_access ollama_service_access; do
+                  log_progress "internal realm role: ${role}"
                   $KCADM get "roles/$role" -r "$INTERNAL_REALM" >/dev/null 2>&1 || \
                     $KCADM create roles -r "$INTERNAL_REALM" -s "name=$role" || true
                 done
               fi
               for role in tier_free tier_pro feature_x drools_access platform_batch_ui_user; do
+                log_progress "external realm role: ${role}"
                 $KCADM get "roles/$role" -r "$EXTERNAL_REALM" >/dev/null 2>&1 || \
                   $KCADM create roles -r "$EXTERNAL_REALM" -s "name=$role" || true
               done
@@ -1993,6 +2003,7 @@ spec:
               ensure_roles_from_map() {
                 local realm="$1"
                 local json="$2"
+                local spec_count=0
                 if [ -z "${json:-}" ]; then
                   return 0
                 fi
@@ -2003,6 +2014,8 @@ spec:
                 fi
                 while read -r spec; do
                   [ -z "${spec:-}" ] && continue
+                  spec_count=$((spec_count + 1))
+                  log_progress "role-map spec ${spec_count} (${realm}): ${spec}"
                   case "$spec" in
                     realm:*)
                       role="${spec#realm:}"
@@ -2033,6 +2046,7 @@ spec:
               ensure_google_group_role_composites_from_map() {
                 local realm="$1"
                 local json="$2"
+                local group_count=0
                 if [ -z "${json:-}" ]; then
                   return 0
                 fi
@@ -2052,7 +2066,10 @@ spec:
                   group_slug="$(printf '%s' "$group_key" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9]/-/g; s/-\{2,\}/-/g; s/^-//; s/-$//')"
                   [ -z "${group_slug:-}" ] && continue
                   group_role="ggl:${group_slug}"
+                  group_count=$((group_count + 1))
+                  log_progress "google-group composite map ${group_count}: ${group_role}"
                   if ! $KCADM get "roles/$group_role" -r "$realm" >/dev/null 2>&1; then
+                    log_progress "google-group role missing, skipping composites: ${group_role}"
                     continue
                   fi
                   specs="$(printf '%s' "$entry" | grep -o '"\\(realm\\|client\\):[^"]*"' | tr -d '"' || true)"
@@ -2079,6 +2096,7 @@ spec:
                 done <<<"$entries"
               }
               
+              log_progress "Applying role maps..."
               ensure_roles_from_map "$INTERNAL_REALM" "$GITHUB_ROLE_MAP_JSON"
               ensure_roles_from_map "$EXTERNAL_REALM" "$GOOGLE_GROUP_ROLE_MAP_JSON"
               ensure_google_group_role_composites_from_map "$EXTERNAL_REALM" "$GOOGLE_GROUP_ROLE_MAP_JSON"
@@ -2311,6 +2329,7 @@ spec:
                 if login_with_admin; then
                   AUTH_MODE="admin"
                   ADMIN_ESCALATED="true"
+                  log_progress "service-account role assignment using admin auth"
                   return 0
                 fi
                 echo "WARN: admin auth unavailable for service account role assignment; continuing with ${AUTH_MODE:-unknown}"
@@ -2340,6 +2359,7 @@ spec:
                 local realm="$1"
                 local clientId="$2"
                 local role="$3"
+                log_progress "service-account realm role: client=${clientId} role=${role} realm=${realm}"
                 CLIENT_UUID=$($KCADM get clients -r "$realm" -q "clientId=$clientId" --fields id --format csv 2>/dev/null | tail -n1 || true)
                 CLIENT_UUID="$(clean_id "$CLIENT_UUID")"
                 [ -z "${CLIENT_UUID:-}" ] && return 0
@@ -2353,6 +2373,7 @@ spec:
                 local serviceClientId="$2"
                 local targetClientId="$3"
                 local role="$4"
+                log_progress "service-account client role: service=${serviceClientId} target=${targetClientId} role=${role} realm=${realm}"
                 local service_uuid=""
                 local target_uuid=""
                 local sa_id=""
@@ -2369,6 +2390,7 @@ spec:
 
               ensure_admin_auth_for_service_account_roles || true
 
+              log_progress "Assigning service-account roles..."
               assign_realm_role_to_service_account "$INTERNAL_REALM" "$OLLAMA_SERVICE_CLIENT_ID" "ollama_service_access"
               assign_realm_role_to_service_account "$INTERNAL_REALM" "$DROOLS_SERVICE_CLIENT_ID" "drools_service_access"
               assign_realm_role_to_service_account "$INTERNAL_REALM" "$DROOLS_SERVICE_CLIENT_ID" "kie-server"
@@ -2720,6 +2742,7 @@ spec:
               }
 
               enable_token_exchange_for_client "$INTERNAL_REALM" "$DROOLS_SERVICE_CLIENT_ID" "$DROOLS_SERVICE_CLIENT_ID"
+              log_progress "Applying token-exchange rules..."
               apply_token_exchange_rules
 
               set_client_flow_override() {
@@ -2797,6 +2820,7 @@ spec:
                 fi
               fi
 
+              log_progress "Configurator script reached finalization."
               echo "✔ Configurator finished."
           volumeMounts:
             - name: keycloak-client-config-internal
