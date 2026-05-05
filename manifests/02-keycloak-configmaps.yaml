@@ -320,6 +320,19 @@ data:
       ],
       "webOrigins": [
         "https://flink-gui.teleport.app.suncoast.systems"
+      ],
+      "protocolMappers": [
+        {
+          "name": "audience-flink-gui-proxy",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "consentRequired": false,
+          "config": {
+            "included.client.audience": "<path:secret/data/keycloak-client-id-flink-gui-proxy#value>",
+            "access.token.claim": "true",
+            "id.token.claim": "true"
+          }
+        }
       ]
     }
   nifi-gui.json: |
