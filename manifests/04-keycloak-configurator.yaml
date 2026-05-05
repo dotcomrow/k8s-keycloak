@@ -380,6 +380,7 @@ spec:
               declare -A CLIENT_UUID_CACHE=()
               declare -A CLIENT_SCOPE_UUID_CACHE=()
               declare -A CLIENT_DEFAULT_SCOPES_CACHE=()
+              declare -A SCOPE_MAPPER_CSV_CACHE=()
 
               client_uuid() {
                 local realm="$1"
@@ -410,6 +411,31 @@ spec:
                 value="$(printf '%s' "$scope_line" | cut -d',' -f1 | tr -d '"' | tr -d '[:space:]')"
                 CLIENT_SCOPE_UUID_CACHE[$key]="$value"
                 printf '%s' "$value"
+              }
+
+              refresh_scope_mapper_cache() {
+                local realm="$1"
+                local scope_uuid="$2"
+                local key="${realm}|${scope_uuid}"
+                local csv=""
+                csv="$($KCADM get "client-scopes/$scope_uuid/protocol-mappers/models" -r "$realm" --fields id,name --format csv 2>/dev/null || true)"
+                SCOPE_MAPPER_CSV_CACHE[$key]="$csv"
+              }
+
+              scope_mapper_id() {
+                local realm="$1"
+                local scope_uuid="$2"
+                local mapper_name="$3"
+                local key="${realm}|${scope_uuid}"
+                local csv=""
+                local line=""
+                csv="${SCOPE_MAPPER_CSV_CACHE[$key]-}"
+                if [ -z "${csv:-}" ]; then
+                  refresh_scope_mapper_cache "$realm" "$scope_uuid"
+                  csv="${SCOPE_MAPPER_CSV_CACHE[$key]-}"
+                fi
+                line="$(printf '%s\n' "$csv" | grep -m1 "\"${mapper_name}\"" || true)"
+                printf '%s' "$line" | cut -d',' -f1 | tr -d '"' | tr -d '[:space:]'
               }
 
               append_role_map_entry() {
@@ -2196,15 +2222,14 @@ spec:
                 if [ -z "${realm:-}" ] || [ -z "${scope_uuid:-}" ] || [ -z "${mapper_name:-}" ] || [ -z "${user_attribute:-}" ] || [ -z "${claim_name:-}" ]; then
                   return 0
                 fi
+                log_progress "scope mapper reconcile: realm=${realm} mapper=${mapper_name}"
 
                 mapper_name_re="$(printf '%s' "$mapper_name" | sed 's/[][(){}.^$*+?|\\]/\\&/g')"
                 user_attribute_re="$(printf '%s' "$user_attribute" | sed 's/[][(){}.^$*+?|\\]/\\&/g')"
                 claim_name_re="$(printf '%s' "$claim_name" | sed 's/[][(){}.^$*+?|\\]/\\&/g')"
                 json_type_re="$(printf '%s' "$json_type" | sed 's/[][(){}.^$*+?|\\]/\\&/g')"
 
-                mapper_line=$($KCADM get "client-scopes/$scope_uuid/protocol-mappers/models" -r "$realm" \
-                  --fields id,name --format csv 2>/dev/null | grep -m1 "\"${mapper_name}\"" || true)
-                mapper_id="$(printf '%s' "$mapper_line" | cut -d',' -f1 | tr -d '\"' | tr -d '[:space:]')"
+                mapper_id="$(scope_mapper_id "$realm" "$scope_uuid" "$mapper_name")"
                 if [ -z "${mapper_id:-}" ]; then
                   mapper_id=$($KCADM create "client-scopes/$scope_uuid/protocol-mappers/models" -r "$realm" \
                     -s "name=${mapper_name}" \
@@ -2218,10 +2243,8 @@ spec:
                     -s "config.\"userinfo.token.claim\"=true" \
                     -i 2>/dev/null || true)
                   mapper_id="$(clean_id "$mapper_id")"
-                  [ -n "${mapper_id:-}" ] && return 0
-                  mapper_line=$($KCADM get "client-scopes/$scope_uuid/protocol-mappers/models" -r "$realm" \
-                    --fields id,name --format csv 2>/dev/null | grep -m1 "\"${mapper_name}\"" || true)
-                  mapper_id="$(printf '%s' "$mapper_line" | cut -d',' -f1 | tr -d '\"' | tr -d '[:space:]')"
+                  refresh_scope_mapper_cache "$realm" "$scope_uuid"
+                  [ -n "${mapper_id:-}" ] || mapper_id="$(scope_mapper_id "$realm" "$scope_uuid" "$mapper_name")"
                 fi
                 [ -z "${mapper_id:-}" ] && return 0
 
