@@ -8,7 +8,9 @@ metadata:
     app.kubernetes.io/name: keycloak
     app.kubernetes.io/component: authentication
   annotations:
-    argocd.argoproj.io/sync-wave: "6"
+    # Keep this in the same wave as keycloak deployment:
+    # keycloak pods stay NotReady until this Job succeeds.
+    argocd.argoproj.io/sync-wave: "5"
     argocd.argoproj.io/sync-options: Replace=true
 spec:
   backoffLimit: 2
