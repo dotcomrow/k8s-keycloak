@@ -2175,8 +2175,7 @@ spec:
                 fi
                 $KCADM update "clients/$CLIENT_UUID/default-client-scopes/$SCOPE_UUID" -r "$realm" >/dev/null 2>&1 || true
                 # Keep cache coherent after attaching a scope.
-                CLIENT_DEFAULT_SCOPES_CACHE[$cache_key]="${default_scopes_json}
-{\"name\":\"${scopeName}\"}"
+                CLIENT_DEFAULT_SCOPES_CACHE[$cache_key]="${default_scopes_json} {\"name\":\"${scopeName}\"}"
               }
 
               ensure_client_scope_attribute_mapper() {
