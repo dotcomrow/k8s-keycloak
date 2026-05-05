@@ -1,5 +1,5 @@
-apiVersion: apps/v1
-kind: Deployment
+apiVersion: batch/v1
+kind: Job
 metadata:
   name: keycloak-configurator
   namespace: keycloak
@@ -9,11 +9,9 @@ metadata:
     app.kubernetes.io/component: authentication
   annotations:
     argocd.argoproj.io/sync-wave: "6"
+    argocd.argoproj.io/sync-options: Replace=true
 spec:
-  replicas: 1
-  selector:
-    matchLabels:
-      app: keycloak-configurator
+  backoffLimit: 2
   template:
     metadata:
       labels:
@@ -21,12 +19,14 @@ spec:
         app.kubernetes.io/name: keycloak
         app.kubernetes.io/component: authentication
       annotations:
-        reloader.stakater.com/auto: "true"
+        linkerd.io/inject: "disabled"
         # Vault agent for secret files
         vault.hashicorp.com/agent-inject: "true"
         vault.hashicorp.com/role: "keycloak"
         vault.hashicorp.com/agent-init-first: "true"
         vault.hashicorp.com/agent-pre-populate: "true"
+        # Keep Vault init-only so the Job can complete cleanly.
+        vault.hashicorp.com/agent-pre-populate-only: "true"
 
         # DB creds (static role)
         vault.hashicorp.com/agent-inject-secret-db-username: "yugabyte-db/static-creds/keycloak-app"
@@ -186,6 +186,7 @@ spec:
         runAsGroup: 1000
         fsGroup: 1000
         fsGroupChangePolicy: "OnRootMismatch"
+      restartPolicy: Never
 
       containers:
         # --- One-time configuration sidecar (IdPs + flows + attach providers) ---
@@ -247,7 +248,7 @@ spec:
               MIGRATE_APPS_REALM_MODE="${KEYCLOAK_MIGRATE_APPS_REALM_MODE:-auto}"
               MIGRATE_APPS_REALM_DELETE_SOURCE="${KEYCLOAK_MIGRATE_APPS_REALM_DELETE_SOURCE:-false}"
               MIGRATE_APPS_REALM_FORCE_DELETE="${KEYCLOAK_MIGRATE_APPS_REALM_FORCE_DELETE:-false}"
-              SERVER="http://keycloak.keycloak.svc.cluster.local:8080"
+              SERVER="http://keycloak-bootstrap.keycloak.svc.cluster.local:8080"
               FLOW_GH="GitHub-PostLogin"
               FLOW_GGL="Google-PostLogin"
               PROVIDER_GH="github-team-admin"
@@ -268,12 +269,9 @@ spec:
               KCADM_CONFIG="/tmp/kcadm.config"
               export KCADM_CONFIG
                             
-              hold(){ echo "Configurator will stay running for logs…"; tail -f /dev/null; }
-              on_err(){ code=$?; echo "Configurator error (exit $code) at line ${BASH_LINENO[0]}: ${BASH_COMMAND:-unknown}"; hold; }
-              on_exit(){ code=$?; if [ "$code" -ne 0 ]; then echo "Configurator exiting (code $code)."; hold; fi; }
+              on_err(){ code=$?; echo "Configurator error (exit $code) at line ${BASH_LINENO[0]}: ${BASH_COMMAND:-unknown}"; exit "$code"; }
               trap on_err ERR
-              trap on_exit EXIT
-              fatal(){ echo "❌ $*"; hold; }
+              fatal(){ echo "❌ $*"; exit 1; }
               
               for f in /vault/secrets/keycloak-admin \
                        /vault/secrets/github-client-id \
@@ -1964,7 +1962,7 @@ spec:
                     $KCADM create roles -r "$INTERNAL_REALM" -s "name=$role" || true
                 done
               fi
-              for role in tier_free tier_pro feature_x drools_access; do
+              for role in tier_free tier_pro feature_x drools_access platform_batch_ui_user; do
                 $KCADM get "roles/$role" -r "$EXTERNAL_REALM" >/dev/null 2>&1 || \
                   $KCADM create roles -r "$EXTERNAL_REALM" -s "name=$role" || true
               done
@@ -1986,6 +1984,7 @@ spec:
               ensure_default_role_member "$INTERNAL_REALM" "drools_access"
               ensure_default_role_member "$INTERNAL_REALM" "user"
               ensure_default_role_member "$EXTERNAL_REALM" "drools_access"
+              ensure_default_role_member "$EXTERNAL_REALM" "platform_batch_ui_user"
 
               ensure_roles_from_map() {
                 local realm="$1"
@@ -2759,8 +2758,7 @@ spec:
                 fi
               fi
 
-              echo "✔ Configurator finished. Holding for logs."
-              hold
+              echo "✔ Configurator finished."
           volumeMounts:
             - name: keycloak-client-config-internal
               mountPath: /opt/keycloak/data/clients/internal

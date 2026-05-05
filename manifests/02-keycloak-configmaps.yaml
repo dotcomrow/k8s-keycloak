@@ -335,6 +335,38 @@ data:
         }
       ]
     }
+  kafka-gui-proxy.json: |
+    {
+      "clientId": "<path:secret/data/keycloak-client-id-kafka-gui-proxy#value>",
+      "name": "Kafka GUI OAuth2 Proxy",
+      "protocol": "openid-connect",
+      "publicClient": false,
+      "clientAuthenticatorType": "client-secret",
+      "secret": "<path:secret/data/keycloak-client-secret-kafka-gui-proxy#value>",
+      "standardFlowEnabled": true,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": false,
+      "redirectUris": [
+        "https://kafka-gui.teleport.app.suncoast.systems/oauth2/callback",
+        "http://localhost/*"
+      ],
+      "webOrigins": [
+        "https://kafka-gui.teleport.app.suncoast.systems"
+      ],
+      "protocolMappers": [
+        {
+          "name": "audience-kafka-gui-proxy",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "consentRequired": false,
+          "config": {
+            "included.client.audience": "<path:secret/data/keycloak-client-id-kafka-gui-proxy#value>",
+            "access.token.claim": "true",
+            "id.token.claim": "true"
+          }
+        }
+      ]
+    }
   nifi-gui.json: |
     {
       "clientId": "<path:secret/data/keycloak-client-id-nifi-gui#value>",
@@ -357,6 +389,23 @@ data:
       "webOrigins": [
         "https://nifi-gui.teleport.app.suncoast.systems",
         "https://nifi-gui.teleport.app.suncoast.systems:443"
+      ],
+      "protocolMappers": [
+        {
+          "name": "realm-roles-groups",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-realm-role-mapper",
+          "consentRequired": false,
+          "config": {
+            "claim.name": "groups",
+            "jsonType.label": "String",
+            "multivalued": "true",
+            "access.token.claim": "true",
+            "id.token.claim": "true",
+            "userinfo.token.claim": "true",
+            "introspection.token.claim": "true"
+          }
+        }
       ]
     }
   shell-spa-public.json: |
