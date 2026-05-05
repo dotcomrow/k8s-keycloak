@@ -11,7 +11,7 @@ metadata:
     # Keep this in the same wave as keycloak deployment:
     # keycloak pods stay NotReady until this Job succeeds.
     argocd.argoproj.io/sync-wave: "5"
-    argocd.argoproj.io/sync-options: Replace=true
+    argocd.argoproj.io/sync-options: Force=true,Replace=true
 spec:
   # Never give up quickly: keep retrying until configuration succeeds.
   backoffLimit: 1000000
