@@ -2157,12 +2157,18 @@ spec:
                 local clientId="$2"
                 shift 2
                 local CLIENT_UUID=""
+                local roles_json=""
                 CLIENT_UUID="$(client_uuid "$realm" "$clientId")"
                 [ -z "${CLIENT_UUID:-}" ] && return 0
+                roles_json="$($KCADM get "clients/$CLIENT_UUID/roles" -r "$realm" 2>/dev/null || true)"
                 for role in "$@"; do
                   [ -z "${role:-}" ] && continue
-                  $KCADM get "clients/$CLIENT_UUID/roles/$role" -r "$realm" >/dev/null 2>&1 || \
-                    $KCADM create "clients/$CLIENT_UUID/roles" -r "$realm" -s "name=$role" >/dev/null 2>&1 || true
+                  if printf '%s' "$roles_json" | grep -q "\"name\"[[:space:]]*:[[:space:]]*\"${role}\""; then
+                    continue
+                  fi
+                  log_progress "client role create: realm=${realm} client=${clientId} role=${role}"
+                  $KCADM create "clients/$CLIENT_UUID/roles" -r "$realm" -s "name=$role" >/dev/null 2>&1 || true
+                  roles_json="${roles_json} {\"name\":\"${role}\"}"
                 done
               }
 
@@ -2199,6 +2205,7 @@ spec:
                 if printf '%s' "$default_scopes_json" | grep -q "\"name\"[[:space:]]*:[[:space:]]*\"${scopeName}\""; then
                   return 0
                 fi
+                log_progress "attach default scope: realm=${realm} client=${clientId} scope=${scopeName}"
                 $KCADM update "clients/$CLIENT_UUID/default-client-scopes/$SCOPE_UUID" -r "$realm" >/dev/null 2>&1 || true
                 # Keep cache coherent after attaching a scope.
                 CLIENT_DEFAULT_SCOPES_CACHE[$cache_key]="${default_scopes_json} {\"name\":\"${scopeName}\"}"
@@ -2348,6 +2355,7 @@ spec:
                   -s "config.\"userinfo.token.claim\"=false" >/dev/null 2>&1 || true
               }
 
+              log_progress "Ensuring client roles/scopes for app clients..."
               ensure_client_roles "$EXTERNAL_REALM" "$GRAPHQL_API_CLIENT_ID" user
               ensure_default_client_role_member "$EXTERNAL_REALM" "$GRAPHQL_API_CLIENT_ID" "user"
               ensure_client_roles "$INTERNAL_REALM" "$DROOLS_WORKBENCH_CLIENT_ID" \
@@ -2377,6 +2385,7 @@ spec:
               ensure_client_scope "$INTERNAL_REALM" "$OPENWEBUI_CLIENT_ID" "email"
               ensure_client_scope "$EXTERNAL_REALM" "$OPENWEBUI_CLIENT_ID" "email"
               ensure_client_scope "$EXTERNAL_REALM" "$GRAPHQL_API_CLIENT_ID" "email"
+              log_progress "Completed client role/scope reconciliation."
 
               ensure_admin_auth_for_service_account_roles() {
                 if login_with_admin; then
