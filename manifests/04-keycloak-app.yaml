@@ -551,21 +551,45 @@ spec:
         - name: kc-configurator-gate
           image: alpine/k8s:1.31.4
           imagePullPolicy: IfNotPresent
+          env:
+            - name: POD_START_TIME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.creationTimestamp
           command: ["/bin/sh","-lc"]
           args:
             - |
               set -eu
               gate_file="/kc-configurator-gate/done"
               mkdir -p /kc-configurator-gate
+              echo "kc-configurator-gate pod start time: ${POD_START_TIME:-unknown}"
+
+              is_completion_current() {
+                completion_time="$1"
+                pod_start="${POD_START_TIME:-}"
+                if [ -z "${completion_time}" ] || [ -z "${pod_start}" ]; then
+                  return 1
+                fi
+                newest="$(printf '%s\n%s\n' "$completion_time" "$pod_start" | sort | tail -n1)"
+                [ "$newest" = "$completion_time" ]
+              }
+
               while true; do
                 succ="$(kubectl -n keycloak get job keycloak-configurator -o jsonpath='{.status.succeeded}' 2>/dev/null || true)"
                 succ="${succ:-0}"
+                completion_time="$(kubectl -n keycloak get job keycloak-configurator -o jsonpath='{.status.completionTime}' 2>/dev/null || true)"
+                completion_time="${completion_time:-}"
                 if [ "$succ" -ge 1 ] 2>/dev/null; then
-                  date -u +%FT%TZ > "$gate_file"
-                  echo "✅ keycloak-configurator job completed; readiness gate opened."
-                  break
+                  if is_completion_current "$completion_time"; then
+                    date -u +%FT%TZ > "$gate_file"
+                    echo "✅ keycloak-configurator job completed for this pod (completionTime=${completion_time}); readiness gate opened."
+                    break
+                  fi
+                  echo "⏳ keycloak-configurator completion is stale for this pod (completionTime=${completion_time}, podStart=${POD_START_TIME:-unknown}); waiting for current sync run..."
+                  sleep 5
+                  continue
                 fi
-                echo "⏳ waiting for keycloak-configurator job completion (succeeded=${succ})..."
+                echo "⏳ waiting for keycloak-configurator job completion (succeeded=${succ}, completionTime=${completion_time:-none})..."
                 sleep 5
               done
               tail -f /dev/null

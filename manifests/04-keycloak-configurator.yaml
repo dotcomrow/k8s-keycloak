@@ -11,6 +11,10 @@ metadata:
     # Keep this in the same wave as keycloak deployment:
     # keycloak pods stay NotReady until this Job succeeds.
     argocd.argoproj.io/sync-wave: "5"
+    # Always rerun configurator on each sync operation so runtime settings
+    # are reconciled from manifests, even when a prior Job already succeeded.
+    argocd.argoproj.io/hook: Sync
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
     argocd.argoproj.io/sync-options: Force=true,Replace=true
 spec:
   # Never give up quickly: keep retrying until configuration succeeds.
