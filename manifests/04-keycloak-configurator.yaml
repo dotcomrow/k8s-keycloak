@@ -237,6 +237,14 @@ spec:
               value: "true"
             - name: EXTERNAL_DISABLE_LOCAL_LOGIN
               value: "true"
+            - name: INTERNAL_DISABLE_DIRECT_GRANTS
+              value: "true"
+            - name: EXTERNAL_DISABLE_DIRECT_GRANTS
+              value: "true"
+            - name: INTERNAL_DISABLE_PASSWORD_SETUP
+              value: "true"
+            - name: EXTERNAL_DISABLE_PASSWORD_SETUP
+              value: "true"
             - name: KEYCLOAK_EXTERNAL_ADMIN_MODE
               value: "group"
             - name: KEYCLOAK_RULES_ADMIN_TEAM
@@ -327,8 +335,10 @@ spec:
               CLIENT_CONFIG_DIR_INTERNAL="/opt/keycloak/data/clients/internal"
               CLIENT_CONFIG_DIR_EXTERNAL="/opt/keycloak/data/clients/external"
               EXTERNAL_DISABLE_LOCAL_LOGIN="${EXTERNAL_DISABLE_LOCAL_LOGIN:-true}"
-              INTERNAL_DISABLE_DIRECT_GRANTS="${INTERNAL_DISABLE_DIRECT_GRANTS:-false}"
+              INTERNAL_DISABLE_DIRECT_GRANTS="${INTERNAL_DISABLE_DIRECT_GRANTS:-true}"
               EXTERNAL_DISABLE_DIRECT_GRANTS="${EXTERNAL_DISABLE_DIRECT_GRANTS:-true}"
+              INTERNAL_DISABLE_PASSWORD_SETUP="${INTERNAL_DISABLE_PASSWORD_SETUP:-true}"
+              EXTERNAL_DISABLE_PASSWORD_SETUP="${EXTERNAL_DISABLE_PASSWORD_SETUP:-true}"
               OPENWEBUI_CLIENT_ID="openwebui"
               OLLAMA_SERVICE_CLIENT_ID="ollama-service"
               DROOLS_WORKBENCH_CLIENT_ID="drools-workbench-5k32f99itpcixgacte"
@@ -1626,14 +1636,35 @@ spec:
                   $KCADM update "realms/${EXTERNAL_REALM}" -s "browserFlow=browser" || true
                 fi
               fi
+
+              set_required_action_state() {
+                local realm="$1"
+                local alias="$2"
+                local enabled="$3"
+                local default_action="$4"
+                if ! $KCADM get "authentication/required-actions/$alias" -r "$realm" >/dev/null 2>&1; then
+                  echo "ℹ️  required action not found in ${realm}: ${alias}"
+                  return 0
+                fi
+                $KCADM update "authentication/required-actions/$alias" -r "$realm" \
+                  -s "enabled=$enabled" -s "defaultAction=$default_action" || true
+              }
               
-              # Realm hygiene (unchanged)
+              # Realm hygiene
               $KCADM update "realms/$INTERNAL_REALM" \
                 -s sslRequired=EXTERNAL -s loginWithEmailAllowed=true -s registrationAllowed=false \
-                -s rememberMe=true -s resetPasswordAllowed=true -s bruteForceProtected=true -s permanentLockout=false || true
+                -s rememberMe=true -s resetPasswordAllowed=false -s bruteForceProtected=true -s permanentLockout=false || true
               $KCADM update "realms/$EXTERNAL_REALM" \
                 -s sslRequired=EXTERNAL -s loginWithEmailAllowed=true -s registrationAllowed=false \
                 -s rememberMe=false -s resetPasswordAllowed=false -s bruteForceProtected=true -s permanentLockout=false || true
+              if [ "$INTERNAL_DISABLE_PASSWORD_SETUP" = "true" ]; then
+                # Remove account-console password setup/update actions in the internal realm.
+                set_required_action_state "$INTERNAL_REALM" "UPDATE_PASSWORD" "false" "false"
+              fi
+              if [ "$EXTERNAL_DISABLE_PASSWORD_SETUP" = "true" ]; then
+                # Remove account-console password setup/update actions in the external realm.
+                set_required_action_state "$EXTERNAL_REALM" "UPDATE_PASSWORD" "false" "false"
+              fi
               # External app access tokens are kept short (15 minutes) and refreshed by shell runtime.
               $KCADM update "realms/$EXTERNAL_REALM" \
                 -s accessTokenLifespan=900 \
