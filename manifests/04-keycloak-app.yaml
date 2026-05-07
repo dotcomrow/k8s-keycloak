@@ -65,6 +65,215 @@ spec:
       port: 8080
       targetPort: 8080
 ---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: keycloak-account-theme
+  namespace: keycloak
+  annotations:
+    argocd.argoproj.io/sync-wave: "4"
+data:
+  theme.properties: |
+    parent=keycloak.v3
+    styles=resources/css/account-lockdown.css
+    scripts=resources/js/account-lockdown.js
+  content.json: |
+    [
+      { "label": "personalInfo", "path": "" },
+      {
+        "label": "accountSecurity",
+        "children": [
+          { "label": "signingIn", "path": "account-security/signing-in" },
+          { "label": "deviceActivity", "path": "account-security/device-activity" },
+          {
+            "label": "linkedAccounts",
+            "path": "account-security/linked-accounts",
+            "isVisible": "isLinkedAccountsEnabled"
+          }
+        ]
+      },
+      {
+        "label": "groups",
+        "path": "groups",
+        "isVisible": "isViewGroupsEnabled"
+      },
+      {
+        "label": "organizations",
+        "path": "organizations",
+        "isVisible": "isViewOrganizationsEnabled"
+      },
+      {
+        "label": "resources",
+        "path": "resources",
+        "isVisible": "isMyResourcesEnabled"
+      },
+      {
+        "label": "oid4vci",
+        "path": "oid4vci",
+        "isVisible":"isOid4VciEnabled"
+      }
+    ]
+  messages_en.properties: |
+    personalInfoDescription=Your profile information is managed by your linked identity provider. To make changes, update the identity provider profile and then sign in again.
+    signingInDescription=Manage second-factor sign-in methods. Password setup and profile editing are disabled in this account page.
+    linkedAccountsIntroMessage=Link additional login providers here. Unlinking providers is disabled in this account page.
+  account-lockdown.css: |
+    #save-btn,
+    #cancel-btn,
+    #update-email-btn,
+    #delete-account-btn,
+    [data-testid="options-toggle"],
+    [data-testid="options-kebab-toggle"],
+    [id$="-idp-unlink"] {
+      display: none !important;
+    }
+
+    #suncoast-account-readonly-note {
+      margin-bottom: 1rem;
+      padding: 0.75rem 1rem;
+      border-left: 4px solid #2b9af3;
+      background: #f0f8ff;
+      color: #1f1f1f;
+      border-radius: 4px;
+      font-size: 0.95rem;
+      line-height: 1.4;
+    }
+  account-lockdown.js: |
+    (function () {
+      "use strict";
+
+      var NOTE_ID = "suncoast-account-readonly-note";
+      var NOTE_TEXT = "Profile edits are disabled. Update your linked identity provider to change your name, email, or other profile details.";
+      var SIGN_OUT_LABELS = {
+        "Sign out": true,
+        "Sign out all devices": true
+      };
+
+      function hideElement(el) {
+        if (!el) {
+          return;
+        }
+        el.style.display = "none";
+        el.setAttribute("aria-hidden", "true");
+      }
+
+      function hideSelectors() {
+        var selectors = [
+          "#save-btn",
+          "#cancel-btn",
+          "#update-email-btn",
+          "#delete-account-btn",
+          "[data-testid='options-toggle']",
+          "[data-testid='options-kebab-toggle']",
+          "[id$='-idp-unlink']"
+        ];
+        selectors.forEach(function (selector) {
+          document.querySelectorAll(selector).forEach(hideElement);
+        });
+      }
+
+      function hidePasswordWidgets() {
+        var passwordSelectors = [
+          "[data-testid='password/title']",
+          "[data-testid='password/help']",
+          "[data-testid='password/help-text']",
+          "[data-testid='password/create']",
+          "[data-testid='password/credential-list']",
+          "[data-testid='password/not-set-up']"
+        ];
+        passwordSelectors.forEach(function (selector) {
+          document.querySelectorAll(selector).forEach(function (el) {
+            var section = el.closest("section");
+            hideElement(section || el);
+          });
+        });
+      }
+
+      function hideSignOutButtons() {
+        document.querySelectorAll("button").forEach(function (button) {
+          var text = (button.textContent || "").trim();
+          if (SIGN_OUT_LABELS[text]) {
+            hideElement(button);
+          }
+        });
+      }
+
+      function hideDeviceSignOutControls() {
+        if (!/\/account-security\/device-activity/.test(window.location.pathname)) {
+          return;
+        }
+        document.querySelectorAll(".pf-v5-c-page__main-section button").forEach(function (button) {
+          if (button.id === "refresh-page") {
+            return;
+          }
+          hideElement(button);
+        });
+      }
+
+      function addReadonlyNote() {
+        var isPersonalInfo =
+          /\/account\/?$/.test(window.location.pathname) ||
+          /\/account\/\?/.test(window.location.href);
+        if (!isPersonalInfo) {
+          return;
+        }
+        if (document.getElementById(NOTE_ID)) {
+          return;
+        }
+        var form = document.querySelector("form");
+        if (!form || !form.parentElement) {
+          return;
+        }
+        var note = document.createElement("div");
+        note.id = NOTE_ID;
+        note.textContent = NOTE_TEXT;
+        form.parentElement.insertBefore(note, form);
+      }
+
+      function lockPersonalInfoFields() {
+        var isPersonalInfo =
+          /\/account\/?$/.test(window.location.pathname) ||
+          /\/account\/\?/.test(window.location.href);
+        if (!isPersonalInfo) {
+          return;
+        }
+        document.querySelectorAll("form input, form textarea").forEach(function (field) {
+          field.setAttribute("readonly", "readonly");
+          field.setAttribute("aria-readonly", "true");
+        });
+        document.querySelectorAll("form select").forEach(function (field) {
+          field.setAttribute("disabled", "disabled");
+          field.setAttribute("aria-disabled", "true");
+        });
+      }
+
+      function redirectApplicationsPage() {
+        var path = window.location.pathname;
+        if (!/\/account\/applications($|\/|\?)/.test(path)) {
+          return false;
+        }
+        window.location.replace(path.replace(/\/applications($|\/.*)/, "/"));
+        return true;
+      }
+
+      function applyLockdown() {
+        if (redirectApplicationsPage()) {
+          return;
+        }
+        hideSelectors();
+        hidePasswordWidgets();
+        hideSignOutButtons();
+        hideDeviceSignOutControls();
+        lockPersonalInfoFields();
+        addReadonlyNote();
+      }
+
+      applyLockdown();
+      var observer = new MutationObserver(applyLockdown);
+      observer.observe(document.body, { childList: true, subtree: true });
+      window.addEventListener("popstate", applyLockdown);
+    })();
+---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -258,6 +467,20 @@ spec:
           configMap:
             name: keycloak-client-config-external
             optional: true
+        - name: keycloak-account-theme
+          configMap:
+            name: keycloak-account-theme
+            items:
+              - key: theme.properties
+                path: theme.properties
+              - key: content.json
+                path: content.json
+              - key: messages_en.properties
+                path: messages/messages_en.properties
+              - key: account-lockdown.js
+                path: resources/js/account-lockdown.js
+              - key: account-lockdown.css
+                path: resources/css/account-lockdown.css
 
       initContainers:
         - name: wait-for-config-job
@@ -931,4 +1154,7 @@ spec:
               readOnly: true
             - name: keycloak-client-config-external
               mountPath: /opt/keycloak/data/clients/external
+              readOnly: true
+            - name: keycloak-account-theme
+              mountPath: /opt/keycloak/themes/suncoast-account/account
               readOnly: true
