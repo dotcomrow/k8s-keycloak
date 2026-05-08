@@ -256,10 +256,32 @@ data:
         return true;
       }
 
+      function hideApplicationsNavLink() {
+        document.querySelectorAll("a").forEach(function (link) {
+          var href = (link.getAttribute("href") || "").trim();
+          var text = (link.textContent || "").trim();
+          var navContainer = link.closest("nav, [role='navigation'], .pf-v5-c-nav");
+          var isApplicationsHref =
+            /\/account\/applications($|[/?#])/.test(href) ||
+            /^applications($|[/?#])/.test(href);
+
+          if (!isApplicationsHref && !(navContainer && text === "Applications")) {
+            return;
+          }
+
+          var navItem =
+            link.closest(".pf-v5-c-nav__item") ||
+            link.closest("li") ||
+            link.closest("[role='listitem']");
+          hideElement(navItem || link);
+        });
+      }
+
       function applyLockdown() {
         if (redirectApplicationsPage()) {
           return;
         }
+        hideApplicationsNavLink();
         hideSelectors();
         hidePasswordWidgets();
         hideSignOutButtons();
