@@ -1312,6 +1312,46 @@ spec:
                 # Keycloak SSO session for account-console and other clients.
                 add_exec_alternative "$realm" "$flow" "auth-cookie"
                 add_exec_alternative "$realm" "$flow" "identity-provider-redirector"
+                # Ordering matters for ALTERNATIVE executions: cookie must run first
+                # so an existing SSO session short-circuits before any IdP redirect.
+                EXECS="$($KCADM get "authentication/flows/${flow}/executions" -r "$realm" || echo "[]")"
+                COOKIE_OBJ="$(
+                  printf '%s' "$EXECS" | tr -d "\n" | sed "s/},[[:space:]]*{/}\n{/g" \
+                    | grep -E "\"providerId\"[[:space:]]*:[[:space:]]*\"auth-cookie\"" \
+                    | head -n1 || true
+                )"
+                REDIR_OBJ="$(
+                  printf '%s' "$EXECS" | tr -d "\n" | sed "s/},[[:space:]]*{/}\n{/g" \
+                    | grep -E "\"providerId\"[[:space:]]*:[[:space:]]*\"identity-provider-redirector\"" \
+                    | head -n1 || true
+                )"
+                COOKIE_ID="$(printf '%s' "$COOKIE_OBJ" | sed -n "s/.*\"id\"[[:space:]]*:[[:space:]]*\"\\([^\"]*\\)\".*/\\1/p" | head -n1 || true)"
+                REDIR_ID="$(printf '%s' "$REDIR_OBJ" | sed -n "s/.*\"id\"[[:space:]]*:[[:space:]]*\"\\([^\"]*\\)\".*/\\1/p" | head -n1 || true)"
+                COOKIE_ID="$(clean_id "${COOKIE_ID:-}")"
+                REDIR_ID="$(clean_id "${REDIR_ID:-}")"
+                if [ -n "${COOKIE_ID:-}" ] && [ -n "${REDIR_ID:-}" ]; then
+                  for i in {1..10}; do
+                    EXECS="$($KCADM get "authentication/flows/${flow}/executions" -r "$realm" || echo "[]")"
+                    COOKIE_OBJ="$(
+                      printf '%s' "$EXECS" | tr -d "\n" | sed "s/},[[:space:]]*{/}\n{/g" \
+                        | grep -E "\"id\"[[:space:]]*:[[:space:]]*\"${COOKIE_ID}\"" \
+                        | head -n1 || true
+                    )"
+                    REDIR_OBJ="$(
+                      printf '%s' "$EXECS" | tr -d "\n" | sed "s/},[[:space:]]*{/}\n{/g" \
+                        | grep -E "\"id\"[[:space:]]*:[[:space:]]*\"${REDIR_ID}\"" \
+                        | head -n1 || true
+                    )"
+                    COOKIE_INDEX="$(printf '%s' "$COOKIE_OBJ" | sed -n "s/.*\"index\"[[:space:]]*:[[:space:]]*\\([0-9][0-9]*\\).*/\\1/p" | head -n1 || true)"
+                    REDIR_INDEX="$(printf '%s' "$REDIR_OBJ" | sed -n "s/.*\"index\"[[:space:]]*:[[:space:]]*\\([0-9][0-9]*\\).*/\\1/p" | head -n1 || true)"
+                    COOKIE_INDEX="${COOKIE_INDEX:-999}"
+                    REDIR_INDEX="${REDIR_INDEX:-999}"
+                    if [ "$COOKIE_INDEX" -lt "$REDIR_INDEX" ]; then
+                      break
+                    fi
+                    $KCADM create "authentication/executions/${COOKIE_ID}/raise-priority" -r "$realm" >/dev/null 2>&1 || true
+                  done
+                fi
 
                 if [ -z "${default_provider:-}" ]; then
                   echo "ℹ️  No default IdP set for ${flow}; use kc_idp_hint to select a provider."
