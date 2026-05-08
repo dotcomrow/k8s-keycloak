@@ -75,8 +75,8 @@ metadata:
 data:
   theme.properties: |
     parent=keycloak.v3
-    styles=resources/css/account-lockdown.css
-    scripts=resources/js/account-lockdown.js
+    styles=account-lockdown.css
+    scripts=account-lockdown.js
   content.json: |
     [
       { "label": "personalInfo", "path": "" },
@@ -478,9 +478,9 @@ spec:
               - key: messages_en.properties
                 path: messages/messages_en.properties
               - key: account-lockdown.js
-                path: resources/js/account-lockdown.js
+                path: account-lockdown.js
               - key: account-lockdown.css
-                path: resources/css/account-lockdown.css
+                path: account-lockdown.css
 
       initContainers:
         - name: wait-for-config-job
