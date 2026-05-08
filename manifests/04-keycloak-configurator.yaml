@@ -2243,6 +2243,42 @@ spec:
                 $KCADM remove-roles -r "$realm" --rname "$default_role" --cclientid "$clientId" --rolename "$role" >/dev/null 2>&1 || true
               }
 
+              ensure_client_scope_mapping_client_role() {
+                local realm="$1"
+                local source_client_id="$2"
+                local target_client_id="$3"
+                local role="$4"
+                local source_uuid=""
+                local target_uuid=""
+                local mapped_roles_json=""
+                local role_json=""
+                local role_id=""
+                local role_name=""
+                local payload_file=""
+
+                source_uuid="$(client_uuid "$realm" "$source_client_id")"
+                target_uuid="$(client_uuid "$realm" "$target_client_id")"
+                [ -z "${source_uuid:-}" ] && return 0
+                [ -z "${target_uuid:-}" ] && return 0
+                [ -z "${role:-}" ] && return 0
+
+                mapped_roles_json="$($KCADM get "clients/$source_uuid/scope-mappings/clients/$target_uuid" -r "$realm" 2>/dev/null || true)"
+                if printf '%s' "$mapped_roles_json" | grep -q "\"name\"[[:space:]]*:[[:space:]]*\"${role}\""; then
+                  return 0
+                fi
+
+                role_json="$($KCADM get "clients/$target_uuid/roles/$role" -r "$realm" 2>/dev/null || true)"
+                role_id="$(printf '%s' "$role_json" | sed -n 's/.*"id"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -n1)"
+                role_name="$(printf '%s' "$role_json" | sed -n 's/.*"name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -n1)"
+                [ -z "${role_id:-}" ] && return 0
+                [ -z "${role_name:-}" ] && return 0
+
+                payload_file="$(mktemp)"
+                printf '[{"id":"%s","name":"%s"}]\n' "$role_id" "$role_name" > "$payload_file"
+                $KCADM create "clients/$source_uuid/scope-mappings/clients/$target_uuid" -r "$realm" -f "$payload_file" >/dev/null 2>&1 || true
+                rm -f "$payload_file"
+              }
+
               ensure_client_scope() {
                 local realm="$1"
                 local clientId="$2"
@@ -2430,6 +2466,10 @@ spec:
                 remove_default_client_role_member "$realm" "account" "view-applications"
                 remove_default_client_role_member "$realm" "account" "delete-account"
                 remove_default_client_role_member "$realm" "account" "manage-consent"
+                # Account REST API checks client roles from the account-console access token.
+                # Ensure token scope still contains read/link roles after removing manage-account.
+                ensure_client_scope_mapping_client_role "$realm" "account-console" "account" "view-profile"
+                ensure_client_scope_mapping_client_role "$realm" "account-console" "account" "manage-account-links"
               done
               ensure_client_roles "$INTERNAL_REALM" "$DROOLS_WORKBENCH_CLIENT_ID" \
                 admin analyst developer user manager process-admin rest-all rest-project
