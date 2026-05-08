@@ -1308,7 +1308,10 @@ spec:
                 local cfg_alias="redirect-to-${default_provider}-${flow}"
 
                 ensure_flow "$realm" "$flow" "$desc"
-                add_exec_required "$realm" "$flow" "identity-provider-redirector"
+                # Keep external realm login IdP-only while still honoring an existing
+                # Keycloak SSO session for account-console and other clients.
+                add_exec_alternative "$realm" "$flow" "auth-cookie"
+                add_exec_alternative "$realm" "$flow" "identity-provider-redirector"
 
                 if [ -z "${default_provider:-}" ]; then
                   echo "ℹ️  No default IdP set for ${flow}; use kc_idp_hint to select a provider."
