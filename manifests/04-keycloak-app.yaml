@@ -122,6 +122,7 @@ data:
     #cancel-btn,
     #update-email-btn,
     #delete-account-btn,
+    [data-testid="applications"],
     [data-testid="options-toggle"],
     [data-testid="options-kebab-toggle"],
     [id$="-idp-unlink"] {
@@ -163,6 +164,7 @@ data:
           "#cancel-btn",
           "#update-email-btn",
           "#delete-account-btn",
+          "[data-testid='applications']",
           "[data-testid='options-toggle']",
           "[data-testid='options-kebab-toggle']",
           "[id$='-idp-unlink']"
@@ -496,7 +498,7 @@ spec:
               - key: theme.properties
                 path: theme.properties
               - key: content.json
-                path: content.json
+                path: resources/content.json
               - key: messages_en.properties
                 path: messages/messages_en.properties
               - key: account-lockdown.js
