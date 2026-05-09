@@ -1037,6 +1037,20 @@ spec:
                 return 1
               }
 
+              flow_uuid_by_alias() {
+                local realm="$1"
+                local alias="$2"
+                local line=""
+                local id=""
+                line="$($KCADM get authentication/flows -r "$realm" --fields id,alias --format csv 2>/dev/null \
+                  | grep -m1 "\"${alias}\"" || true)"
+                id="$(printf '%s' "$line" | cut -d',' -f1 | tr -d '"' | tr -d '[:space:]')"
+                id="$(clean_id "${id:-}")"
+                if [ -n "${id:-}" ]; then
+                  printf '%s' "$id"
+                fi
+              }
+
               add_exec_with_requirement() {
                 local realm="$1"
                 local flow="$2"
@@ -2996,17 +3010,23 @@ spec:
                 local realm="$1"
                 local clientId="$2"
                 local flow="$3"
+                local flow_id=""
                 if [ -z "${flow:-}" ]; then
                   echo "ℹ️  flow not set (skipping override for $clientId)"
                   return 0
                 fi
                 CID="$(client_uuid "$realm" "$clientId")"
                 if [ -n "${CID:-}" ]; then
+                  flow_id="$(flow_uuid_by_alias "$realm" "$flow" || true)"
+                  if [ -z "${flow_id:-}" ]; then
+                    # Fallback to provided value for compatibility with pre-resolved IDs.
+                    flow_id="$flow"
+                  fi
                   # Set browser flow override directly. Flow-read prechecks can fail under
                   # restricted admin clients even when the target flow alias exists.
                   if ! $KCADM update "clients/$CID" -r "$realm" \
-                    -s "authenticationFlowBindingOverrides.browser=$flow" >/dev/null 2>&1; then
-                    echo "⚠️  Unable to set browser flow override ($flow) for client $clientId; skipping."
+                    -s "authenticationFlowBindingOverrides.browser=$flow_id" >/dev/null 2>&1; then
+                    echo "⚠️  Unable to set browser flow override (${flow} -> ${flow_id}) for client $clientId; skipping."
                   fi
                 else
                   echo "ℹ️  client not found: $clientId (skipping override)"
