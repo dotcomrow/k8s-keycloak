@@ -2996,29 +2996,14 @@ spec:
                 local realm="$1"
                 local clientId="$2"
                 local flow="$3"
-                local override=""
                 if [ -z "${flow:-}" ]; then
                   echo "ℹ️  flow not set (skipping override for $clientId)"
                   return 0
                 fi
                 CID="$(client_uuid "$realm" "$clientId")"
                 if [ -n "${CID:-}" ]; then
-                  override=$($KCADM get "clients/$CID" -r "$realm" 2>/dev/null \
-                    | tr -d "\n" \
-                    | sed -n "s/.*\"authenticationFlowBindingOverrides\"[[:space:]]*:[[:space:]]*{[^}]*\"browser\"[[:space:]]*:[[:space:]]*\"\\([^\"]*\\)\".*/\\1/p" \
-                    | head -n1 || true)
-                  if [ -n "${override:-}" ] && ! flow_alias_exists "$realm" "$override"; then
-                    $KCADM update "clients/$CID" -r "$realm" -s "authenticationFlowBindingOverrides={}" >/dev/null 2>&1 || true
-                    echo "ℹ️  cleared invalid browser flow override '$override' for $clientId"
-                  fi
-                  if ! flow_alias_exists "$realm" "$flow"; then
-                    echo "ℹ️  flow not found: $flow (skipping override for $clientId)"
-                    return 0
-                  fi
-                  if ! $KCADM get "authentication/flows/$flow" -r "$realm" >/dev/null 2>&1; then
-                    echo "ℹ️  flow alias not resolvable: $flow (skipping override for $clientId)"
-                    return 0
-                  fi
+                  # Set browser flow override directly. Flow-read prechecks can fail under
+                  # restricted admin clients even when the target flow alias exists.
                   if ! $KCADM update "clients/$CID" -r "$realm" \
                     -s "authenticationFlowBindingOverrides.browser=$flow" >/dev/null 2>&1; then
                     echo "⚠️  Unable to set browser flow override ($flow) for client $clientId; skipping."
