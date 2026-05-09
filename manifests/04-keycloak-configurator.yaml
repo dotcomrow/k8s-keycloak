@@ -3057,6 +3057,9 @@ spec:
               else
                 clear_client_flow_override "$INTERNAL_REALM" "$OPENWEBUI_CLIENT_ID" "$FLOW_BROWSER_GH"
               fi
+              # Ensure account-console uses the built-in browser flow so Keycloak session
+              # cookie checks are evaluated before any IdP redirect logic.
+              set_client_flow_override "$EXTERNAL_REALM" "account-console" "browser"
               
               if [ "$CONFIGURATOR_DELETE_CLIENT" = "true" ]; then
                 CID=$($KCADM get clients -r "$ADMIN_REALM" -q "clientId=$CONFIG_CLIENT_ID" --fields id --format csv 2>/dev/null | tail -n1 || true)
