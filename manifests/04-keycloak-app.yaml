@@ -77,6 +77,8 @@ data:
     parent=keycloak.v3
     styles=css/account-lockdown.css
     scripts=js/account-lockdown.js
+    logo=/public/blank-logo.svg
+    logoUrl=#
   content.json: |
     [
       { "label": "personalInfo", "path": "" },
@@ -117,6 +119,8 @@ data:
     personalInfoDescription=Your profile information is managed by your linked identity provider. To make changes, update the identity provider profile and then sign in again.
     signingInDescription=Manage second-factor sign-in methods. Password setup and profile editing are disabled in this account page.
     linkedAccountsIntroMessage=Link additional login providers here. Unlinking providers is disabled in this account page.
+  blank-logo.svg: |
+    <svg xmlns="http://www.w3.org/2000/svg" width="1" height="1" viewBox="0 0 1 1" aria-hidden="true"></svg>
   account-lockdown.css: |
     #save-btn,
     #cancel-btn,
@@ -125,6 +129,10 @@ data:
     [data-testid="applications"],
     [data-testid="options-toggle"],
     [data-testid="options-kebab-toggle"],
+    [data-testid="brand"],
+    [data-testid="page-header-brand"],
+    .pf-v5-c-masthead__brand,
+    .pf-v5-c-page__header-brand-link,
     [id$="-idp-unlink"] {
       display: none !important;
     }
@@ -279,10 +287,23 @@ data:
         });
       }
 
+      function hideHeaderBrand() {
+        var selectors = [
+          "[data-testid='brand']",
+          "[data-testid='page-header-brand']",
+          ".pf-v5-c-masthead__brand",
+          ".pf-v5-c-page__header-brand-link"
+        ];
+        selectors.forEach(function (selector) {
+          document.querySelectorAll(selector).forEach(hideElement);
+        });
+      }
+
       function applyLockdown() {
         if (redirectApplicationsPage()) {
           return;
         }
+        hideHeaderBrand();
         hideApplicationsNavLink();
         hideSelectors();
         hidePasswordWidgets();
@@ -505,6 +526,8 @@ spec:
                 path: resources/js/account-lockdown.js
               - key: account-lockdown.css
                 path: resources/css/account-lockdown.css
+              - key: blank-logo.svg
+                path: resources/public/blank-logo.svg
 
       initContainers:
         - name: wait-for-config-job

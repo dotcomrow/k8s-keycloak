@@ -1236,6 +1236,55 @@ spec:
                   fi
                 fi
               }
+
+              # Add optional OTP to an IdP post-login flow:
+              # - If the user has OTP configured in Keycloak, prompt for OTP.
+              # - If OTP is not configured, continue without prompting.
+              ensure_optional_otp_if_configured_flow() {
+                local realm="$1"
+                local parent_flow="$2"
+                local subflow="${parent_flow}-otp-if-configured"
+                local desc="Prompt for OTP only when user has OTP configured"
+                local exec_id=""
+
+                if [ -z "${realm:-}" ] || [ -z "${parent_flow:-}" ]; then
+                  return 0
+                fi
+                if ! provider_exists "conditional-user-configured" || ! provider_exists "auth-otp-form"; then
+                  if [ "$PROVIDER_WARN" = "true" ]; then
+                    echo "⚠️  Missing conditional/OTP providers; cannot enforce optional OTP in ${realm}/${parent_flow}."
+                  fi
+                  return 0
+                fi
+
+                # Create a subflow under the parent flow (idempotent).
+                if ! flow_alias_exists "$realm" "$subflow"; then
+                  $KCADM create "authentication/flows/${parent_flow}/executions/flow" -r "$realm" \
+                    -s "alias=${subflow}" \
+                    -s "type=basic-flow" \
+                    -s "description=${desc}" >/dev/null 2>&1 || true
+                fi
+
+                # Mark subflow as CONDITIONAL.
+                exec_id="$(
+                  $KCADM get "authentication/flows/${parent_flow}/executions" -r "$realm" 2>/dev/null \
+                    | tr -d "\n" \
+                    | sed "s/},[[:space:]]*{/}\n{/g" \
+                    | grep -E "\"displayName\"[[:space:]]*:[[:space:]]*\"${subflow}\"" \
+                    | grep -E "\"authenticationFlow\"[[:space:]]*:[[:space:]]*true" \
+                    | sed -n "s/.*\"id\"[[:space:]]*:[[:space:]]*\"\\([^\"]\\+\\)\".*/\\1/p" \
+                    | head -n1 || true
+                )"
+                exec_id="$(clean_id "${exec_id:-}")"
+                if [ -n "${exec_id:-}" ]; then
+                  printf '{ "id":"%s", "requirement":"%s" }\n' "$exec_id" "CONDITIONAL" >/tmp/otp_subflow_req.json
+                  $KCADM update "authentication/flows/${parent_flow}/executions" -r "$realm" -f /tmp/otp_subflow_req.json >/dev/null 2>&1 || true
+                fi
+
+                # Execute the subflow only when the user is configured for OTP.
+                add_exec_required "$realm" "$subflow" "conditional-user-configured"
+                add_exec_required "$realm" "$subflow" "auth-otp-form"
+              }
               
               ensure_redirect_flow() {
                 local realm="$1"
@@ -1539,6 +1588,7 @@ spec:
                     echo "⚠️  Missing provider in ${ADMIN_REALM}: ${PROVIDER_GH} (skipping execution)"
                   fi
                 fi
+                ensure_optional_otp_if_configured_flow "$ADMIN_REALM" "$FLOW_GH" || true
                 if flow_has_execution "$ADMIN_REALM" "$FLOW_GH"; then
                 echo "admin: set postBrokerLoginFlowAlias"
                 $KCADM update identity-provider/instances/github -r "$ADMIN_REALM" \
@@ -1600,6 +1650,7 @@ spec:
                 fi
               fi
               ensure_deny_unverified_idp_email_flow "$INTERNAL_REALM" "$FLOW_GH" || true
+              ensure_optional_otp_if_configured_flow "$INTERNAL_REALM" "$FLOW_GH" || true
               if [ "$INTERNAL_GITHUB_ENABLED" = "true" ] && flow_has_execution "$INTERNAL_REALM" "$FLOW_GH"; then
               $KCADM update identity-provider/instances/github -r "$INTERNAL_REALM" \
                 -s "postBrokerLoginFlowAlias=$FLOW_GH" || true
@@ -1633,6 +1684,7 @@ spec:
                   fi
                 fi
                 ensure_deny_unverified_idp_email_flow "$EXTERNAL_REALM" "$FLOW_GGL" || true
+                ensure_optional_otp_if_configured_flow "$EXTERNAL_REALM" "$FLOW_GGL" || true
                 if flow_has_execution "$EXTERNAL_REALM" "$FLOW_GGL"; then
                   $KCADM update identity-provider/instances/google -r "$EXTERNAL_REALM" \
                     -s "postBrokerLoginFlowAlias=$FLOW_GGL" || true
@@ -1687,6 +1739,28 @@ spec:
                 $KCADM update "authentication/required-actions/$alias" -r "$realm" \
                   -s "enabled=$enabled" -s "defaultAction=$default_action" || true
               }
+
+              apply_account_theme_to_all_realms() {
+                local theme="$1"
+                local realms_raw=""
+                local realm=""
+                if [ -z "${theme:-}" ]; then
+                  return 0
+                fi
+                realms_raw="$($KCADM get realms 2>/dev/null \
+                  | tr -d '\n' \
+                  | sed 's/},[[:space:]]*{/}\n{/g' \
+                  | sed -n 's/.*"realm"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' || true)"
+                if [ -z "${realms_raw//[[:space:]]/}" ]; then
+                  echo "⚠️  Unable to enumerate realms for account theme propagation."
+                  return 0
+                fi
+                while IFS= read -r realm || [ -n "$realm" ]; do
+                  realm="$(printf '%s' "$realm" | tr -d '\r' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
+                  [ -z "$realm" ] && continue
+                  $KCADM update "realms/$realm" -s "accountTheme=$theme" >/dev/null 2>&1 || true
+                done <<< "$realms_raw"
+              }
               
               # Realm hygiene
               $KCADM update "realms/$INTERNAL_REALM" \
@@ -1697,6 +1771,7 @@ spec:
                 -s sslRequired=EXTERNAL -s loginWithEmailAllowed=true -s registrationAllowed=false \
                 -s rememberMe=false -s resetPasswordAllowed=false -s bruteForceProtected=true -s permanentLockout=false \
                 -s "accountTheme=$KEYCLOAK_ACCOUNT_THEME" || true
+              apply_account_theme_to_all_realms "$KEYCLOAK_ACCOUNT_THEME"
               if [ "$INTERNAL_DISABLE_PASSWORD_SETUP" = "true" ]; then
                 # Remove account-console password setup/update actions in the internal realm.
                 set_required_action_state "$INTERNAL_REALM" "UPDATE_PASSWORD" "false" "false"
