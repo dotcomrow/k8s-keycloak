@@ -41,6 +41,10 @@ Runtime flow:
 3. Gateway redirects back to app with one-time `gateway_code` query param.
 4. App exchanges that code with `POST /v1/auth/exchange`.
 
+Allowed app URL policy:
+- Apps now support `base_urls` (list of allowed URLs) in addition to legacy `base_url`.
+- This allows one app slug to support multiple trusted origins (for example localhost + preview + prod) without wildcard matching.
+
 Management APIs (for GUI):
 - `GET /v1/apps`
 - `POST /v1/apps`
@@ -50,7 +54,7 @@ Management APIs (for GUI):
 
 GitOps seed job for baseline app registrations:
 - `manifests/09-auth-gateway-seed-apps.yaml`
-- Upserts `shell`, `shell-prod`, and `example-mfe-preview` on each Argo sync so they survive rebuilds.
+- Upserts `shell`, `shell-prod`, `example-mfe-dev`, `example-mfe-prod`, `nifi-flow-mfe-dev`, and `nifi-flow-mfe-prod` on each Argo sync so they survive rebuilds.
 
 If `ADMIN_API_TOKEN` is set, management APIs require:
 - `Authorization: Bearer <ADMIN_API_TOKEN>`
