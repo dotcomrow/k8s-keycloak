@@ -247,6 +247,57 @@ data:
         }
       ]
     }
+  cms-site-internal.json: |
+    {
+      "clientId": "<path:secret/data/keycloak-client-id-cms-site-internal#value>",
+      "name": "CMS Site Internal (Cloudflare Worker)",
+      "protocol": "openid-connect",
+      "publicClient": false,
+      "clientAuthenticatorType": "client-secret",
+      "secret": "<path:secret/data/keycloak-client-secret-cms-site-internal#value>",
+      "standardFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": true,
+      "authorizationServicesEnabled": false,
+      "protocolMappers": [
+        {
+          "name": "audience-auth-gateway-exchange",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "consentRequired": false,
+          "config": {
+            "included.client.audience": "auth-gateway-exchange",
+            "access.token.claim": "true",
+            "id.token.claim": "false"
+          }
+        },
+        {
+          "name": "audience-graphql-api",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "consentRequired": false,
+          "config": {
+            "included.client.audience": "<path:secret/data/keycloak-client-id-graphql-api#value>",
+            "access.token.claim": "true",
+            "id.token.claim": "false"
+          }
+        },
+        {
+          "name": "hasura-claims",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-hardcoded-claim-mapper",
+          "consentRequired": false,
+          "config": {
+            "claim.name": "https://hasura.io/jwt/claims",
+            "claim.value": "{\"x-hasura-default-role\":\"user\",\"x-hasura-allowed-roles\":[\"user\"],\"x-hasura-role\":\"user\"}",
+            "jsonType.label": "JSON",
+            "access.token.claim": "true",
+            "id.token.claim": "false",
+            "userinfo.token.claim": "false"
+          }
+        }
+      ]
+    }
 ---
 apiVersion: v1
 kind: ConfigMap

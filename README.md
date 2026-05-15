@@ -113,8 +113,15 @@ scope named `user-profile` (added as a **default** client scope for the main app
 - Google: `hd`, `google_sub`
 - GitHub: `company`, `location`, `bio`, `twitter_username`, `github_id`, `github_node_id`
 
+Notification contact notes:
+- Phone and device contact claims are in optional scope `notification-contact` (not default).
+- `phone_number`/`phone_number_verified` are emitted only when this scope is requested and the upstream/user profile has values.
+- `device_id` is emitted from the Keycloak user attribute `device_id` when present.
+- GitHub's standard `/user` payload does not include a phone field, so internal users typically need phone populated from another upstream source or pre-set user attributes.
+
 ### How Apps Consume It
 - Tokens/userinfo include the above attributes as claims when the client has the `user-profile` scope attached.
+- To read phone/device contact claims, request optional scope `notification-contact` in the OIDC `scope` parameter.
 - The configurator also ensures the standard `email` scope is present for app clients that expect `email`.
 
 ## Cloudflare Tunnel

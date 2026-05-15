@@ -413,6 +413,7 @@ spec:
               declare -A CLIENT_UUID_CACHE=()
               declare -A CLIENT_SCOPE_UUID_CACHE=()
               declare -A CLIENT_DEFAULT_SCOPES_CACHE=()
+              declare -A CLIENT_OPTIONAL_SCOPES_CACHE=()
               declare -A SCOPE_MAPPER_CSV_CACHE=()
               declare -A CLIENT_MAPPER_CSV_CACHE=()
               declare -A SA_ID_CACHE=()
@@ -1584,6 +1585,7 @@ spec:
                 ensure_github_user_attribute_mapper "$ADMIN_REALM" "github-login" "login" "preferred_username" "INHERIT"
                 ensure_github_user_attribute_mapper "$ADMIN_REALM" "github-id" "id" "github_id" "INHERIT"
                 ensure_github_user_attribute_mapper "$ADMIN_REALM" "github-node-id" "node_id" "github_node_id" "INHERIT"
+                ensure_github_user_attribute_mapper "$ADMIN_REALM" "github-phone-number" "phone" "phone_number" "INHERIT"
                 echo "admin: ensure first-broker flow"
                 ensure_first_broker_flow_autolink "$ADMIN_REALM" || true
                 echo "admin: ensure post-broker flow"
@@ -1641,6 +1643,7 @@ spec:
                 ensure_github_user_attribute_mapper "$INTERNAL_REALM" "github-login" "login" "preferred_username" "INHERIT"
                 ensure_github_user_attribute_mapper "$INTERNAL_REALM" "github-id" "id" "github_id" "INHERIT"
                 ensure_github_user_attribute_mapper "$INTERNAL_REALM" "github-node-id" "node_id" "github_node_id" "INHERIT"
+                ensure_github_user_attribute_mapper "$INTERNAL_REALM" "github-phone-number" "phone" "phone_number" "INHERIT"
               else
                 echo "ℹ️  GitHub IdP disabled in internal realm by config."
                 if $KCADM get identity-provider/instances/github -r "$INTERNAL_REALM" >/dev/null 2>&1; then
@@ -1683,6 +1686,8 @@ spec:
                 ensure_oidc_user_attribute_mapper "$EXTERNAL_REALM" "google" "google-email-verified" "email_verified" "email_verified" "INHERIT"
                 ensure_oidc_user_attribute_mapper "$EXTERNAL_REALM" "google" "google-hd" "hd" "hd" "INHERIT"
                 ensure_oidc_user_attribute_mapper "$EXTERNAL_REALM" "google" "google-sub" "sub" "google_sub" "INHERIT"
+                ensure_oidc_user_attribute_mapper "$EXTERNAL_REALM" "google" "google-phone-number" "phone_number" "phone_number" "INHERIT"
+                ensure_oidc_user_attribute_mapper "$EXTERNAL_REALM" "google" "google-phone-number-verified" "phone_number_verified" "phone_number_verified" "INHERIT"
                 ensure_flow "$EXTERNAL_REALM" "$FLOW_GGL" "Post-broker: Google groups only"
                 if provider_exists "$PROVIDER_GGL"; then
                   add_exec_required "$EXTERNAL_REALM" "$FLOW_GGL" "$PROVIDER_GGL"
@@ -2421,6 +2426,37 @@ spec:
                 CLIENT_DEFAULT_SCOPES_CACHE[$cache_key]="${default_scopes_json} {\"name\":\"${scopeName}\"}"
               }
 
+              ensure_optional_client_scope() {
+                local realm="$1"
+                local clientId="$2"
+                local scopeName="$3"
+                local CLIENT_UUID=""
+                local SCOPE_UUID=""
+                local cache_key=""
+                local optional_scopes_json=""
+
+                CLIENT_UUID="$(client_uuid "$realm" "$clientId")"
+                [ -z "${CLIENT_UUID:-}" ] && return 0
+                SCOPE_UUID="$(client_scope_uuid "$realm" "$scopeName")"
+                [ -z "${SCOPE_UUID:-}" ] && return 0
+
+                cache_key="${realm}|${CLIENT_UUID}"
+                if [ "${CLIENT_OPTIONAL_SCOPES_CACHE[$cache_key]+set}" = "set" ]; then
+                  optional_scopes_json="${CLIENT_OPTIONAL_SCOPES_CACHE[$cache_key]}"
+                else
+                  optional_scopes_json="$($KCADM get "clients/$CLIENT_UUID/optional-client-scopes" -r "$realm" 2>/dev/null || true)"
+                  CLIENT_OPTIONAL_SCOPES_CACHE[$cache_key]="$optional_scopes_json"
+                fi
+
+                if printf '%s' "$optional_scopes_json" | grep -q "\"name\"[[:space:]]*:[[:space:]]*\"${scopeName}\""; then
+                  return 0
+                fi
+                log_progress "attach optional scope: realm=${realm} client=${clientId} scope=${scopeName}"
+                $KCADM update "clients/$CLIENT_UUID/optional-client-scopes/$SCOPE_UUID" -r "$realm" >/dev/null 2>&1 || true
+                # Keep cache coherent after attaching a scope.
+                CLIENT_OPTIONAL_SCOPES_CACHE[$cache_key]="${optional_scopes_json} {\"name\":\"${scopeName}\"}"
+              }
+
               ensure_client_scope_attribute_mapper() {
                 local realm="$1"
                 local scope_uuid="$2"
@@ -2529,6 +2565,29 @@ spec:
                 ensure_client_scope_attribute_mapper "$realm" "$SCOPE_UUID" "github_node_id" "github_node_id" "github_node_id"
               }
 
+              # Optional notification-contact scope:
+              # - request it only when an app needs notification contact data
+              # - allows apps to distinguish "not granted to app" from "granted but unset for user"
+              ensure_notification_contact_scope() {
+                local realm="$1"
+                local scopeName="notification-contact"
+                local SCOPE_UUID=""
+                SCOPE_UUID="$(client_scope_uuid "$realm" "$scopeName")"
+                if [ -z "${SCOPE_UUID:-}" ]; then
+                  SCOPE_UUID=$($KCADM create client-scopes -r "$realm" \
+                    -s "name=$scopeName" \
+                    -s "protocol=openid-connect" \
+                    -i 2>/dev/null || true)
+                  SCOPE_UUID="$(clean_id "$SCOPE_UUID")"
+                  CLIENT_SCOPE_UUID_CACHE["${realm}|${scopeName}"]="$SCOPE_UUID"
+                fi
+                [ -z "${SCOPE_UUID:-}" ] && return 0
+
+                ensure_client_scope_attribute_mapper "$realm" "$SCOPE_UUID" "phone_number" "phone_number" "phone_number"
+                ensure_client_scope_attribute_mapper "$realm" "$SCOPE_UUID" "phone_number_verified" "phone_number_verified" "phone_number_verified" "boolean"
+                ensure_client_scope_attribute_mapper "$realm" "$SCOPE_UUID" "device_id" "device_id" "device_id"
+              }
+
               ensure_groups_scope() {
                 local realm="$1"
                 local scopeName="groups"
@@ -2595,6 +2654,8 @@ spec:
               # Standardize profile claims for apps via a shared client scope in both realms.
               ensure_user_profile_scope "$INTERNAL_REALM"
               ensure_user_profile_scope "$EXTERNAL_REALM"
+              ensure_notification_contact_scope "$INTERNAL_REALM"
+              ensure_notification_contact_scope "$EXTERNAL_REALM"
 
               # Attach as a default client scope so apps always receive the profile claims.
               ensure_client_scope "$INTERNAL_REALM" "$DROOLS_WORKBENCH_CLIENT_ID" "user-profile"
@@ -2603,6 +2664,14 @@ spec:
               ensure_client_scope "$INTERNAL_REALM" "$OPENWEBUI_CLIENT_ID" "user-profile"
               ensure_client_scope "$EXTERNAL_REALM" "$OPENWEBUI_CLIENT_ID" "user-profile"
               ensure_client_scope "$EXTERNAL_REALM" "$GRAPHQL_API_CLIENT_ID" "user-profile"
+
+              # notification-contact is optional by design. Apps must explicitly request
+              # scope=notification-contact to receive phone/device notification attributes.
+              ensure_optional_client_scope "$INTERNAL_REALM" "$DROOLS_WORKBENCH_CLIENT_ID" "notification-contact"
+              ensure_optional_client_scope "$INTERNAL_REALM" "$HASURA_CONSOLE_PROXY_CLIENT_ID" "notification-contact"
+              ensure_optional_client_scope "$INTERNAL_REALM" "$OPENWEBUI_CLIENT_ID" "notification-contact"
+              ensure_optional_client_scope "$EXTERNAL_REALM" "$OPENWEBUI_CLIENT_ID" "notification-contact"
+              ensure_optional_client_scope "$EXTERNAL_REALM" "$GRAPHQL_API_CLIENT_ID" "notification-contact"
 
               # Ensure common OIDC email scope remains attached for apps that expect the standard 'email' claim.
               ensure_client_scope "$INTERNAL_REALM" "$DROOLS_WORKBENCH_CLIENT_ID" "email"
