@@ -356,6 +356,8 @@ spec:
               GRAVITEE_INTROSPECT_CLIENT_SECRET="$(cat /vault/secrets/client-secret-gravitee-introspection 2>/dev/null || true)"
               HASURA_CONSOLE_PROXY_CLIENT_ID="hasura-console-proxy"
               GRAPHQL_API_CLIENT_ID="graphql-api"
+              CMS_SITE_INTERNAL_CLIENT_ID="cms-site-internal"
+              CMS_SITE_EXTERNAL_CLIENT_ID="cms-site-external"
               if [ -s "${CLIENT_ID_DIR}/client-id-openwebui" ]; then
                 OPENWEBUI_CLIENT_ID="$(tr -d '\r\n' < "${CLIENT_ID_DIR}/client-id-openwebui")"
               fi
@@ -384,6 +386,12 @@ spec:
               fi
               if [ -s "${CLIENT_ID_DIR}/client-id-graphql-api" ]; then
                 GRAPHQL_API_CLIENT_ID="$(tr -d '\r\n' < "${CLIENT_ID_DIR}/client-id-graphql-api")"
+              fi
+              if [ -s "${CLIENT_ID_DIR}/client-id-cms-site-internal" ]; then
+                CMS_SITE_INTERNAL_CLIENT_ID="$(tr -d '\r\n' < "${CLIENT_ID_DIR}/client-id-cms-site-internal")"
+              fi
+              if [ -s "${CLIENT_ID_DIR}/client-id-cms-site-external" ]; then
+                CMS_SITE_EXTERNAL_CLIENT_ID="$(tr -d '\r\n' < "${CLIENT_ID_DIR}/client-id-cms-site-external")"
               fi
               
               login_with_client() {
@@ -2744,6 +2752,10 @@ spec:
               assign_client_role_to_service_account "$INTERNAL_REALM" "$DROOLS_WORKBENCH_CLIENT_ID" "$DROOLS_WORKBENCH_CLIENT_ID" "admin"
               assign_client_role_to_service_account "$INTERNAL_REALM" "$DROOLS_WORKBENCH_CLIENT_ID" "$DROOLS_WORKBENCH_CLIENT_ID" "rest-all"
               assign_client_role_to_service_account "$INTERNAL_REALM" "$DROOLS_WORKBENCH_CLIENT_ID" "$DROOLS_WORKBENCH_CLIENT_ID" "rest-project"
+              assign_client_role_to_service_account "$INTERNAL_REALM" "$CMS_SITE_INTERNAL_CLIENT_ID" "realm-management" "query-roles"
+              assign_client_role_to_service_account "$INTERNAL_REALM" "$CMS_SITE_INTERNAL_CLIENT_ID" "realm-management" "view-realm"
+              assign_client_role_to_service_account "$EXTERNAL_REALM" "$CMS_SITE_EXTERNAL_CLIENT_ID" "realm-management" "query-roles"
+              assign_client_role_to_service_account "$EXTERNAL_REALM" "$CMS_SITE_EXTERNAL_CLIENT_ID" "realm-management" "view-realm"
 
               enable_token_exchange_for_client() {
                 local realm="$1"
