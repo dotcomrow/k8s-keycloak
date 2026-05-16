@@ -2774,7 +2774,14 @@ spec:
                 if sa_has_realm_role "$realm" "$SA_ID" "$role"; then
                   return 0
                 fi
-                $KCADM add-roles -r "$realm" --uid "$SA_ID" --rolename "$role" >/dev/null 2>&1 || true
+                if ! $KCADM add-roles -r "$realm" --uid "$SA_ID" --rolename "$role" >/dev/null 2>&1; then
+                  echo "WARN: failed to assign realm role '${role}' to service account '${clientId}' in realm '${realm}'"
+                fi
+                refresh_sa_realm_roles_cache "$realm" "$SA_ID"
+                if ! sa_has_realm_role "$realm" "$SA_ID" "$role"; then
+                  echo "WARN: realm role '${role}' not present after assignment attempt for '${clientId}' in realm '${realm}'"
+                  return 0
+                fi
                 cache_key="${realm}|${SA_ID}"
                 SA_REALM_ROLES_CACHE[$cache_key]="${SA_REALM_ROLES_CACHE[$cache_key]-} {\"name\":\"${role}\"}"
               }
@@ -2798,7 +2805,16 @@ spec:
                 if sa_has_client_role "$realm" "$sa_id" "$target_uuid" "$targetClientId" "$role"; then
                   return 0
                 fi
-                $KCADM add-roles -r "$realm" --uid "$sa_id" --cclientid "$targetClientId" --rolename "$role" >/dev/null 2>&1 || true
+                if ! $KCADM add-roles -r "$realm" --uid "$sa_id" --cclientid "$targetClientId" --rolename "$role" >/dev/null 2>&1; then
+                  if ! $KCADM add-roles -r "$realm" --uid "$sa_id" --cid "$target_uuid" --rolename "$role" >/dev/null 2>&1; then
+                    echo "WARN: failed to assign client role '${role}' from '${targetClientId}' to service account '${serviceClientId}' in realm '${realm}'"
+                  fi
+                fi
+                refresh_sa_client_roles_cache "$realm" "$sa_id" "$target_uuid" "$targetClientId"
+                if ! sa_has_client_role "$realm" "$sa_id" "$target_uuid" "$targetClientId" "$role"; then
+                  echo "WARN: client role '${role}' from '${targetClientId}' not present after assignment attempt for '${serviceClientId}' in realm '${realm}'"
+                  return 0
+                fi
                 cache_key="${realm}|${sa_id}|${targetClientId}"
                 SA_CLIENT_ROLES_CACHE[$cache_key]="${SA_CLIENT_ROLES_CACHE[$cache_key]-} {\"name\":\"${role}\"}"
               }
