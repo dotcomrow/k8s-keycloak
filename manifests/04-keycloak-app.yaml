@@ -318,6 +318,24 @@ data:
         });
       }
 
+      function findPersonalInfoContainer() {
+        var selectors = [
+          "[data-testid='personal-info-form']",
+          "[data-testid='personal-info']",
+          "main .pf-v5-c-page__main-section",
+          "main .pf-v5-c-page__main-body",
+          "main",
+          "#root"
+        ];
+        for (var i = 0; i < selectors.length; i += 1) {
+          var container = document.querySelector(selectors[i]);
+          if (container) {
+            return container;
+          }
+        }
+        return document.body || null;
+      }
+
       function addReadonlyNote() {
         if (!isPersonalInfoPage()) {
           return;
@@ -325,14 +343,14 @@ data:
         if (document.getElementById(NOTE_ID)) {
           return;
         }
-        var form = document.querySelector("form");
-        if (!form || !form.parentElement) {
+        var container = findPersonalInfoContainer();
+        if (!container) {
           return;
         }
         var note = document.createElement("div");
         note.id = NOTE_ID;
         note.textContent = NOTE_TEXT;
-        form.parentElement.insertBefore(note, form);
+        container.insertBefore(note, container.firstChild || null);
       }
 
       function lockPersonalInfoFields() {
@@ -553,8 +571,8 @@ data:
         if (!isPersonalInfoPage()) {
           return;
         }
-        var form = document.querySelector("form");
-        if (!form || !form.parentElement) {
+        var container = findPersonalInfoContainer();
+        if (!container) {
           return;
         }
         var existingPanel = document.getElementById(IDP_PANEL_ID);
@@ -580,7 +598,12 @@ data:
           empty.className = "suncoast-idp-empty";
           empty.textContent = "No additional IdP profile fields are currently available for this account.";
           panel.appendChild(empty);
-          form.parentElement.insertBefore(panel, form);
+          var note = document.getElementById(NOTE_ID);
+          if (note && note.parentElement === container && note.nextSibling) {
+            container.insertBefore(panel, note.nextSibling);
+          } else {
+            container.insertBefore(panel, container.firstChild || null);
+          }
           return;
         }
 
@@ -598,7 +621,12 @@ data:
         });
         table.appendChild(tbody);
         panel.appendChild(table);
-        form.parentElement.insertBefore(panel, form);
+        var note = document.getElementById(NOTE_ID);
+        if (note && note.parentElement === container && note.nextSibling) {
+          container.insertBefore(panel, note.nextSibling);
+        } else {
+          container.insertBefore(panel, container.firstChild || null);
+        }
       }
 
       function ensureIdpProfilePanel() {
