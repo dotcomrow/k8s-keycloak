@@ -1498,7 +1498,7 @@ spec:
                     -s trustEmail=true \
                     -s "config.clientId=$GOOGLE_CLIENT_ID" \
                     -s "config.clientSecret=$GOOGLE_CLIENT_SECRET" \
-                    -s 'config.defaultScope=openid email profile' \
+                    -s 'config.defaultScope=openid email profile phone' \
                     -s 'config.syncMode=FORCE' \
                     -s 'config.guiOrder=2' -s 'config.hideOnLoginPage=false' \
                     || true
@@ -1508,7 +1508,7 @@ spec:
                     -s trustEmail=true \
                     -s "config.clientId=$GOOGLE_CLIENT_ID" \
                     -s "config.clientSecret=$GOOGLE_CLIENT_SECRET" \
-                    -s 'config.defaultScope=openid email profile' \
+                    -s 'config.defaultScope=openid email profile phone' \
                     -s 'config.syncMode=FORCE' \
                     -s 'config.guiOrder=2' -s 'config.hideOnLoginPage=false' \
                     || true
@@ -1521,21 +1521,31 @@ spec:
                 local json_field="$3"
                 local user_attribute="$4"
                 local sync_mode="${5:-INHERIT}"
+                local mapper_id=""
+                local mapper_line=""
 
                 if ! $KCADM get identity-provider/instances/github -r "$realm" >/dev/null 2>&1; then
                   return 0
                 fi
-                if $KCADM get "identity-provider/instances/github/mappers" -r "$realm" 2>/dev/null \
-                  | grep -q "\"name\"[[:space:]]*:[[:space:]]*\"${mapper_name}\""; then
-                  return 0
+                mapper_line="$($KCADM get "identity-provider/instances/github/mappers" -r "$realm" --fields id,name --format csv 2>/dev/null \
+                  | grep -m1 "\"${mapper_name}\"" || true)"
+                mapper_id="$(printf '%s' "$mapper_line" | cut -d',' -f1 | tr -d '"' | tr -d '[:space:]')"
+                if [ -z "${mapper_id:-}" ]; then
+                  mapper_id=$($KCADM create "identity-provider/instances/github/mappers" -r "$realm" \
+                    -s "name=${mapper_name}" \
+                    -s "identityProviderAlias=github" \
+                    -s "identityProviderMapper=github-user-attribute-mapper" \
+                    -i 2>/dev/null || true)
+                  mapper_id="$(clean_id "$mapper_id")"
                 fi
-                $KCADM create "identity-provider/instances/github/mappers" -r "$realm" \
+                [ -z "${mapper_id:-}" ] && return 0
+                $KCADM update "identity-provider/instances/github/mappers/${mapper_id}" -r "$realm" \
                   -s "name=${mapper_name}" \
                   -s "identityProviderAlias=github" \
                   -s "identityProviderMapper=github-user-attribute-mapper" \
                   -s "config.\"jsonField\"=${json_field}" \
                   -s "config.\"userAttribute\"=${user_attribute}" \
-                  -s "config.\"syncMode\"=${sync_mode}" || true
+                  -s "config.\"syncMode\"=${sync_mode}" >/dev/null 2>&1 || true
               }
 
               # Import OIDC claims from an external IdP (e.g., Google) into Keycloak user attributes.
@@ -1548,6 +1558,8 @@ spec:
                 local claim="$4"
                 local user_attribute="$5"
                 local sync_mode="${6:-INHERIT}"
+                local mapper_id=""
+                local mapper_line=""
 
                 if [ -z "${realm:-}" ] || [ -z "${idp_alias:-}" ] || [ -z "${mapper_name:-}" ] || [ -z "${claim:-}" ] || [ -z "${user_attribute:-}" ]; then
                   return 0
@@ -1555,11 +1567,19 @@ spec:
                 if ! $KCADM get "identity-provider/instances/${idp_alias}" -r "$realm" >/dev/null 2>&1; then
                   return 0
                 fi
-                if $KCADM get "identity-provider/instances/${idp_alias}/mappers" -r "$realm" 2>/dev/null \
-                  | grep -q "\"name\"[[:space:]]*:[[:space:]]*\"${mapper_name}\""; then
-                  return 0
+                mapper_line="$($KCADM get "identity-provider/instances/${idp_alias}/mappers" -r "$realm" --fields id,name --format csv 2>/dev/null \
+                  | grep -m1 "\"${mapper_name}\"" || true)"
+                mapper_id="$(printf '%s' "$mapper_line" | cut -d',' -f1 | tr -d '"' | tr -d '[:space:]')"
+                if [ -z "${mapper_id:-}" ]; then
+                  mapper_id=$($KCADM create "identity-provider/instances/${idp_alias}/mappers" -r "$realm" \
+                    -s "name=${mapper_name}" \
+                    -s "identityProviderAlias=${idp_alias}" \
+                    -s "identityProviderMapper=oidc-user-attribute-idp-mapper" \
+                    -i 2>/dev/null || true)
+                  mapper_id="$(clean_id "$mapper_id")"
                 fi
-                $KCADM create "identity-provider/instances/${idp_alias}/mappers" -r "$realm" \
+                [ -z "${mapper_id:-}" ] && return 0
+                $KCADM update "identity-provider/instances/${idp_alias}/mappers/${mapper_id}" -r "$realm" \
                   -s "name=${mapper_name}" \
                   -s "identityProviderAlias=${idp_alias}" \
                   -s "identityProviderMapper=oidc-user-attribute-idp-mapper" \
@@ -1574,18 +1594,18 @@ spec:
               if [ "$ADMIN_GITHUB_ENABLED" = "true" ]; then
                 echo "admin: ensure github idp"
                 ensure_github_idp "$ADMIN_REALM" "false" || true
-                ensure_github_user_attribute_mapper "$ADMIN_REALM" "github-avatar-url" "avatar_url" "picture" "INHERIT"
-                ensure_github_user_attribute_mapper "$ADMIN_REALM" "github-profile-url" "html_url" "profile" "INHERIT"
-                ensure_github_user_attribute_mapper "$ADMIN_REALM" "github-website" "blog" "website" "INHERIT"
-                ensure_github_user_attribute_mapper "$ADMIN_REALM" "github-company" "company" "company" "INHERIT"
-                ensure_github_user_attribute_mapper "$ADMIN_REALM" "github-location" "location" "location" "INHERIT"
-                ensure_github_user_attribute_mapper "$ADMIN_REALM" "github-bio" "bio" "bio" "INHERIT"
-                ensure_github_user_attribute_mapper "$ADMIN_REALM" "github-twitter-username" "twitter_username" "twitter_username" "INHERIT"
-                ensure_github_user_attribute_mapper "$ADMIN_REALM" "github-name" "name" "name" "INHERIT"
-                ensure_github_user_attribute_mapper "$ADMIN_REALM" "github-login" "login" "preferred_username" "INHERIT"
-                ensure_github_user_attribute_mapper "$ADMIN_REALM" "github-id" "id" "github_id" "INHERIT"
-                ensure_github_user_attribute_mapper "$ADMIN_REALM" "github-node-id" "node_id" "github_node_id" "INHERIT"
-                ensure_github_user_attribute_mapper "$ADMIN_REALM" "github-phone-number" "phone" "phone_number" "INHERIT"
+                ensure_github_user_attribute_mapper "$ADMIN_REALM" "github-avatar-url" "avatar_url" "picture" "FORCE"
+                ensure_github_user_attribute_mapper "$ADMIN_REALM" "github-profile-url" "html_url" "profile" "FORCE"
+                ensure_github_user_attribute_mapper "$ADMIN_REALM" "github-website" "blog" "website" "FORCE"
+                ensure_github_user_attribute_mapper "$ADMIN_REALM" "github-company" "company" "company" "FORCE"
+                ensure_github_user_attribute_mapper "$ADMIN_REALM" "github-location" "location" "location" "FORCE"
+                ensure_github_user_attribute_mapper "$ADMIN_REALM" "github-bio" "bio" "bio" "FORCE"
+                ensure_github_user_attribute_mapper "$ADMIN_REALM" "github-twitter-username" "twitter_username" "twitter_username" "FORCE"
+                ensure_github_user_attribute_mapper "$ADMIN_REALM" "github-name" "name" "name" "FORCE"
+                ensure_github_user_attribute_mapper "$ADMIN_REALM" "github-login" "login" "preferred_username" "FORCE"
+                ensure_github_user_attribute_mapper "$ADMIN_REALM" "github-id" "id" "github_id" "FORCE"
+                ensure_github_user_attribute_mapper "$ADMIN_REALM" "github-node-id" "node_id" "github_node_id" "FORCE"
+                ensure_github_user_attribute_mapper "$ADMIN_REALM" "github-phone-number" "phone" "phone_number" "FORCE"
                 echo "admin: ensure first-broker flow"
                 ensure_first_broker_flow_autolink "$ADMIN_REALM" || true
                 echo "admin: ensure post-broker flow"
@@ -1632,18 +1652,18 @@ spec:
               echo "Configuring internal realm: ${INTERNAL_REALM}"
               if [ "$INTERNAL_GITHUB_ENABLED" = "true" ]; then
                 ensure_github_idp "$INTERNAL_REALM" "$INTERNAL_GITHUB_HIDE_ON_LOGIN"
-                ensure_github_user_attribute_mapper "$INTERNAL_REALM" "github-avatar-url" "avatar_url" "picture" "INHERIT"
-                ensure_github_user_attribute_mapper "$INTERNAL_REALM" "github-profile-url" "html_url" "profile" "INHERIT"
-                ensure_github_user_attribute_mapper "$INTERNAL_REALM" "github-website" "blog" "website" "INHERIT"
-                ensure_github_user_attribute_mapper "$INTERNAL_REALM" "github-company" "company" "company" "INHERIT"
-                ensure_github_user_attribute_mapper "$INTERNAL_REALM" "github-location" "location" "location" "INHERIT"
-                ensure_github_user_attribute_mapper "$INTERNAL_REALM" "github-bio" "bio" "bio" "INHERIT"
-                ensure_github_user_attribute_mapper "$INTERNAL_REALM" "github-twitter-username" "twitter_username" "twitter_username" "INHERIT"
-                ensure_github_user_attribute_mapper "$INTERNAL_REALM" "github-name" "name" "name" "INHERIT"
-                ensure_github_user_attribute_mapper "$INTERNAL_REALM" "github-login" "login" "preferred_username" "INHERIT"
-                ensure_github_user_attribute_mapper "$INTERNAL_REALM" "github-id" "id" "github_id" "INHERIT"
-                ensure_github_user_attribute_mapper "$INTERNAL_REALM" "github-node-id" "node_id" "github_node_id" "INHERIT"
-                ensure_github_user_attribute_mapper "$INTERNAL_REALM" "github-phone-number" "phone" "phone_number" "INHERIT"
+                ensure_github_user_attribute_mapper "$INTERNAL_REALM" "github-avatar-url" "avatar_url" "picture" "FORCE"
+                ensure_github_user_attribute_mapper "$INTERNAL_REALM" "github-profile-url" "html_url" "profile" "FORCE"
+                ensure_github_user_attribute_mapper "$INTERNAL_REALM" "github-website" "blog" "website" "FORCE"
+                ensure_github_user_attribute_mapper "$INTERNAL_REALM" "github-company" "company" "company" "FORCE"
+                ensure_github_user_attribute_mapper "$INTERNAL_REALM" "github-location" "location" "location" "FORCE"
+                ensure_github_user_attribute_mapper "$INTERNAL_REALM" "github-bio" "bio" "bio" "FORCE"
+                ensure_github_user_attribute_mapper "$INTERNAL_REALM" "github-twitter-username" "twitter_username" "twitter_username" "FORCE"
+                ensure_github_user_attribute_mapper "$INTERNAL_REALM" "github-name" "name" "name" "FORCE"
+                ensure_github_user_attribute_mapper "$INTERNAL_REALM" "github-login" "login" "preferred_username" "FORCE"
+                ensure_github_user_attribute_mapper "$INTERNAL_REALM" "github-id" "id" "github_id" "FORCE"
+                ensure_github_user_attribute_mapper "$INTERNAL_REALM" "github-node-id" "node_id" "github_node_id" "FORCE"
+                ensure_github_user_attribute_mapper "$INTERNAL_REALM" "github-phone-number" "phone" "phone_number" "FORCE"
               else
                 echo "ℹ️  GitHub IdP disabled in internal realm by config."
                 if $KCADM get identity-provider/instances/github -r "$INTERNAL_REALM" >/dev/null 2>&1; then
@@ -1677,17 +1697,17 @@ spec:
               ensure_first_broker_flow_autolink "$EXTERNAL_REALM"
               if ensure_google_idp "$EXTERNAL_REALM"; then
                 EXTERNAL_GOOGLE_READY="true"
-                ensure_oidc_user_attribute_mapper "$EXTERNAL_REALM" "google" "google-picture" "picture" "picture" "INHERIT"
-                ensure_oidc_user_attribute_mapper "$EXTERNAL_REALM" "google" "google-profile" "profile" "profile" "INHERIT"
-                ensure_oidc_user_attribute_mapper "$EXTERNAL_REALM" "google" "google-locale" "locale" "locale" "INHERIT"
-                ensure_oidc_user_attribute_mapper "$EXTERNAL_REALM" "google" "google-name" "name" "name" "INHERIT"
-                ensure_oidc_user_attribute_mapper "$EXTERNAL_REALM" "google" "google-given-name" "given_name" "given_name" "INHERIT"
-                ensure_oidc_user_attribute_mapper "$EXTERNAL_REALM" "google" "google-family-name" "family_name" "family_name" "INHERIT"
-                ensure_oidc_user_attribute_mapper "$EXTERNAL_REALM" "google" "google-email-verified" "email_verified" "email_verified" "INHERIT"
-                ensure_oidc_user_attribute_mapper "$EXTERNAL_REALM" "google" "google-hd" "hd" "hd" "INHERIT"
-                ensure_oidc_user_attribute_mapper "$EXTERNAL_REALM" "google" "google-sub" "sub" "google_sub" "INHERIT"
-                ensure_oidc_user_attribute_mapper "$EXTERNAL_REALM" "google" "google-phone-number" "phone_number" "phone_number" "INHERIT"
-                ensure_oidc_user_attribute_mapper "$EXTERNAL_REALM" "google" "google-phone-number-verified" "phone_number_verified" "phone_number_verified" "INHERIT"
+                ensure_oidc_user_attribute_mapper "$EXTERNAL_REALM" "google" "google-picture" "picture" "picture" "FORCE"
+                ensure_oidc_user_attribute_mapper "$EXTERNAL_REALM" "google" "google-profile" "profile" "profile" "FORCE"
+                ensure_oidc_user_attribute_mapper "$EXTERNAL_REALM" "google" "google-locale" "locale" "locale" "FORCE"
+                ensure_oidc_user_attribute_mapper "$EXTERNAL_REALM" "google" "google-name" "name" "name" "FORCE"
+                ensure_oidc_user_attribute_mapper "$EXTERNAL_REALM" "google" "google-given-name" "given_name" "given_name" "FORCE"
+                ensure_oidc_user_attribute_mapper "$EXTERNAL_REALM" "google" "google-family-name" "family_name" "family_name" "FORCE"
+                ensure_oidc_user_attribute_mapper "$EXTERNAL_REALM" "google" "google-email-verified" "email_verified" "email_verified" "FORCE"
+                ensure_oidc_user_attribute_mapper "$EXTERNAL_REALM" "google" "google-hd" "hd" "hd" "FORCE"
+                ensure_oidc_user_attribute_mapper "$EXTERNAL_REALM" "google" "google-sub" "sub" "google_sub" "FORCE"
+                ensure_oidc_user_attribute_mapper "$EXTERNAL_REALM" "google" "google-phone-number" "phone_number" "phone_number" "FORCE"
+                ensure_oidc_user_attribute_mapper "$EXTERNAL_REALM" "google" "google-phone-number-verified" "phone_number_verified" "phone_number_verified" "FORCE"
                 ensure_flow "$EXTERNAL_REALM" "$FLOW_GGL" "Post-broker: Google groups only"
                 if provider_exists "$PROVIDER_GGL"; then
                   add_exec_required "$EXTERNAL_REALM" "$FLOW_GGL" "$PROVIDER_GGL"
@@ -2588,6 +2608,24 @@ spec:
                 ensure_client_scope_attribute_mapper "$realm" "$SCOPE_UUID" "device_id" "device_id" "device_id"
               }
 
+              # Reconcile user profile metadata so Account Console Personal Info
+              # can render imported IdP and notification attributes.
+              ensure_user_profile_schema() {
+                local realm="$1"
+                local payload=""
+                local profile_json=""
+                local update_output=""
+                payload="$(mktemp)"
+                profile_json='{"unmanagedAttributePolicy":"ENABLED","attributes":[{"name":"username","displayName":"${username}","validations":{"length":{"min":3,"max":255},"username-prohibited-characters":{},"up-username-not-idn-homograph":{}},"permissions":{"view":["admin","user"],"edit":["admin","user"]},"multivalued":false},{"name":"email","displayName":"${email}","validations":{"email":{},"length":{"max":255}},"required":{"roles":["user"]},"permissions":{"view":["admin","user"],"edit":["admin","user"]},"multivalued":false},{"name":"firstName","displayName":"${firstName}","validations":{"length":{"max":255},"person-name-prohibited-characters":{}},"required":{"roles":["user"]},"permissions":{"view":["admin","user"],"edit":["admin","user"]},"multivalued":false},{"name":"lastName","displayName":"${lastName}","validations":{"length":{"max":255},"person-name-prohibited-characters":{}},"required":{"roles":["user"]},"permissions":{"view":["admin","user"],"edit":["admin","user"]},"multivalued":false},{"name":"name","displayName":"Full name","group":"personalInfo","permissions":{"view":["admin","user"],"edit":["admin"]},"validations":{"length":{"max":255}},"multivalued":false},{"name":"given_name","displayName":"Given name (IdP)","group":"personalInfo","permissions":{"view":["admin","user"],"edit":["admin"]},"validations":{"length":{"max":255}},"multivalued":false},{"name":"family_name","displayName":"Family name (IdP)","group":"personalInfo","permissions":{"view":["admin","user"],"edit":["admin"]},"validations":{"length":{"max":255}},"multivalued":false},{"name":"preferred_username","displayName":"Preferred username","group":"personalInfo","permissions":{"view":["admin","user"],"edit":["admin"]},"validations":{"length":{"max":255}},"multivalued":false},{"name":"locale","displayName":"Locale","group":"personalInfo","permissions":{"view":["admin","user"],"edit":["admin"]},"validations":{"length":{"max":35}},"multivalued":false},{"name":"profile","displayName":"Profile URL","group":"personalInfo","permissions":{"view":["admin","user"],"edit":["admin"]},"validations":{"length":{"max":2048}},"multivalued":false},{"name":"website","displayName":"Website URL","group":"personalInfo","permissions":{"view":["admin","user"],"edit":["admin"]},"validations":{"length":{"max":2048}},"multivalued":false},{"name":"picture","displayName":"Avatar URL","group":"personalInfo","permissions":{"view":["admin","user"],"edit":["admin"]},"validations":{"length":{"max":2048}},"multivalued":false},{"name":"email_verified","displayName":"Email verified","group":"personalInfo","permissions":{"view":["admin","user"],"edit":["admin"]},"validations":{"length":{"max":5}},"multivalued":false},{"name":"phone_number","displayName":"Phone number","group":"personalInfo","permissions":{"view":["admin","user"],"edit":["admin"]},"validations":{"length":{"max":32}},"annotations":{"inputType":"tel"},"multivalued":false},{"name":"phone_number_verified","displayName":"Phone verified","group":"personalInfo","permissions":{"view":["admin","user"],"edit":["admin"]},"validations":{"length":{"max":5}},"multivalued":false},{"name":"device_id","displayName":"Device ID","group":"personalInfo","permissions":{"view":["admin","user"],"edit":["admin"]},"validations":{"length":{"max":255}},"multivalued":false},{"name":"company","displayName":"Company","group":"personalInfo","permissions":{"view":["admin","user"],"edit":["admin"]},"validations":{"length":{"max":255}},"multivalued":false},{"name":"location","displayName":"Location","group":"personalInfo","permissions":{"view":["admin","user"],"edit":["admin"]},"validations":{"length":{"max":255}},"multivalued":false},{"name":"bio","displayName":"Bio","group":"personalInfo","permissions":{"view":["admin","user"],"edit":["admin"]},"validations":{"length":{"max":2048}},"multivalued":false},{"name":"twitter_username","displayName":"Twitter username","group":"personalInfo","permissions":{"view":["admin","user"],"edit":["admin"]},"validations":{"length":{"max":255}},"multivalued":false},{"name":"hd","displayName":"Hosted domain","group":"personalInfo","permissions":{"view":["admin","user"],"edit":["admin"]},"validations":{"length":{"max":255}},"multivalued":false},{"name":"google_sub","displayName":"Google subject","group":"personalInfo","permissions":{"view":["admin","user"],"edit":["admin"]},"validations":{"length":{"max":255}},"multivalued":false},{"name":"github_id","displayName":"GitHub ID","group":"personalInfo","permissions":{"view":["admin","user"],"edit":["admin"]},"validations":{"length":{"max":255}},"multivalued":false},{"name":"github_node_id","displayName":"GitHub node ID","group":"personalInfo","permissions":{"view":["admin","user"],"edit":["admin"]},"validations":{"length":{"max":255}},"multivalued":false}],"groups":[{"name":"personalInfo","displayHeader":"Personal information","displayDescription":"Identity provider and notification contact attributes"}]}'
+                printf '%s\n' "$profile_json" > "$payload"
+                log_progress "reconcile users/profile schema: realm=${realm}"
+                if ! update_output="$($KCADM update "users/profile" -r "$realm" -f "$payload" 2>&1)"; then
+                  rm -f "$payload"
+                  fatal "Failed to update users/profile for realm=${realm}: ${update_output}"
+                fi
+                rm -f "$payload"
+              }
+
               ensure_groups_scope() {
                 local realm="$1"
                 local scopeName="groups"
@@ -2656,6 +2694,8 @@ spec:
               ensure_user_profile_scope "$EXTERNAL_REALM"
               ensure_notification_contact_scope "$INTERNAL_REALM"
               ensure_notification_contact_scope "$EXTERNAL_REALM"
+              ensure_user_profile_schema "$INTERNAL_REALM"
+              ensure_user_profile_schema "$EXTERNAL_REALM"
 
               # Attach as a default client scope so apps always receive the profile claims.
               ensure_client_scope "$INTERNAL_REALM" "$DROOLS_WORKBENCH_CLIENT_ID" "user-profile"

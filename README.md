@@ -97,6 +97,10 @@ APISIX example route:
 `manifests/04-keycloak-configurator.yaml` configures IdPs and imports as much profile data as is available from
 external identity providers into Keycloak user attributes. Apps then receive these fields via an OIDC client
 scope named `user-profile` (added as a **default** client scope for the main app clients in both realms).
+The configurator also reconciles realm `users/profile` metadata so these attributes are visible in the Keycloak
+Account Console Personal Info page. The account UI only renders attributes explicitly present in `users/profile`,
+so custom IdP fields must be defined there.
+IdP attribute mappers are reconciled on every configurator run and use `syncMode=FORCE` for profile fields.
 
 ### Imported User Attributes (canonical)
 - `picture` (avatar URL)
@@ -117,12 +121,28 @@ Notification contact notes:
 - Phone and device contact claims are in optional scope `notification-contact` (not default).
 - `phone_number`/`phone_number_verified` are emitted only when this scope is requested and the upstream/user profile has values.
 - `device_id` is emitted from the Keycloak user attribute `device_id` when present.
+- Google IdP is configured with `openid email profile phone` so OIDC phone claims can be imported when available.
 - GitHub's standard `/user` payload does not include a phone field, so internal users typically need phone populated from another upstream source or pre-set user attributes.
+- Existing users may need to authenticate through their IdP again after mapper/scope changes for new attribute values to hydrate into Keycloak user attributes.
 
 ### How Apps Consume It
 - Tokens/userinfo include the above attributes as claims when the client has the `user-profile` scope attached.
 - To read phone/device contact claims, request optional scope `notification-contact` in the OIDC `scope` parameter.
 - The configurator also ensures the standard `email` scope is present for app clients that expect `email`.
+
+### Notification Capability Evaluation (recommended)
+For a fast cross-platform decision, evaluate notification capability from token/userinfo claims as follows:
+
+- `can_email`: `email` present AND (`email_verified` is `true` OR your policy allows unverified email)
+- `can_sms`: `phone_number` present AND `phone_number_verified` is `true`
+- `can_voice_call`: `phone_number` present (and optionally `phone_number_verified` by policy)
+- `can_voicemail`: same as `can_voice_call`
+- `can_push`: `device_id` present
+
+Recommended implementation pattern:
+- Request `notification-contact` only for apps/features that need contact channels.
+- If `phone_number`/`device_id` claims are absent when scope was requested, treat the channel as unavailable.
+- Return a normalized capability object from your auth/profile service so all apps use the same decision logic.
 
 ## Cloudflare Tunnel
 This repo includes a Cloudflare Tunnel deployment at `manifests/06-cloudflare-tunnel.yaml`.
