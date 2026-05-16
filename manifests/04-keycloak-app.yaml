@@ -266,7 +266,18 @@ data:
       }
 
       function isPersonalInfoPage() {
-        return /\/account\/?$/.test(window.location.pathname) || /\/account\/\?/.test(window.location.href);
+        var path = window.location.pathname || "";
+        var hash = (window.location.hash || "").toLowerCase();
+        if (!/\/account(?:\/|$)/.test(path)) {
+          return false;
+        }
+        if (/\/account-security(?:\/|$)/.test(path) || /\/groups(?:\/|$)/.test(path) || /\/organizations(?:\/|$)/.test(path) || /\/resources(?:\/|$)/.test(path) || /\/oid4vci(?:\/|$)/.test(path) || /\/applications(?:\/|$)/.test(path)) {
+          return false;
+        }
+        if (!hash) {
+          return true;
+        }
+        return hash.indexOf("personal-info") !== -1 || hash === "#/" || hash === "#";
       }
 
       function hidePasswordWidgets() {
@@ -382,27 +393,36 @@ data:
       function findAccountAccessToken() {
         var stores = [window.sessionStorage, window.localStorage];
         for (var s = 0; s < stores.length; s += 1) {
-          var store = stores[s];
+          var store = null;
+          try {
+            store = stores[s];
+          } catch (err) {
+            continue;
+          }
           if (!store) {
             continue;
           }
-          for (var i = 0; i < store.length; i += 1) {
-            var key = store.key(i);
-            if (!key) {
-              continue;
+          try {
+            for (var i = 0; i < store.length; i += 1) {
+              var key = store.key(i);
+              if (!key) {
+                continue;
+              }
+              var value = store.getItem(key);
+              if (!value) {
+                continue;
+              }
+              if (looksLikeJwt(value)) {
+                return value;
+              }
+              var parsed = safeJsonParse(value);
+              var token = tokenFromObject(parsed);
+              if (token) {
+                return token;
+              }
             }
-            var value = store.getItem(key);
-            if (!value) {
-              continue;
-            }
-            if (looksLikeJwt(value)) {
-              return value;
-            }
-            var parsed = safeJsonParse(value);
-            var token = tokenFromObject(parsed);
-            if (token) {
-              return token;
-            }
+          } catch (err) {
+            continue;
           }
         }
         return "";
@@ -533,12 +553,13 @@ data:
         if (!isPersonalInfoPage()) {
           return;
         }
-        if (document.getElementById(IDP_PANEL_ID)) {
-          return;
-        }
         var form = document.querySelector("form");
         if (!form || !form.parentElement) {
           return;
+        }
+        var existingPanel = document.getElementById(IDP_PANEL_ID);
+        if (existingPanel && existingPanel.parentElement) {
+          existingPanel.parentElement.removeChild(existingPanel);
         }
 
         var rows = extractProfileFields(profile);
@@ -581,11 +602,16 @@ data:
       }
 
       function ensureIdpProfilePanel() {
-        if (!isPersonalInfoPage() || document.getElementById(IDP_PANEL_ID)) {
+        if (!isPersonalInfoPage()) {
           return;
+        }
+        if (!document.getElementById(IDP_PANEL_ID)) {
+          renderIdpProfilePanel(null);
         }
         fetchAccountProfile().then(function (profile) {
           renderIdpProfilePanel(profile);
+        }).catch(function () {
+          renderIdpProfilePanel(null);
         });
       }
 
