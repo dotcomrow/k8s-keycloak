@@ -147,16 +147,99 @@ data:
       font-size: 0.95rem;
       line-height: 1.4;
     }
+
+    #suncoast-idp-profile-panel {
+      margin-bottom: 1rem;
+      padding: 0.85rem 1rem;
+      border: 1px solid #d2dbe5;
+      background: #f8fafc;
+      color: #1f2933;
+      border-radius: 6px;
+    }
+
+    #suncoast-idp-profile-panel h3 {
+      margin: 0 0 0.6rem 0;
+      font-size: 1rem;
+      font-weight: 600;
+      color: #111827;
+    }
+
+    #suncoast-idp-profile-panel .suncoast-idp-help {
+      margin: 0 0 0.6rem 0;
+      color: #334155;
+      font-size: 0.9rem;
+    }
+
+    #suncoast-idp-profile-panel table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.9rem;
+    }
+
+    #suncoast-idp-profile-panel th,
+    #suncoast-idp-profile-panel td {
+      padding: 0.45rem 0.4rem;
+      vertical-align: top;
+      border-bottom: 1px solid #e2e8f0;
+      text-align: left;
+    }
+
+    #suncoast-idp-profile-panel th {
+      width: 32%;
+      color: #0f172a;
+      font-weight: 600;
+      white-space: nowrap;
+    }
+
+    #suncoast-idp-profile-panel td {
+      color: #1f2937;
+      word-break: break-word;
+    }
+
+    #suncoast-idp-profile-panel .suncoast-idp-empty {
+      color: #475569;
+      font-style: italic;
+      margin: 0.3rem 0 0;
+    }
   account-lockdown.js: |
     (function () {
       "use strict";
 
       var NOTE_ID = "suncoast-account-readonly-note";
+      var IDP_PANEL_ID = "suncoast-idp-profile-panel";
       var NOTE_TEXT = "Profile edits are disabled. Update your linked identity provider to change your name, email, or other profile details.";
+      var PROFILE_HINT_TEXT = "Read-only profile values synchronized from linked identity providers.";
+      var PROFILE_FIELDS = [
+        "username",
+        "email",
+        "firstName",
+        "lastName",
+        "name",
+        "given_name",
+        "family_name",
+        "preferred_username",
+        "locale",
+        "email_verified",
+        "phone_number",
+        "phone_number_verified",
+        "device_id",
+        "profile",
+        "website",
+        "picture",
+        "company",
+        "location",
+        "bio",
+        "twitter_username",
+        "hd",
+        "google_sub",
+        "github_id",
+        "github_node_id"
+      ];
       var SIGN_OUT_LABELS = {
         "Sign out": true,
         "Sign out all devices": true
       };
+      var accountProfilePromise = null;
 
       function hideElement(el) {
         if (!el) {
@@ -180,6 +263,10 @@ data:
         selectors.forEach(function (selector) {
           document.querySelectorAll(selector).forEach(hideElement);
         });
+      }
+
+      function isPersonalInfoPage() {
+        return /\/account\/?$/.test(window.location.pathname) || /\/account\/\?/.test(window.location.href);
       }
 
       function hidePasswordWidgets() {
@@ -221,10 +308,7 @@ data:
       }
 
       function addReadonlyNote() {
-        var isPersonalInfo =
-          /\/account\/?$/.test(window.location.pathname) ||
-          /\/account\/\?/.test(window.location.href);
-        if (!isPersonalInfo) {
+        if (!isPersonalInfoPage()) {
           return;
         }
         if (document.getElementById(NOTE_ID)) {
@@ -241,10 +325,7 @@ data:
       }
 
       function lockPersonalInfoFields() {
-        var isPersonalInfo =
-          /\/account\/?$/.test(window.location.pathname) ||
-          /\/account\/\?/.test(window.location.href);
-        if (!isPersonalInfo) {
+        if (!isPersonalInfoPage()) {
           return;
         }
         document.querySelectorAll("form input, form textarea").forEach(function (field) {
@@ -254,6 +335,257 @@ data:
         document.querySelectorAll("form select").forEach(function (field) {
           field.setAttribute("disabled", "disabled");
           field.setAttribute("aria-disabled", "true");
+        });
+      }
+
+      function getRealmFromPath() {
+        var match = window.location.pathname.match(/\/realms\/([^/]+)\//);
+        if (!match || !match[1]) {
+          return "";
+        }
+        try {
+          return decodeURIComponent(match[1]);
+        } catch (err) {
+          return match[1];
+        }
+      }
+
+      function looksLikeJwt(value) {
+        return typeof value === "string" && /^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/.test(value);
+      }
+
+      function tokenFromObject(value) {
+        if (!value || typeof value !== "object") {
+          return "";
+        }
+        var keys = ["access_token", "accessToken", "token", "id_token", "idToken"];
+        for (var i = 0; i < keys.length; i += 1) {
+          var token = value[keys[i]];
+          if (looksLikeJwt(token)) {
+            return token;
+          }
+        }
+        return "";
+      }
+
+      function safeJsonParse(raw) {
+        if (!raw || typeof raw !== "string") {
+          return null;
+        }
+        try {
+          return JSON.parse(raw);
+        } catch (err) {
+          return null;
+        }
+      }
+
+      function findAccountAccessToken() {
+        var stores = [window.sessionStorage, window.localStorage];
+        for (var s = 0; s < stores.length; s += 1) {
+          var store = stores[s];
+          if (!store) {
+            continue;
+          }
+          for (var i = 0; i < store.length; i += 1) {
+            var key = store.key(i);
+            if (!key) {
+              continue;
+            }
+            var value = store.getItem(key);
+            if (!value) {
+              continue;
+            }
+            if (looksLikeJwt(value)) {
+              return value;
+            }
+            var parsed = safeJsonParse(value);
+            var token = tokenFromObject(parsed);
+            if (token) {
+              return token;
+            }
+          }
+        }
+        return "";
+      }
+
+      function requestAccountProfile(endpoint, token) {
+        var headers = {
+          Accept: "application/json"
+        };
+        if (token) {
+          headers.Authorization = "Bearer " + token;
+        }
+        return fetch(endpoint, {
+          method: "GET",
+          credentials: "include",
+          headers: headers
+        }).then(function (response) {
+          if (!response.ok) {
+            throw new Error("HTTP " + response.status);
+          }
+          var contentType = response.headers.get("content-type") || "";
+          if (contentType.indexOf("application/json") === -1) {
+            throw new Error("Unsupported content type");
+          }
+          return response.json();
+        });
+      }
+
+      function fetchAccountProfile() {
+        if (accountProfilePromise) {
+          return accountProfilePromise;
+        }
+        var realm = getRealmFromPath();
+        if (!realm) {
+          accountProfilePromise = Promise.resolve(null);
+          return accountProfilePromise;
+        }
+
+        var base = window.location.origin + "/realms/" + encodeURIComponent(realm) + "/account";
+        var endpoints = [
+          base + "/?userProfileMetadata=true",
+          base + "/",
+          base
+        ];
+        var token = findAccountAccessToken();
+
+        function tryEndpoint(index, useToken) {
+          if (index >= endpoints.length) {
+            if (useToken && token) {
+              return tryEndpoint(0, false);
+            }
+            return Promise.resolve(null);
+          }
+          var accessToken = useToken ? token : "";
+          return requestAccountProfile(endpoints[index], accessToken).catch(function () {
+            return tryEndpoint(index + 1, useToken);
+          });
+        }
+
+        accountProfilePromise = tryEndpoint(0, true);
+        return accountProfilePromise;
+      }
+
+      function toDisplayString(value) {
+        if (value === null || typeof value === "undefined") {
+          return "";
+        }
+        if (Array.isArray(value)) {
+          return value
+            .filter(function (entry) {
+              return entry !== null && typeof entry !== "undefined" && String(entry).trim() !== "";
+            })
+            .map(function (entry) {
+              return String(entry);
+            })
+            .join(", ");
+        }
+        if (typeof value === "boolean") {
+          return value ? "true" : "false";
+        }
+        if (typeof value === "object") {
+          try {
+            return JSON.stringify(value);
+          } catch (err) {
+            return String(value);
+          }
+        }
+        return String(value);
+      }
+
+      function extractProfileFields(profile) {
+        if (!profile || typeof profile !== "object") {
+          return [];
+        }
+        var attributes = profile.attributes && typeof profile.attributes === "object" ? profile.attributes : {};
+        var rows = [];
+        PROFILE_FIELDS.forEach(function (field) {
+          var value = "";
+          if (Object.prototype.hasOwnProperty.call(profile, field)) {
+            value = toDisplayString(profile[field]);
+          } else if (Object.prototype.hasOwnProperty.call(attributes, field)) {
+            value = toDisplayString(attributes[field]);
+          }
+          if (value) {
+            rows.push({ key: field, value: value });
+          }
+        });
+
+        if (Object.keys(attributes).length) {
+          Object.keys(attributes)
+            .sort()
+            .forEach(function (key) {
+              if (PROFILE_FIELDS.indexOf(key) !== -1) {
+                return;
+              }
+              var extraValue = toDisplayString(attributes[key]);
+              if (!extraValue) {
+                return;
+              }
+              rows.push({ key: key, value: extraValue });
+            });
+        }
+
+        return rows;
+      }
+
+      function renderIdpProfilePanel(profile) {
+        if (!isPersonalInfoPage()) {
+          return;
+        }
+        if (document.getElementById(IDP_PANEL_ID)) {
+          return;
+        }
+        var form = document.querySelector("form");
+        if (!form || !form.parentElement) {
+          return;
+        }
+
+        var rows = extractProfileFields(profile);
+        var panel = document.createElement("section");
+        panel.id = IDP_PANEL_ID;
+
+        var title = document.createElement("h3");
+        title.textContent = "IdP Profile Data";
+        panel.appendChild(title);
+
+        var help = document.createElement("p");
+        help.className = "suncoast-idp-help";
+        help.textContent = PROFILE_HINT_TEXT;
+        panel.appendChild(help);
+
+        if (!rows.length) {
+          var empty = document.createElement("p");
+          empty.className = "suncoast-idp-empty";
+          empty.textContent = "No additional IdP profile fields are currently available for this account.";
+          panel.appendChild(empty);
+          form.parentElement.insertBefore(panel, form);
+          return;
+        }
+
+        var table = document.createElement("table");
+        var tbody = document.createElement("tbody");
+        rows.forEach(function (row) {
+          var tr = document.createElement("tr");
+          var th = document.createElement("th");
+          th.textContent = row.key;
+          var td = document.createElement("td");
+          td.textContent = row.value;
+          tr.appendChild(th);
+          tr.appendChild(td);
+          tbody.appendChild(tr);
+        });
+        table.appendChild(tbody);
+        panel.appendChild(table);
+        form.parentElement.insertBefore(panel, form);
+      }
+
+      function ensureIdpProfilePanel() {
+        if (!isPersonalInfoPage() || document.getElementById(IDP_PANEL_ID)) {
+          return;
+        }
+        fetchAccountProfile().then(function (profile) {
+          renderIdpProfilePanel(profile);
         });
       }
 
@@ -311,6 +643,7 @@ data:
         hideDeviceSignOutControls();
         lockPersonalInfoFields();
         addReadonlyNote();
+        ensureIdpProfilePanel();
       }
 
       applyLockdown();
