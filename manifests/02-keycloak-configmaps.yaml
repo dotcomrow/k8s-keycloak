@@ -420,7 +420,7 @@ data:
   auth-gateway-public.json: |
     {
       "clientId": "auth-gateway-public",
-      "name": "Auth Gateway Public Client",
+      "name": "Application",
       "protocol": "openid-connect",
       "publicClient": true,
       "standardFlowEnabled": true,
@@ -462,7 +462,7 @@ data:
   shell-spa-public.json: |
     {
       "clientId": "shell-spa-public",
-      "name": "Shell SPA Public Client",
+      "name": "Application",
       "protocol": "openid-connect",
       "publicClient": true,
       "standardFlowEnabled": true,
