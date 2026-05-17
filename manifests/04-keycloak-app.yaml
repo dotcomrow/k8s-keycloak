@@ -208,7 +208,6 @@ data:
       var NOTE_ID = "suncoast-account-readonly-note";
       var IDP_PANEL_ID = "suncoast-idp-profile-panel";
       var NOTE_TEXT = "Profile edits are disabled. Update your linked identity provider to change your name, email, or other profile details.";
-      var PROFILE_HINT_TEXT = "Read-only profile values synchronized from linked identity providers.";
       var PROFILE_FIELDS = [
         "username",
         "email",
@@ -240,6 +239,8 @@ data:
         "Sign out all devices": true
       };
       var accountProfilePromise = null;
+      var idpProfileRouteKey = "";
+      var idpProfileFetchStarted = false;
 
       function hideElement(el) {
         if (!el) {
@@ -567,6 +568,10 @@ data:
         return rows;
       }
 
+      function currentRouteKey() {
+        return (window.location.pathname || "") + "|" + (window.location.hash || "");
+      }
+
       function renderIdpProfilePanel(profile) {
         if (!isPersonalInfoPage()) {
           return;
@@ -575,37 +580,29 @@ data:
         if (!container) {
           return;
         }
+        var rows = extractProfileFields(profile);
         var existingPanel = document.getElementById(IDP_PANEL_ID);
-        if (existingPanel && existingPanel.parentElement) {
-          existingPanel.parentElement.removeChild(existingPanel);
+
+        if (!rows.length) {
+          if (existingPanel && existingPanel.parentElement) {
+            existingPanel.parentElement.removeChild(existingPanel);
+          }
+          return;
         }
 
-        var rows = extractProfileFields(profile);
-        var panel = document.createElement("section");
+        var rowsSignature = JSON.stringify(rows);
+        if (existingPanel && existingPanel.getAttribute("data-rows-signature") === rowsSignature) {
+          return;
+        }
+
+        var panel = existingPanel || document.createElement("section");
         panel.id = IDP_PANEL_ID;
+        panel.setAttribute("data-rows-signature", rowsSignature);
+        panel.replaceChildren();
 
         var title = document.createElement("h3");
         title.textContent = "IdP Profile Data";
         panel.appendChild(title);
-
-        var help = document.createElement("p");
-        help.className = "suncoast-idp-help";
-        help.textContent = PROFILE_HINT_TEXT;
-        panel.appendChild(help);
-
-        if (!rows.length) {
-          var empty = document.createElement("p");
-          empty.className = "suncoast-idp-empty";
-          empty.textContent = "No additional IdP profile fields are currently available for this account.";
-          panel.appendChild(empty);
-          var note = document.getElementById(NOTE_ID);
-          if (note && note.parentElement === container && note.nextSibling) {
-            container.insertBefore(panel, note.nextSibling);
-          } else {
-            container.insertBefore(panel, container.firstChild || null);
-          }
-          return;
-        }
 
         var table = document.createElement("table");
         var tbody = document.createElement("tbody");
@@ -621,26 +618,42 @@ data:
         });
         table.appendChild(tbody);
         panel.appendChild(table);
-        var note = document.getElementById(NOTE_ID);
-        if (note && note.parentElement === container && note.nextSibling) {
-          container.insertBefore(panel, note.nextSibling);
-        } else {
-          container.insertBefore(panel, container.firstChild || null);
+
+        if (!existingPanel) {
+          var note = document.getElementById(NOTE_ID);
+          if (note && note.parentElement === container && note.nextSibling) {
+            container.insertBefore(panel, note.nextSibling);
+          } else {
+            container.insertBefore(panel, container.firstChild || null);
+          }
         }
       }
 
       function ensureIdpProfilePanel() {
         if (!isPersonalInfoPage()) {
+          idpProfileRouteKey = "";
+          idpProfileFetchStarted = false;
           return;
         }
-        if (!document.getElementById(IDP_PANEL_ID)) {
-          renderIdpProfilePanel(null);
+
+        var routeKey = currentRouteKey();
+        if (routeKey !== idpProfileRouteKey) {
+          idpProfileRouteKey = routeKey;
+          idpProfileFetchStarted = false;
+          accountProfilePromise = null;
         }
-        fetchAccountProfile().then(function (profile) {
-          renderIdpProfilePanel(profile);
-        }).catch(function () {
-          renderIdpProfilePanel(null);
-        });
+
+        if (idpProfileFetchStarted) {
+          return;
+        }
+        idpProfileFetchStarted = true;
+        fetchAccountProfile()
+          .then(function (profile) {
+            renderIdpProfilePanel(profile);
+          })
+          .catch(function () {
+            renderIdpProfilePanel(null);
+          });
       }
 
       function redirectApplicationsPage() {
