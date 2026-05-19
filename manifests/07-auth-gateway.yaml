@@ -26,7 +26,7 @@ data:
   DB_SSLMODE: "disable"
   # Comma-separated list of allowed browser origins for API calls.
   # Example: "https://admin.suncoast.systems,https://shell.suncoast.systems"
-  CORS_ALLOW_ORIGINS: "https://cloudflare-shell-template-app-preview.suncoast.systems,https://cloudflare-shell-template-app.suncoast.systems,http://localhost:4173"
+  CORS_ALLOW_ORIGINS: "https://internal.suncoast.systems,https://internal-preview.suncoast.systems,https://www.suncoast.systems,https://www-preview.suncoast.systems,https://cloudflare-shell-template-app-preview.suncoast.systems,https://cloudflare-shell-template-app.suncoast.systems,http://localhost:4173"
 ---
 apiVersion: v1
 kind: Service
