@@ -95,11 +95,6 @@ data:
         ]
       },
       {
-        "label": "groups",
-        "path": "groups",
-        "isVisible": "isViewGroupsEnabled"
-      },
-      {
         "label": "organizations",
         "path": "organizations",
         "isVisible": "isViewOrganizationsEnabled"
@@ -129,10 +124,6 @@ data:
     [data-testid="applications"],
     [data-testid="options-toggle"],
     [data-testid="options-kebab-toggle"],
-    [data-testid="brand"],
-    [data-testid="page-header-brand"],
-    .pf-v5-c-masthead__brand,
-    .pf-v5-c-page__header-brand-link,
     [id$="-idp-unlink"] {
       display: none !important;
     }
@@ -323,10 +314,9 @@ data:
         var selectors = [
           "[data-testid='personal-info-form']",
           "[data-testid='personal-info']",
-          "main .pf-v5-c-page__main-section",
-          "main .pf-v5-c-page__main-body",
-          "main",
-          "#root"
+          "main form[data-testid='personal-info-form']",
+          "main [data-testid='personal-info'] form",
+          "main form"
         ];
         for (var i = 0; i < selectors.length; i += 1) {
           var container = document.querySelector(selectors[i]);
@@ -334,7 +324,21 @@ data:
             return container;
           }
         }
-        return document.body || null;
+        return null;
+      }
+
+      function findPersonalInfoInsertAnchor(container) {
+        if (!container) {
+          return null;
+        }
+        if (container.matches && container.matches("form")) {
+          return container;
+        }
+        var form = container.querySelector("form");
+        if (form) {
+          return form;
+        }
+        return container.firstElementChild || null;
       }
 
       function addReadonlyNote() {
@@ -348,10 +352,15 @@ data:
         if (!container) {
           return;
         }
+        var anchor = findPersonalInfoInsertAnchor(container);
+        var parent = container;
+        if (anchor && anchor.parentElement && anchor.parentElement !== container) {
+          parent = anchor.parentElement;
+        }
         var note = document.createElement("div");
         note.id = NOTE_ID;
         note.textContent = NOTE_TEXT;
-        container.insertBefore(note, container.firstChild || null);
+        parent.insertBefore(note, anchor || null);
       }
 
       function lockPersonalInfoFields() {
@@ -621,10 +630,15 @@ data:
 
         if (!existingPanel) {
           var note = document.getElementById(NOTE_ID);
-          if (note && note.parentElement === container && note.nextSibling) {
-            container.insertBefore(panel, note.nextSibling);
+          var anchor = findPersonalInfoInsertAnchor(container);
+          var parent = container;
+          if (anchor && anchor.parentElement && anchor.parentElement !== container) {
+            parent = anchor.parentElement;
+          }
+          if (note && note.parentElement === parent && note.nextSibling) {
+            parent.insertBefore(panel, note.nextSibling);
           } else {
-            container.insertBefore(panel, container.firstChild || null);
+            parent.insertBefore(panel, anchor || null);
           }
         }
       }
@@ -686,12 +700,37 @@ data:
         });
       }
 
+      function hideGroupsNavLink() {
+        document.querySelectorAll("a").forEach(function (link) {
+          var href = (link.getAttribute("href") || "").trim();
+          var text = (link.textContent || "").trim();
+          var navContainer = link.closest("nav, [role='navigation'], .pf-v5-c-nav");
+          var isGroupsHref =
+            /\/account\/groups($|[/?#])/.test(href) ||
+            /^groups($|[/?#])/.test(href);
+
+          if (!isGroupsHref && !(navContainer && text === "Groups")) {
+            return;
+          }
+
+          var navItem =
+            link.closest(".pf-v5-c-nav__item") ||
+            link.closest("li") ||
+            link.closest("[role='listitem']");
+          hideElement(navItem || link);
+        });
+      }
+
       function hideHeaderBrand() {
         var selectors = [
-          "[data-testid='brand']",
-          "[data-testid='page-header-brand']",
-          ".pf-v5-c-masthead__brand",
-          ".pf-v5-c-page__header-brand-link"
+          "[data-testid='brand'] img",
+          "[data-testid='brand'] svg",
+          "[data-testid='page-header-brand'] img",
+          "[data-testid='page-header-brand'] svg",
+          ".pf-v5-c-masthead__brand img",
+          ".pf-v5-c-masthead__brand svg",
+          ".pf-v5-c-page__header-brand-link img",
+          ".pf-v5-c-page__header-brand-link svg"
         ];
         selectors.forEach(function (selector) {
           document.querySelectorAll(selector).forEach(hideElement);
@@ -704,6 +743,7 @@ data:
         }
         hideHeaderBrand();
         hideApplicationsNavLink();
+        hideGroupsNavLink();
         hideSelectors();
         hidePasswordWidgets();
         hideSignOutButtons();
