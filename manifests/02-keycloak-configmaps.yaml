@@ -298,6 +298,57 @@ data:
         }
       ]
     }
+  auth-gateway-public.json: |
+    {
+      "clientId": "auth-gateway-public",
+      "name": "Application",
+      "protocol": "openid-connect",
+      "publicClient": true,
+      "standardFlowEnabled": true,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": false,
+      "implicitFlowEnabled": false,
+      "redirectUris": [
+        "https://login.suncoast.systems/callback",
+        "http://localhost:8080/callback",
+        "http://localhost/*",
+        "https://localhost/*",
+        "http://127.0.0.1/*",
+        "https://127.0.0.1/*",
+        "https://*.suncoast.systems/*",
+        "https://*.app.suncoast.systems/*"
+      ],
+      "webOrigins": [
+        "+",
+        "http://localhost",
+        "https://localhost",
+        "http://localhost:4173",
+        "https://localhost:4173",
+        "http://127.0.0.1",
+        "https://127.0.0.1",
+        "http://127.0.0.1:4173",
+        "https://127.0.0.1:4173",
+        "https://login.suncoast.systems"
+      ],
+      "attributes": {
+        "pkce.code.challenge.method": "S256",
+        "standard.token.exchange.enabled": "true",
+        "post.logout.redirect.uris": "+"
+      },
+      "protocolMappers": [
+        {
+          "name": "audience-auth-gateway-exchange",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "consentRequired": false,
+          "config": {
+            "included.client.audience": "auth-gateway-exchange",
+            "access.token.claim": "true",
+            "id.token.claim": "false"
+          }
+        }
+      ]
+    }
 ---
 apiVersion: v1
 kind: ConfigMap
@@ -430,13 +481,23 @@ data:
       "redirectUris": [
         "https://login.suncoast.systems/callback",
         "http://localhost:8080/callback",
-        "https://cloudflare-shell-template-app-preview.suncoast.systems/*",
-        "https://cloudflare-shell-template-app.suncoast.systems/*"
+        "http://localhost/*",
+        "https://localhost/*",
+        "http://127.0.0.1/*",
+        "https://127.0.0.1/*",
+        "https://*.suncoast.systems/*",
+        "https://*.app.suncoast.systems/*"
       ],
       "webOrigins": [
-        "https://cloudflare-shell-template-app-preview.suncoast.systems",
-        "https://cloudflare-shell-template-app.suncoast.systems",
+        "+",
+        "http://localhost",
+        "https://localhost",
         "http://localhost:4173",
+        "https://localhost:4173",
+        "http://127.0.0.1",
+        "https://127.0.0.1",
+        "http://127.0.0.1:4173",
+        "https://127.0.0.1:4173",
         "https://login.suncoast.systems",
         "http://localhost:8080"
       ],
