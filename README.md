@@ -58,7 +58,7 @@ GitOps seed job for baseline app registrations:
 
 Management APIs require:
 - `Authorization: Bearer <ADMIN_API_TOKEN>`
-- The deployment requires secret `auth-gateway-admin-api` at startup; gateway pods fail to start without it.
+- `ADMIN_API_TOKEN` is sourced from Vault KVv2 path `secret/data/auth-gateway-admin-api`, key `value` (synced into Kubernetes Secret `auth-gateway-admin-api` by External Secrets).
 
 ### Build and Publish Auth Gateway Image
 
@@ -80,11 +80,10 @@ Required Vault secret (KVv2 path `secret/data/keycloak-client-secret-auth-gatewa
 vault kv put secret/keycloak-client-secret-auth-gateway-exchange value='<strong-client-secret>'
 ```
 
-Required secret:
+Required Vault secret:
 
 ```sh
-kubectl -n keycloak create secret generic auth-gateway-admin-api \
-  --from-literal=token='<strong-admin-token>'
+vault kv put secret/auth-gateway-admin-api value='<strong-admin-token>'
 ```
 
 Optional secret:

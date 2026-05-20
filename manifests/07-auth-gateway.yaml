@@ -48,6 +48,31 @@ spec:
       port: 8080
       targetPort: 8080
 ---
+apiVersion: external-secrets.io/v1
+kind: ExternalSecret
+metadata:
+  name: auth-gateway-admin-api
+  namespace: keycloak
+  annotations:
+    argocd.argoproj.io/sync-wave: "7"
+spec:
+  refreshInterval: 1h
+  secretStoreRef:
+    kind: SecretStore
+    name: vault-store-keycloak
+  target:
+    name: auth-gateway-admin-api
+    creationPolicy: Owner
+    deletionPolicy: Retain
+    template:
+      type: Opaque
+  data:
+    - secretKey: value
+      remoteRef:
+        # Vault KVv2 path: secret/data/auth-gateway-admin-api
+        key: auth-gateway-admin-api
+        property: value
+---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -111,7 +136,8 @@ spec:
               valueFrom:
                 secretKeyRef:
                   name: auth-gateway-admin-api
-                  key: token
+                  key: value
+                  optional: false
             - name: OIDC_CLIENT_SECRET
               valueFrom:
                 secretKeyRef:
