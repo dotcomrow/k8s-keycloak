@@ -1,0 +1,341 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: keycloak-auth-gateway-sync-apps-script
+  namespace: keycloak
+  annotations:
+    argocd.argoproj.io/sync-wave: "9"
+data:
+  sync-auth-gateway-apps.sh: |
+    set -eu
+
+    DB_USER="$(cat /vault/secrets/db-username)"
+    DB_PASSWORD="$(cat /vault/secrets/db-password)"
+    export PGPASSWORD="${DB_PASSWORD}"
+
+    REGISTRY_APPS_URL="${REGISTRY_APPS_URL:-}"
+    if [ -z "${REGISTRY_APPS_URL}" ]; then
+      echo "REGISTRY_APPS_URL is required"
+      exit 1
+    fi
+
+    APPS_FILE="$(mktemp)"
+    APPS_CSV_FILE="$(mktemp)"
+    cleanup() {
+      rm -f "$APPS_FILE" "$APPS_CSV_FILE"
+    }
+    trap cleanup EXIT
+
+    for attempt in $(seq 1 120); do
+      if psql -h "${DB_HOST}" -p "${DB_PORT}" -U "${DB_USER}" -d "${DB_NAME}" -tAc "SELECT 1" >/dev/null 2>&1; then
+        break
+      fi
+      echo "waiting for database (${attempt}/120)..."
+      sleep 5
+    done
+
+    apk add --no-cache curl python3 >/dev/null
+
+    python3 - "$APPS_FILE" "$APPS_CSV_FILE" <<'PY'
+    import csv
+    import json
+    import os
+    import sys
+    import urllib.error
+    import urllib.request
+
+    apps_path = sys.argv[1]
+    csv_path = sys.argv[2]
+    apps_url = (os.environ.get("REGISTRY_APPS_URL") or "").strip()
+    apps_token = (os.environ.get("REGISTRY_READ_TOKEN") or "").strip()
+
+    if not apps_url:
+        raise SystemExit("REGISTRY_APPS_URL is required.")
+
+    headers = {
+        "Accept": "application/json",
+    }
+    if apps_token:
+        headers["Authorization"] = f"Bearer {apps_token}"
+
+    request = urllib.request.Request(apps_url, headers=headers, method="GET")
+    try:
+        with urllib.request.urlopen(request, timeout=20) as response:
+            raw = response.read().decode("utf-8", errors="replace")
+    except urllib.error.HTTPError as err:
+        body = err.read().decode("utf-8", errors="replace")
+        raise SystemExit(f"Failed to fetch registry apps (HTTP {err.code}): {body}")
+    except urllib.error.URLError as err:
+        raise SystemExit(f"Failed to fetch registry apps before response: {err.reason}")
+
+    with open(apps_path, "w", encoding="utf-8") as apps_file:
+        apps_file.write(raw)
+
+    try:
+        payload = json.loads(raw)
+    except json.JSONDecodeError as err:
+        raise SystemExit(f"Registry apps response is not valid JSON: {err}")
+
+    if isinstance(payload, dict):
+        items = payload.get("items")
+    elif isinstance(payload, list):
+        items = payload
+    else:
+        raise SystemExit("Registry apps response must be an object with an 'items' array or a direct array.")
+
+    if not isinstance(items, list):
+        raise SystemExit("Registry apps response does not contain an 'items' array.")
+
+    def as_non_empty_string(value):
+        if not isinstance(value, str):
+            return ""
+        return value.strip()
+
+    def as_enabled(value):
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, (int, float)):
+            if int(value) == 1:
+                return True
+            if int(value) == 0:
+                return False
+        if isinstance(value, str):
+            normalized = value.strip().lower()
+            if normalized in {"1", "true", "yes", "on"}:
+                return True
+            if normalized in {"0", "false", "no", "off"}:
+                return False
+        raise ValueError("enabled must be boolean-compatible")
+
+    rows = []
+    for index, item in enumerate(items):
+        if not isinstance(item, dict):
+            raise SystemExit(f"Registry app item {index} is not an object.")
+
+        slug = as_non_empty_string(item.get("slug"))
+        display_name = as_non_empty_string(item.get("display_name"))
+        base_url = as_non_empty_string(item.get("base_url"))
+
+        if not slug:
+            raise SystemExit(f"Registry app item {index} is missing slug.")
+        if not display_name:
+            raise SystemExit(f"Registry app '{slug}' is missing display_name.")
+        if not base_url:
+            raise SystemExit(f"Registry app '{slug}' is missing base_url.")
+
+        raw_base_urls = item.get("base_urls")
+        normalized_base_urls = []
+        if isinstance(raw_base_urls, list):
+            for value in raw_base_urls:
+                candidate = as_non_empty_string(value)
+                if candidate:
+                    normalized_base_urls.append(candidate)
+
+        if not normalized_base_urls:
+            normalized_base_urls = [base_url]
+
+        if base_url not in normalized_base_urls:
+            normalized_base_urls.insert(0, base_url)
+
+        unique_base_urls = []
+        seen = set()
+        for value in normalized_base_urls:
+            if value in seen:
+                continue
+            seen.add(value)
+            unique_base_urls.append(value)
+
+        try:
+            enabled = as_enabled(item.get("enabled", True))
+        except ValueError as err:
+            raise SystemExit(f"Registry app '{slug}' has invalid enabled value: {err}")
+
+        rows.append([
+            slug,
+            display_name,
+            base_url,
+            json.dumps(unique_base_urls, separators=(",", ":")),
+            "true" if enabled else "false",
+        ])
+
+    with open(csv_path, "w", encoding="utf-8", newline="") as csv_file:
+        writer = csv.writer(csv_file)
+        writer.writerows(rows)
+    PY
+
+    for attempt in $(seq 1 120); do
+      if psql -h "${DB_HOST}" -p "${DB_PORT}" -U "${DB_USER}" -d "${DB_NAME}" -v ON_ERROR_STOP=1 -v sync_file="$APPS_CSV_FILE" <<'SQL'
+      CREATE TEMP TABLE _registry_apps (
+        slug text,
+        display_name text,
+        base_url text,
+        base_urls jsonb,
+        enabled boolean
+      );
+
+      \copy _registry_apps (slug, display_name, base_url, base_urls, enabled) FROM :'sync_file' WITH (FORMAT csv)
+
+      SELECT CASE
+        WHEN EXISTS (
+          SELECT 1
+          FROM information_schema.columns
+          WHERE table_schema = 'keycloak'
+            AND table_name = 'auth_gateway_allowed_apps'
+            AND column_name = 'base_urls'
+        ) THEN 1
+        ELSE 0
+      END AS has_base_urls \gset
+
+      \if :has_base_urls
+        INSERT INTO keycloak.auth_gateway_allowed_apps (slug, display_name, base_url, base_urls, enabled)
+        SELECT slug, display_name, base_url, base_urls, enabled
+        FROM _registry_apps
+        ON CONFLICT (slug) DO UPDATE
+        SET
+          display_name = EXCLUDED.display_name,
+          base_url = EXCLUDED.base_url,
+          base_urls = EXCLUDED.base_urls,
+          enabled = EXCLUDED.enabled,
+          updated_at = NOW();
+      \else
+        INSERT INTO keycloak.auth_gateway_allowed_apps (slug, display_name, base_url, enabled)
+        SELECT slug, display_name, base_url, enabled
+        FROM _registry_apps
+        ON CONFLICT (slug) DO UPDATE
+        SET
+          display_name = EXCLUDED.display_name,
+          base_url = EXCLUDED.base_url,
+          enabled = EXCLUDED.enabled,
+          updated_at = NOW();
+      \endif
+    SQL
+      then
+        echo "auth gateway app sync completed"
+        exit 0
+      fi
+      echo "sync attempt ${attempt}/120 failed; retrying..."
+      sleep 5
+    done
+
+    echo "failed to sync auth gateway apps"
+    exit 1
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: keycloak-auth-gateway-sync-apps-bootstrap
+  namespace: keycloak
+  annotations:
+    argocd.argoproj.io/hook: Sync
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
+    argocd.argoproj.io/sync-wave: "10"
+spec:
+  backoffLimit: 2
+  template:
+    metadata:
+      annotations:
+        linkerd.io/inject: "disabled"
+        vault.hashicorp.com/agent-inject: "true"
+        vault.hashicorp.com/role: "keycloak"
+        vault.hashicorp.com/agent-init-first: "true"
+        vault.hashicorp.com/agent-pre-populate: "true"
+        vault.hashicorp.com/agent-pre-populate-only: "true"
+        vault.hashicorp.com/agent-inject-secret-db-username: "yugabyte-db/static-creds/keycloak-app"
+        vault.hashicorp.com/agent-inject-template-db-username: |
+          {{- with secret "yugabyte-db/static-creds/keycloak-app" -}}{{ .Data.username }}{{- end -}}
+        vault.hashicorp.com/agent-inject-secret-db-password: "yugabyte-db/static-creds/keycloak-app"
+        vault.hashicorp.com/agent-inject-template-db-password: |
+          {{- with secret "yugabyte-db/static-creds/keycloak-app" -}}{{ .Data.password }}{{- end -}}
+    spec:
+      serviceAccountName: keycloak
+      restartPolicy: Never
+      containers:
+        - name: sync-apps
+          image: postgres:15-alpine
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: DB_HOST
+              value: yb-tserver-service.yugabyte.svc.cluster.local
+            - name: DB_PORT
+              value: "5433"
+            - name: DB_NAME
+              value: keycloak
+            - name: REGISTRY_APPS_URL
+              value: https://cloudflare-mfe-module-registry-service.suncoast.systems/api/auth/apps?enabled=all&limit=1000
+            - name: REGISTRY_READ_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: auth-gateway-registry-read-token
+                  key: value
+                  optional: true
+          command: ["/bin/sh", "/scripts/sync-auth-gateway-apps.sh"]
+          volumeMounts:
+            - name: sync-script
+              mountPath: /scripts
+              readOnly: true
+      volumes:
+        - name: sync-script
+          configMap:
+            name: keycloak-auth-gateway-sync-apps-script
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: keycloak-auth-gateway-sync-apps
+  namespace: keycloak
+  annotations:
+    argocd.argoproj.io/sync-wave: "10"
+spec:
+  schedule: "*/10 * * * *"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 2
+      template:
+        metadata:
+          annotations:
+            linkerd.io/inject: "disabled"
+            vault.hashicorp.com/agent-inject: "true"
+            vault.hashicorp.com/role: "keycloak"
+            vault.hashicorp.com/agent-init-first: "true"
+            vault.hashicorp.com/agent-pre-populate: "true"
+            vault.hashicorp.com/agent-pre-populate-only: "true"
+            vault.hashicorp.com/agent-inject-secret-db-username: "yugabyte-db/static-creds/keycloak-app"
+            vault.hashicorp.com/agent-inject-template-db-username: |
+              {{- with secret "yugabyte-db/static-creds/keycloak-app" -}}{{ .Data.username }}{{- end -}}
+            vault.hashicorp.com/agent-inject-secret-db-password: "yugabyte-db/static-creds/keycloak-app"
+            vault.hashicorp.com/agent-inject-template-db-password: |
+              {{- with secret "yugabyte-db/static-creds/keycloak-app" -}}{{ .Data.password }}{{- end -}}
+        spec:
+          serviceAccountName: keycloak
+          restartPolicy: Never
+          containers:
+            - name: sync-apps
+              image: postgres:15-alpine
+              imagePullPolicy: IfNotPresent
+              env:
+                - name: DB_HOST
+                  value: yb-tserver-service.yugabyte.svc.cluster.local
+                - name: DB_PORT
+                  value: "5433"
+                - name: DB_NAME
+                  value: keycloak
+                - name: REGISTRY_APPS_URL
+                  value: https://cloudflare-mfe-module-registry-service.suncoast.systems/api/auth/apps?enabled=all&limit=1000
+                - name: REGISTRY_READ_TOKEN
+                  valueFrom:
+                    secretKeyRef:
+                      name: auth-gateway-registry-read-token
+                      key: value
+                      optional: true
+              command: ["/bin/sh", "/scripts/sync-auth-gateway-apps.sh"]
+              volumeMounts:
+                - name: sync-script
+                  mountPath: /scripts
+                  readOnly: true
+          volumes:
+            - name: sync-script
+              configMap:
+                name: keycloak-auth-gateway-sync-apps-script

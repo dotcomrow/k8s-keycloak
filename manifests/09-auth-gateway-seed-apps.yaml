@@ -63,9 +63,11 @@ spec:
                 'example-mfe-preview',
                 'example-mfe-local',
                 'example-mfe',
+                'example-mfe-prod',
                 'nifi-flow-mfe-preview',
                 'nifi-flow-mfe-local',
-                'nifi-flow-mfe'
+                'nifi-flow-mfe',
+                'nifi-flow-mfe-prod'
               );
 
               CREATE TEMP TABLE _seed_apps (
@@ -78,45 +80,17 @@ spec:
 
               INSERT INTO _seed_apps (slug, display_name, base_url, base_urls, enabled) VALUES
                 (
-                  'shell',
-                  'Cloudflare Shell Template Preview',
-                  'https://cloudflare-shell-template-app-preview.suncoast.systems',
-                  '["https://cloudflare-shell-template-app-preview.suncoast.systems"]'::jsonb,
-                  TRUE
-                ),
-                (
-                  'shell-prod',
-                  'Cloudflare Shell Template',
-                  'https://cloudflare-shell-template-app.suncoast.systems',
-                  '["https://cloudflare-shell-template-app.suncoast.systems"]'::jsonb,
-                  TRUE
-                ),
-                (
                   'example-mfe-dev',
                   'Example MFE Dev',
                   'http://localhost:4173',
-                  '["http://localhost:4173","https://cloudflare-shell-template-app-preview.suncoast.systems"]'::jsonb,
-                  TRUE
-                ),
-                (
-                  'example-mfe-prod',
-                  'Example MFE Prod',
-                  'https://cloudflare-shell-template-app.suncoast.systems',
-                  '["https://cloudflare-shell-template-app.suncoast.systems"]'::jsonb,
+                  '["http://localhost:4173"]'::jsonb,
                   TRUE
                 ),
                 (
                   'nifi-flow-mfe-dev',
                   'NiFi Flow MFE Dev',
                   'http://localhost:4173',
-                  '["http://localhost:4173","https://cloudflare-shell-template-app-preview.suncoast.systems"]'::jsonb,
-                  TRUE
-                ),
-                (
-                  'nifi-flow-mfe-prod',
-                  'NiFi Flow MFE Prod',
-                  'https://cloudflare-shell-template-app.suncoast.systems',
-                  '["https://cloudflare-shell-template-app.suncoast.systems"]'::jsonb,
+                  '["http://localhost:4173"]'::jsonb,
                   TRUE
                 );
 

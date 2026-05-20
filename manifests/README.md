@@ -13,6 +13,7 @@ kubectl apply -f manifests/05-admin-redirect.yaml
 kubectl apply -f manifests/06-cloudflare-tunnel.yaml
 kubectl apply -f manifests/07-auth-gateway.yaml
 kubectl apply -f manifests/09-auth-gateway-seed-apps.yaml
+kubectl apply -f manifests/10-auth-gateway-sync-apps.yaml
 
 Notes
 - The `vault` namespace (and Vault itself) must already exist before applying the vault bootstrap jobs.
@@ -28,3 +29,4 @@ What lives where
 - 07-auth-gateway.yaml: shared login callback/auth gateway service with DB-backed allowed app config APIs (image from GHCR `keycloak-auth-gateway` repo).
 - 08-auth-gateway-apisix-route.example.yaml: optional APISIX route example for exposing login.suncoast.systems externally.
 - 09-auth-gateway-seed-apps.yaml: idempotent seed job that upserts baseline app slugs for auth-gateway.
+- 10-auth-gateway-sync-apps.yaml: bootstrap + scheduled sync that reconciles auth-gateway allowed apps from the module registry service.

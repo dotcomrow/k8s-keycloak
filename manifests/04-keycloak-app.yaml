@@ -193,32 +193,7 @@ data:
     }
 
     #suncoast-account-return-link {
-      display: inline-flex;
-      align-items: center;
-      gap: 0.25rem;
-      margin-left: 0.75rem;
-      color: #06c;
-      font-weight: 600;
-      text-decoration: none;
-      white-space: nowrap;
-    }
-
-    #suncoast-account-return-link:hover,
-    #suncoast-account-return-link:focus {
-      text-decoration: underline;
-    }
-
-    #suncoast-account-return-link[data-floating="true"] {
-      position: fixed;
-      top: 0.8rem;
-      right: 1rem;
-      margin-left: 0;
-      padding: 0.35rem 0.65rem;
-      background: #ffffff;
-      border: 1px solid #d2dbe5;
-      border-radius: 6px;
-      box-shadow: 0 2px 8px rgba(15, 23, 42, 0.12);
-      z-index: 3000;
+      display: none !important;
     }
   account-lockdown.js: |
     (function () {
@@ -521,41 +496,9 @@ data:
       }
 
       function ensureReturnToHeaderLink() {
-        var targetUrl = resolveReturnToUrl();
         var existing = document.getElementById(RETURN_LINK_ID);
-        if (!targetUrl) {
-          if (existing && existing.parentElement) {
-            existing.parentElement.removeChild(existing);
-          }
-          return;
-        }
-
-        var container = findHeaderActionsContainer();
-        var floating = false;
-        if (!container) {
-          container = findFallbackReturnLinkContainer();
-          floating = true;
-        }
-        if (!container) {
-          return;
-        }
-
-        var link = existing || document.createElement("a");
-        link.id = RETURN_LINK_ID;
-        link.href = targetUrl;
-        link.textContent = "Back to site";
-        link.setAttribute("aria-label", "Back to site");
-        if (floating) {
-          link.setAttribute("data-floating", "true");
-        } else {
-          link.removeAttribute("data-floating");
-        }
-        if (!link.classList.contains("pf-v5-c-button")) {
-          link.classList.add("pf-v5-c-button", "pf-m-link", "pf-m-inline");
-        }
-
-        if (!existing || existing.parentElement !== container) {
-          container.appendChild(link);
+        if (existing && existing.parentElement) {
+          existing.parentElement.removeChild(existing);
         }
       }
 
