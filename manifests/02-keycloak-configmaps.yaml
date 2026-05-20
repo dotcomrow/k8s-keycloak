@@ -310,6 +310,7 @@ data:
       "implicitFlowEnabled": false,
       "redirectUris": [
         "https://login.suncoast.systems/callback",
+        "https://login-internal.suncoast.systems/callback",
         "http://localhost:8080/callback",
         "http://localhost/*",
         "https://localhost/*",
@@ -336,7 +337,8 @@ data:
         "https://127.0.0.1",
         "http://127.0.0.1:4173",
         "https://127.0.0.1:4173",
-        "https://login.suncoast.systems"
+        "https://login.suncoast.systems",
+        "https://login-internal.suncoast.systems"
       ],
       "attributes": {
         "pkce.code.challenge.method": "S256",
@@ -488,6 +490,7 @@ data:
       "implicitFlowEnabled": false,
       "redirectUris": [
         "https://login.suncoast.systems/callback",
+        "https://login-internal.suncoast.systems/callback",
         "http://localhost:8080/callback",
         "http://localhost/*",
         "https://localhost/*",
@@ -515,6 +518,7 @@ data:
         "http://127.0.0.1:4173",
         "https://127.0.0.1:4173",
         "https://login.suncoast.systems",
+        "https://login-internal.suncoast.systems",
         "http://localhost:8080"
       ],
       "attributes": {
