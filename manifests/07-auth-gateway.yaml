@@ -163,3 +163,144 @@ spec:
             limits:
               cpu: 500m
               memory: 512Mi
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: keycloak-auth-gateway-internal-config
+  namespace: keycloak
+  annotations:
+    argocd.argoproj.io/sync-wave: "6"
+data:
+  LISTEN_ADDR: ":8080"
+  EXTERNAL_BASE_URL: "https://login-internal.suncoast.systems"
+  CALLBACK_PATH: "/callback"
+  KEYCLOAK_ISSUER: "https://auth.suncoast.systems/realms/internal"
+  OIDC_CLIENT_ID: "auth-gateway-public"
+  OIDC_EXCHANGE_CLIENT_ID: "auth-gateway-exchange"
+  OIDC_EXCHANGE_CLIENT_SECRET_FILE: "/vault/secrets/oidc-exchange-client-secret"
+  OIDC_SCOPE: "openid profile email"
+  HASURA_TOKEN_AUDIENCE_FILE: "/vault/secrets/client-id-graphql-api"
+  STATE_TTL: "10m"
+  EXCHANGE_CODE_TTL: "2m"
+  APP_CODE_PARAM: "gateway_code"
+  CLEANUP_INTERVAL: "5m"
+  DB_HOST: "yb-tserver-service.yugabyte.svc.cluster.local"
+  DB_PORT: "5433"
+  DB_NAME: "keycloak"
+  DB_SEARCH_PATH: "keycloak"
+  DB_SSLMODE: "disable"
+  # Comma-separated list of allowed browser origins for API calls.
+  # Example: "https://admin.suncoast.systems,https://shell.suncoast.systems"
+  CORS_ALLOW_ORIGINS: "https://internal.suncoast.systems,https://internal-preview.suncoast.systems,https://www.suncoast.systems,https://www-preview.suncoast.systems,http://localhost:4173"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: keycloak-auth-gateway-internal
+  namespace: keycloak
+  annotations:
+    argocd.argoproj.io/sync-wave: "7"
+  labels:
+    app: keycloak-auth-gateway-internal
+    app.kubernetes.io/name: keycloak-auth-gateway-internal
+    app.kubernetes.io/component: authentication
+spec:
+  type: ClusterIP
+  selector:
+    app: keycloak-auth-gateway-internal
+  ports:
+    - name: http
+      port: 8080
+      targetPort: 8080
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: keycloak-auth-gateway-internal
+  namespace: keycloak
+  labels:
+    app: keycloak-auth-gateway-internal
+    app.kubernetes.io/name: keycloak-auth-gateway-internal
+    app.kubernetes.io/component: authentication
+  annotations:
+    reloader.stakater.com/auto: "true"
+    argocd.argoproj.io/sync-wave: "8"
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: keycloak-auth-gateway-internal
+  template:
+    metadata:
+      labels:
+        app: keycloak-auth-gateway-internal
+      annotations:
+        reloader.stakater.com/auto: "true"
+        linkerd.io/inject: "enabled"
+
+        vault.hashicorp.com/agent-inject: "true"
+        vault.hashicorp.com/role: "keycloak"
+        vault.hashicorp.com/agent-init-first: "true"
+        vault.hashicorp.com/agent-pre-populate: "true"
+
+        vault.hashicorp.com/agent-inject-secret-db-username: "yugabyte-db/static-creds/keycloak-app"
+        vault.hashicorp.com/agent-inject-template-db-username: |
+          {{- with secret "yugabyte-db/static-creds/keycloak-app" -}}{{ .Data.username }}{{- end -}}
+        vault.hashicorp.com/agent-inject-secret-db-password: "yugabyte-db/static-creds/keycloak-app"
+        vault.hashicorp.com/agent-inject-template-db-password: |
+          {{- with secret "yugabyte-db/static-creds/keycloak-app" -}}{{ .Data.password }}{{- end -}}
+        vault.hashicorp.com/agent-inject-secret-client-id-graphql-api: "secret/data/keycloak-client-id-graphql-api"
+        vault.hashicorp.com/agent-inject-template-client-id-graphql-api: |
+          {{- with secret "secret/data/keycloak-client-id-graphql-api" -}}{{ .Data.data.value }}{{- end -}}
+        vault.hashicorp.com/agent-inject-secret-oidc-exchange-client-secret: "secret/data/keycloak-client-secret-auth-gateway-exchange"
+        vault.hashicorp.com/agent-inject-template-oidc-exchange-client-secret: |
+          {{- with secret "secret/data/keycloak-client-secret-auth-gateway-exchange" -}}{{ .Data.data.value }}{{- end -}}
+    spec:
+      serviceAccountName: keycloak
+      containers:
+        - name: auth-gateway
+          image: ghcr.io/dotcomrow/keycloak-auth-gateway:sha-56c2245
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 8080
+              name: http
+          envFrom:
+            - configMapRef:
+                name: keycloak-auth-gateway-internal-config
+          env:
+            - name: DB_USER_FILE
+              value: /vault/secrets/db-username
+            - name: DB_PASSWORD_FILE
+              value: /vault/secrets/db-password
+            - name: ADMIN_API_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: auth-gateway-admin-api
+                  key: value
+                  optional: false
+            - name: OIDC_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: auth-gateway-oidc-client
+                  key: client-secret
+                  optional: true
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
