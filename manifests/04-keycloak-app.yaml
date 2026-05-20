@@ -191,12 +191,29 @@ data:
       font-style: italic;
       margin: 0.3rem 0 0;
     }
+
+    #suncoast-account-return-link {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.25rem;
+      margin-left: 0.75rem;
+      color: #06c;
+      font-weight: 600;
+      text-decoration: none;
+      white-space: nowrap;
+    }
+
+    #suncoast-account-return-link:hover,
+    #suncoast-account-return-link:focus {
+      text-decoration: underline;
+    }
   account-lockdown.js: |
     (function () {
       "use strict";
 
       var NOTE_ID = "suncoast-account-readonly-note";
       var IDP_PANEL_ID = "suncoast-idp-profile-panel";
+      var RETURN_LINK_ID = "suncoast-account-return-link";
       var NOTE_TEXT = "Profile edits are disabled. Update your linked identity provider to change your name, email, or other profile details.";
       var PROFILE_FIELDS = [
         "username",
@@ -386,6 +403,144 @@ data:
         } catch (err) {
           return match[1];
         }
+      }
+
+      function getQueryParam(name) {
+        if (!name) {
+          return "";
+        }
+        try {
+          var params = new URLSearchParams(window.location.search || "");
+          return (params.get(name) || "").trim();
+        } catch (err) {
+          var escapedName = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+          var regex = new RegExp("[?&]" + escapedName + "=([^&#]*)");
+          var match = regex.exec(window.location.search || "");
+          if (!match || !match[1]) {
+            return "";
+          }
+          try {
+            return decodeURIComponent(match[1].replace(/\+/g, " ")).trim();
+          } catch (decodeErr) {
+            return match[1].trim();
+          }
+        }
+      }
+
+      function parseUrl(value) {
+        if (!value || typeof value !== "string") {
+          return null;
+        }
+        try {
+          return new URL(value, window.location.origin);
+        } catch (err) {
+          return null;
+        }
+      }
+
+      function isAllowedReturnUrl(url) {
+        if (!url) {
+          return false;
+        }
+        var protocol = (url.protocol || "").toLowerCase();
+        var host = (url.hostname || "").toLowerCase();
+        if (protocol === "http:" && (host === "localhost" || host === "127.0.0.1")) {
+          return true;
+        }
+        if (protocol !== "https:") {
+          return false;
+        }
+        return (
+          host === "suncoast.systems" ||
+          host === "localhost" ||
+          host === "127.0.0.1" ||
+          /\.suncoast\.systems$/.test(host)
+        );
+      }
+
+      function resolveReturnToUrl() {
+        var fromQuery = getQueryParam("referrer_uri");
+        var parsedQuery = parseUrl(fromQuery);
+        if (isAllowedReturnUrl(parsedQuery)) {
+          return parsedQuery.toString();
+        }
+
+        var fromReferrer = (document.referrer || "").trim();
+        var parsedReferrer = parseUrl(fromReferrer);
+        if (isAllowedReturnUrl(parsedReferrer)) {
+          return parsedReferrer.toString();
+        }
+
+        return "";
+      }
+
+      function findHeaderActionsContainer() {
+        var selectors = [
+          "[data-testid='page-header-toolbar']",
+          ".pf-v5-c-page__header-tools",
+          ".pf-v5-c-masthead__content",
+          "header .pf-v5-c-toolbar__content",
+          "header"
+        ];
+        for (var i = 0; i < selectors.length; i += 1) {
+          var match = document.querySelector(selectors[i]);
+          if (match) {
+            return match;
+          }
+        }
+        return null;
+      }
+
+      function ensureReturnToHeaderLink() {
+        var targetUrl = resolveReturnToUrl();
+        var existing = document.getElementById(RETURN_LINK_ID);
+        if (!targetUrl) {
+          if (existing && existing.parentElement) {
+            existing.parentElement.removeChild(existing);
+          }
+          return;
+        }
+
+        var container = findHeaderActionsContainer();
+        if (!container) {
+          return;
+        }
+
+        var link = existing || document.createElement("a");
+        link.id = RETURN_LINK_ID;
+        link.href = targetUrl;
+        link.textContent = "Back to site";
+        link.setAttribute("aria-label", "Back to site");
+        if (!link.classList.contains("pf-v5-c-button")) {
+          link.classList.add("pf-v5-c-button", "pf-m-link", "pf-m-inline");
+        }
+
+        if (!existing || existing.parentElement !== container) {
+          container.appendChild(link);
+        }
+      }
+
+      function sanitizeLogoutUrl(raw) {
+        var parsed = parseUrl(raw);
+        if (!parsed) {
+          return "";
+        }
+        if (!/\/protocol\/openid-connect\/logout(?:\/|$)/.test(parsed.pathname || "")) {
+          return "";
+        }
+        parsed.searchParams.delete("id_token_hint");
+        return parsed.toString();
+      }
+
+      function normalizeLogoutLinks() {
+        document.querySelectorAll("a[href*='openid-connect/logout']").forEach(function (link) {
+          var href = link.getAttribute("href");
+          var sanitized = sanitizeLogoutUrl(href);
+          if (!sanitized) {
+            return;
+          }
+          link.setAttribute("href", sanitized);
+        });
       }
 
       function looksLikeJwt(value) {
@@ -740,6 +895,8 @@ data:
         if (redirectApplicationsPage()) {
           return;
         }
+        ensureReturnToHeaderLink();
+        normalizeLogoutLinks();
         hideApplicationsNavLink();
         hideGroupsNavLink();
         hideSelectors();
