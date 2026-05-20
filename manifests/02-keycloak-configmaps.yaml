@@ -316,7 +316,17 @@ data:
         "http://127.0.0.1/*",
         "https://127.0.0.1/*",
         "https://*.suncoast.systems/*",
-        "https://*.app.suncoast.systems/*"
+        "https://*.app.suncoast.systems/*",
+        "https://internal.suncoast.systems/*",
+        "https://internal-preview.suncoast.systems/*",
+        "https://www.suncoast.systems/*",
+        "https://www-preview.suncoast.systems/*",
+        "https://cloudflare-shell-template-app.suncoast.systems/*",
+        "https://cloudflare-shell-template-app-preview.suncoast.systems/*",
+        "http://localhost:4173/*",
+        "https://localhost:4173/*",
+        "http://127.0.0.1:4173/*",
+        "https://127.0.0.1:4173/*"
       ],
       "webOrigins": [
         "+",
@@ -486,7 +496,17 @@ data:
         "http://127.0.0.1/*",
         "https://127.0.0.1/*",
         "https://*.suncoast.systems/*",
-        "https://*.app.suncoast.systems/*"
+        "https://*.app.suncoast.systems/*",
+        "https://internal.suncoast.systems/*",
+        "https://internal-preview.suncoast.systems/*",
+        "https://www.suncoast.systems/*",
+        "https://www-preview.suncoast.systems/*",
+        "https://cloudflare-shell-template-app.suncoast.systems/*",
+        "https://cloudflare-shell-template-app-preview.suncoast.systems/*",
+        "http://localhost:4173/*",
+        "https://localhost:4173/*",
+        "http://127.0.0.1:4173/*",
+        "https://127.0.0.1:4173/*"
       ],
       "webOrigins": [
         "+",
