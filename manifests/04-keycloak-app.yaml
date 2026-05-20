@@ -207,6 +207,19 @@ data:
     #suncoast-account-return-link:focus {
       text-decoration: underline;
     }
+
+    #suncoast-account-return-link[data-floating="true"] {
+      position: fixed;
+      top: 0.8rem;
+      right: 1rem;
+      margin-left: 0;
+      padding: 0.35rem 0.65rem;
+      background: #ffffff;
+      border: 1px solid #d2dbe5;
+      border-radius: 6px;
+      box-shadow: 0 2px 8px rgba(15, 23, 42, 0.12);
+      z-index: 3000;
+    }
   account-lockdown.js: |
     (function () {
       "use strict";
@@ -491,6 +504,22 @@ data:
         return null;
       }
 
+      function findFallbackReturnLinkContainer() {
+        var selectors = [
+          "[role='main']",
+          "main",
+          ".pf-v5-c-page__main",
+          "body"
+        ];
+        for (var i = 0; i < selectors.length; i += 1) {
+          var match = document.querySelector(selectors[i]);
+          if (match) {
+            return match;
+          }
+        }
+        return document.body || null;
+      }
+
       function ensureReturnToHeaderLink() {
         var targetUrl = resolveReturnToUrl();
         var existing = document.getElementById(RETURN_LINK_ID);
@@ -502,6 +531,11 @@ data:
         }
 
         var container = findHeaderActionsContainer();
+        var floating = false;
+        if (!container) {
+          container = findFallbackReturnLinkContainer();
+          floating = true;
+        }
         if (!container) {
           return;
         }
@@ -511,6 +545,11 @@ data:
         link.href = targetUrl;
         link.textContent = "Back to site";
         link.setAttribute("aria-label", "Back to site");
+        if (floating) {
+          link.setAttribute("data-floating", "true");
+        } else {
+          link.removeAttribute("data-floating");
+        }
         if (!link.classList.contains("pf-v5-c-button")) {
           link.classList.add("pf-v5-c-button", "pf-m-link", "pf-m-inline");
         }
@@ -518,29 +557,6 @@ data:
         if (!existing || existing.parentElement !== container) {
           container.appendChild(link);
         }
-      }
-
-      function sanitizeLogoutUrl(raw) {
-        var parsed = parseUrl(raw);
-        if (!parsed) {
-          return "";
-        }
-        if (!/\/protocol\/openid-connect\/logout(?:\/|$)/.test(parsed.pathname || "")) {
-          return "";
-        }
-        parsed.searchParams.delete("id_token_hint");
-        return parsed.toString();
-      }
-
-      function normalizeLogoutLinks() {
-        document.querySelectorAll("a[href*='openid-connect/logout']").forEach(function (link) {
-          var href = link.getAttribute("href");
-          var sanitized = sanitizeLogoutUrl(href);
-          if (!sanitized) {
-            return;
-          }
-          link.setAttribute("href", sanitized);
-        });
       }
 
       function looksLikeJwt(value) {
@@ -896,7 +912,6 @@ data:
           return;
         }
         ensureReturnToHeaderLink();
-        normalizeLogoutLinks();
         hideApplicationsNavLink();
         hideGroupsNavLink();
         hideSelectors();

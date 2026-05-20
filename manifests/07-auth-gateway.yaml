@@ -112,7 +112,6 @@ spec:
                 secretKeyRef:
                   name: auth-gateway-admin-api
                   key: token
-                  optional: true
             - name: OIDC_CLIENT_SECRET
               valueFrom:
                 secretKeyRef:

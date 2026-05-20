@@ -56,8 +56,9 @@ GitOps seed job for baseline app registrations:
 - `manifests/09-auth-gateway-seed-apps.yaml`
 - Upserts `shell`, `shell-prod`, `example-mfe-dev`, `example-mfe-prod`, `nifi-flow-mfe-dev`, and `nifi-flow-mfe-prod` on each Argo sync so they survive rebuilds.
 
-If `ADMIN_API_TOKEN` is set, management APIs require:
+Management APIs require:
 - `Authorization: Bearer <ADMIN_API_TOKEN>`
+- The deployment requires secret `auth-gateway-admin-api` at startup; gateway pods fail to start without it.
 
 ### Build and Publish Auth Gateway Image
 
@@ -79,11 +80,16 @@ Required Vault secret (KVv2 path `secret/data/keycloak-client-secret-auth-gatewa
 vault kv put secret/keycloak-client-secret-auth-gateway-exchange value='<strong-client-secret>'
 ```
 
-Optional secrets:
+Required secret:
 
 ```sh
 kubectl -n keycloak create secret generic auth-gateway-admin-api \
   --from-literal=token='<strong-admin-token>'
+```
+
+Optional secret:
+
+```sh
 
 kubectl -n keycloak create secret generic auth-gateway-oidc-client \
   --from-literal=client-secret='<client-secret-if-using-confidential-client>'
