@@ -814,30 +814,9 @@ data:
       }
 
       function ensureIdpProfilePanel() {
-        if (!isPersonalInfoPage()) {
-          idpProfileRouteKey = "";
-          idpProfileFetchStarted = false;
-          return;
-        }
-
-        var routeKey = currentRouteKey();
-        if (routeKey !== idpProfileRouteKey) {
-          idpProfileRouteKey = routeKey;
-          idpProfileFetchStarted = false;
-          accountProfilePromise = null;
-        }
-
-        if (idpProfileFetchStarted) {
-          return;
-        }
-        idpProfileFetchStarted = true;
-        fetchAccountProfile()
-          .then(function (profile) {
-            renderIdpProfilePanel(profile);
-          })
-          .catch(function () {
-            renderIdpProfilePanel(null);
-          });
+        // Disabled intentionally: account-console self-fetch can cause load stalls
+        // and retry loops under some auth/cookie states.
+        return;
       }
 
       function redirectApplicationsPage() {
@@ -923,10 +902,23 @@ data:
         ensureIdpProfilePanel();
       }
 
+      var applyLockdownScheduled = false;
+      function scheduleApplyLockdown() {
+        if (applyLockdownScheduled) {
+          return;
+        }
+        applyLockdownScheduled = true;
+        window.requestAnimationFrame(function () {
+          applyLockdownScheduled = false;
+          applyLockdown();
+        });
+      }
+
       applyLockdown();
-      var observer = new MutationObserver(applyLockdown);
+      var observer = new MutationObserver(scheduleApplyLockdown);
       observer.observe(document.body, { childList: true, subtree: true });
-      window.addEventListener("popstate", applyLockdown);
+      window.addEventListener("popstate", scheduleApplyLockdown);
+      window.addEventListener("hashchange", scheduleApplyLockdown);
     })();
 ---
 apiVersion: apps/v1
