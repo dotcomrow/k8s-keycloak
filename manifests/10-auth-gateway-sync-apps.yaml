@@ -48,12 +48,18 @@ data:
     csv_path = sys.argv[2]
     apps_url = (os.environ.get("REGISTRY_APPS_URL") or "").strip()
     apps_token = (os.environ.get("REGISTRY_READ_TOKEN") or "").strip()
+    apps_user_agent = (
+        os.environ.get("REGISTRY_APPS_USER_AGENT")
+        or "Mozilla/5.0 (compatible; SuncoastAuthGatewaySync/1.0; +https://suncoast.systems)"
+    ).strip()
 
     if not apps_url:
         raise SystemExit("REGISTRY_APPS_URL is required.")
 
     headers = {
         "Accept": "application/json",
+        "User-Agent": apps_user_agent,
+        "Cache-Control": "no-cache",
     }
     if apps_token:
         headers["Authorization"] = f"Bearer {apps_token}"
@@ -64,7 +70,15 @@ data:
             raw = response.read().decode("utf-8", errors="replace")
     except urllib.error.HTTPError as err:
         body = err.read().decode("utf-8", errors="replace")
-        raise SystemExit(f"Failed to fetch registry apps (HTTP {err.code}): {body}")
+        cf_ray = (err.headers.get("cf-ray") or "").strip()
+        cf_error = (err.headers.get("cf-error-code") or "").strip()
+        details = []
+        if cf_ray:
+            details.append(f"cf-ray={cf_ray}")
+        if cf_error:
+            details.append(f"cf-error-code={cf_error}")
+        detail_suffix = f" ({', '.join(details)})" if details else ""
+        raise SystemExit(f"Failed to fetch registry apps (HTTP {err.code}){detail_suffix}: {body}")
     except urllib.error.URLError as err:
         raise SystemExit(f"Failed to fetch registry apps before response: {err.reason}")
 
@@ -220,6 +234,31 @@ data:
     echo "failed to sync auth gateway apps"
     exit 1
 ---
+apiVersion: external-secrets.io/v1
+kind: ExternalSecret
+metadata:
+  name: auth-gateway-registry-read-token
+  namespace: keycloak
+  annotations:
+    argocd.argoproj.io/sync-wave: "9"
+spec:
+  refreshInterval: 1h
+  secretStoreRef:
+    kind: SecretStore
+    name: vault-store-keycloak
+  target:
+    name: auth-gateway-registry-read-token
+    creationPolicy: Owner
+    deletionPolicy: Retain
+    template:
+      type: Opaque
+  data:
+    - secretKey: value
+      remoteRef:
+        # Vault KVv2 path: secret/data/auth-gateway-registry-read-token
+        key: auth-gateway-registry-read-token
+        property: value
+---
 apiVersion: batch/v1
 kind: Job
 metadata:
@@ -262,12 +301,14 @@ spec:
               value: keycloak
             - name: REGISTRY_APPS_URL
               value: https://cloudflare-mfe-module-registry-service.suncoast.systems/api/auth/apps?enabled=all&limit=1000
+            - name: REGISTRY_APPS_USER_AGENT
+              value: Mozilla/5.0 (compatible; SuncoastAuthGatewaySync/1.0; +https://suncoast.systems)
             - name: REGISTRY_READ_TOKEN
               valueFrom:
                 secretKeyRef:
                   name: auth-gateway-registry-read-token
                   key: value
-                  optional: true
+                  optional: false
           command: ["/bin/sh", "/scripts/sync-auth-gateway-apps.sh"]
           volumeMounts:
             - name: sync-script
@@ -324,12 +365,14 @@ spec:
                   value: keycloak
                 - name: REGISTRY_APPS_URL
                   value: https://cloudflare-mfe-module-registry-service.suncoast.systems/api/auth/apps?enabled=all&limit=1000
+                - name: REGISTRY_APPS_USER_AGENT
+                  value: Mozilla/5.0 (compatible; SuncoastAuthGatewaySync/1.0; +https://suncoast.systems)
                 - name: REGISTRY_READ_TOKEN
                   valueFrom:
                     secretKeyRef:
                       name: auth-gateway-registry-read-token
                       key: value
-                      optional: true
+                      optional: false
               command: ["/bin/sh", "/scripts/sync-auth-gateway-apps.sh"]
               volumeMounts:
                 - name: sync-script

@@ -269,6 +269,8 @@ spec:
               path "secret/metadata/keycloak-cloudflare-tunnel-token" { capabilities = ["read", "list"] }
               path "secret/data/auth-gateway-admin-api" { capabilities = ["read"] }
               path "secret/metadata/auth-gateway-admin-api" { capabilities = ["read", "list"] }
+              path "secret/data/auth-gateway-registry-read-token" { capabilities = ["read"] }
+              path "secret/metadata/auth-gateway-registry-read-token" { capabilities = ["read", "list"] }
               EOF
 
               vault write auth/kubernetes/role/externalsecrets-keycloak \
@@ -381,6 +383,8 @@ spec:
               path "secret/metadata/keycloak-cloudflare-tunnel-token" { capabilities = ["read", "list"] }
               path "secret/data/auth-gateway-admin-api" { capabilities = ["read"] }
               path "secret/metadata/auth-gateway-admin-api" { capabilities = ["read", "list"] }
+              path "secret/data/auth-gateway-registry-read-token" { capabilities = ["read"] }
+              path "secret/metadata/auth-gateway-registry-read-token" { capabilities = ["read", "list"] }
               EOF
 
               vault write auth/kubernetes/role/externalsecrets-keycloak \
