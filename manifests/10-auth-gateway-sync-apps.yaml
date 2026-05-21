@@ -178,7 +178,7 @@ data:
     PY
 
     for attempt in $(seq 1 120); do
-      if psql -h "${DB_HOST}" -p "${DB_PORT}" -U "${DB_USER}" -d "${DB_NAME}" -v ON_ERROR_STOP=1 -v sync_file="$APPS_CSV_FILE" <<'SQL'
+      if psql -h "${DB_HOST}" -p "${DB_PORT}" -U "${DB_USER}" -d "${DB_NAME}" -v ON_ERROR_STOP=1 <<SQL
       CREATE TEMP TABLE _registry_apps (
         slug text,
         display_name text,
@@ -187,7 +187,7 @@ data:
         enabled boolean
       );
 
-      \copy _registry_apps (slug, display_name, base_url, base_urls, enabled) FROM :'sync_file' WITH (FORMAT csv)
+      \copy _registry_apps (slug, display_name, base_url, base_urls, enabled) FROM '${APPS_CSV_FILE}' WITH (FORMAT csv)
 
       SELECT CASE
         WHEN EXISTS (
