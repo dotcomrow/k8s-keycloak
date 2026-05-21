@@ -36,7 +36,11 @@ data:
     INTERNAL_GITHUB_ONLY="${APPS_GITHUB_ONLY:-false}"
     KCADM="/opt/keycloak/bin/kcadm.sh"
     KCADM_CONFIG="/tmp/kcadm.config"
+    KCADM_AUTH_TIMEOUT_SECONDS="${KCADM_AUTH_TIMEOUT_SECONDS:-20}"
     export KCADM_CONFIG
+    # In dual-stack clusters Java may prefer unreachable IPv6 routes and hang kcadm auth.
+    # Force IPv4 for configurator admin/client bootstrap calls.
+    export JAVA_OPTS_APPEND="${JAVA_OPTS_APPEND:-} -Djava.net.preferIPv4Stack=true -Djava.net.preferIPv6Addresses=false"
                   
     on_err(){ code=$?; echo "Configurator error (exit $code) at line ${BASH_LINENO[0]}: ${BASH_COMMAND:-unknown}"; exit "$code"; }
     trap on_err ERR
@@ -139,14 +143,22 @@ data:
       CMS_SITE_EXTERNAL_CLIENT_ID="$(tr -d '\r\n' < "${CLIENT_ID_DIR}/client-id-cms-site-external")"
     fi
     
+    kcadm_auth() {
+      if command -v timeout >/dev/null 2>&1; then
+        timeout "${KCADM_AUTH_TIMEOUT_SECONDS}" "$@"
+      else
+        "$@"
+      fi
+    }
+
     login_with_client() {
       [ -n "${CONFIG_CLIENT_SECRET:-}" ] || return 1
-      $KCADM config credentials --server "$SERVER" --realm "$ADMIN_REALM" \
+      kcadm_auth "$KCADM" config credentials --server "$SERVER" --realm "$ADMIN_REALM" \
         --client "$CONFIG_CLIENT_ID" --secret "$CONFIG_CLIENT_SECRET" >/dev/null 2>&1
     }
-    
+
     login_with_admin() {
-      $KCADM config credentials --server "$SERVER" --realm "$ADMIN_REALM" \
+      kcadm_auth "$KCADM" config credentials --server "$SERVER" --realm "$ADMIN_REALM" \
         --user "$KEYCLOAK_ADMIN" --password "$KEYCLOAK_ADMIN_PASSWORD" >/dev/null 2>&1
     }
     
