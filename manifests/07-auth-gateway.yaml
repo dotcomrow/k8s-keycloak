@@ -26,7 +26,7 @@ data:
   DB_SSLMODE: "disable"
   # Comma-separated list of allowed browser origins for API calls.
   # Example: "https://admin.suncoast.systems,https://shell.suncoast.systems"
-  CORS_ALLOW_ORIGINS: "https://internal.suncoast.systems,https://internal-preview.suncoast.systems,https://www.suncoast.systems,https://www-preview.suncoast.systems,http://localhost:4173"
+  CORS_ALLOW_ORIGINS: "*.suncoast.systems,localhost"
 ---
 apiVersion: v1
 kind: Service
@@ -119,7 +119,7 @@ spec:
       serviceAccountName: keycloak
       containers:
         - name: auth-gateway
-          image: ghcr.io/dotcomrow/keycloak-auth-gateway:sha-56c2245
+          image: ghcr.io/dotcomrow/keycloak-auth-gateway:sha-b5cd0ec
           imagePullPolicy: Always
           ports:
             - containerPort: 8080
@@ -192,7 +192,7 @@ data:
   DB_SSLMODE: "disable"
   # Comma-separated list of allowed browser origins for API calls.
   # Example: "https://admin.suncoast.systems,https://shell.suncoast.systems"
-  CORS_ALLOW_ORIGINS: "https://internal.suncoast.systems,https://internal-preview.suncoast.systems,https://www.suncoast.systems,https://www-preview.suncoast.systems,http://localhost:4173"
+  CORS_ALLOW_ORIGINS: "*.suncoast.systems,localhost"
 ---
 apiVersion: v1
 kind: Service
@@ -260,7 +260,7 @@ spec:
       serviceAccountName: keycloak
       containers:
         - name: auth-gateway
-          image: ghcr.io/dotcomrow/keycloak-auth-gateway:sha-56c2245
+          image: ghcr.io/dotcomrow/keycloak-auth-gateway:sha-b5cd0ec
           imagePullPolicy: Always
           ports:
             - containerPort: 8080
