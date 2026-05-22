@@ -26,7 +26,7 @@ What lives where
 - 04-keycloak-app.yaml: keycloak services and deployment.
 - 05-admin-redirect.yaml: admin redirect config, services, and deployment.
 - 06-cloudflare-tunnel.yaml: Cloudflare Tunnel deployment and External Secrets wiring for Keycloak.
-- 07-auth-gateway.yaml: dual login callback/auth gateway services (external + internal realms) with DB-backed allowed app config APIs (image from GHCR `keycloak-auth-gateway` repo).
+- 07-auth-gateway.yaml: dual login callback/auth gateway services (external + internal realms) with DB-backed allowed app config APIs (image from GHCR `keycloak-auth-gateway` repo), plus a pre-deploy schema-guard hook job that normalizes `auth_gateway_allowed_apps.base_urls` before gateway rollouts.
 - 08-auth-gateway-apisix-route.example.yaml: optional APISIX route examples for exposing `login.suncoast.systems` (external realm) and `login-internal.suncoast.systems` (internal realm).
 - 09-auth-gateway-seed-apps.yaml: idempotent seed job that upserts baseline app slugs for auth-gateway.
 - 10-auth-gateway-sync-apps.yaml: bootstrap + scheduled sync that reconciles auth-gateway allowed apps from the module registry service.

@@ -73,6 +73,103 @@ spec:
         key: auth-gateway-admin-api
         property: value
 ---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: keycloak-auth-gateway-schema-guard
+  namespace: keycloak
+  annotations:
+    argocd.argoproj.io/hook: Sync
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
+    argocd.argoproj.io/sync-wave: "7"
+spec:
+  backoffLimit: 2
+  template:
+    metadata:
+      annotations:
+        linkerd.io/inject: "disabled"
+        vault.hashicorp.com/agent-inject: "true"
+        vault.hashicorp.com/role: "keycloak"
+        vault.hashicorp.com/agent-init-first: "true"
+        vault.hashicorp.com/agent-pre-populate: "true"
+        vault.hashicorp.com/agent-pre-populate-only: "true"
+        vault.hashicorp.com/agent-inject-secret-db-username: "yugabyte-db/static-creds/keycloak-app"
+        vault.hashicorp.com/agent-inject-template-db-username: |
+          {{- with secret "yugabyte-db/static-creds/keycloak-app" -}}{{ .Data.username }}{{- end -}}
+        vault.hashicorp.com/agent-inject-secret-db-password: "yugabyte-db/static-creds/keycloak-app"
+        vault.hashicorp.com/agent-inject-template-db-password: |
+          {{- with secret "yugabyte-db/static-creds/keycloak-app" -}}{{ .Data.password }}{{- end -}}
+    spec:
+      serviceAccountName: keycloak
+      restartPolicy: Never
+      containers:
+        - name: schema-guard
+          image: postgres:15-alpine
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: DB_HOST
+              value: yb-tserver-service.yugabyte.svc.cluster.local
+            - name: DB_PORT
+              value: "5433"
+            - name: DB_NAME
+              value: keycloak
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              set -eu
+
+              DB_USER="$(cat /vault/secrets/db-username)"
+              DB_PASSWORD="$(cat /vault/secrets/db-password)"
+              export PGPASSWORD="${DB_PASSWORD}"
+
+              for attempt in $(seq 1 120); do
+                if psql -h "${DB_HOST}" -p "${DB_PORT}" -U "${DB_USER}" -d "${DB_NAME}" -tAc "SELECT 1" >/dev/null 2>&1; then
+                  break
+                fi
+                echo "waiting for database (${attempt}/120)..."
+                sleep 5
+              done
+
+              for attempt in $(seq 1 120); do
+                if psql -h "${DB_HOST}" -p "${DB_PORT}" -U "${DB_USER}" -d "${DB_NAME}" -v ON_ERROR_STOP=1 <<'SQL'
+              SELECT CASE
+                WHEN EXISTS (
+                  SELECT 1
+                  FROM information_schema.tables
+                  WHERE table_schema = 'keycloak'
+                    AND table_name = 'auth_gateway_allowed_apps'
+                ) THEN 1
+                ELSE 0
+              END AS has_allowed_apps \gset
+
+              \if :has_allowed_apps
+                ALTER TABLE keycloak.auth_gateway_allowed_apps
+                  ADD COLUMN IF NOT EXISTS base_urls jsonb;
+
+                UPDATE keycloak.auth_gateway_allowed_apps
+                SET base_urls = jsonb_build_array(base_url)
+                WHERE base_urls IS NULL
+                  OR jsonb_typeof(base_urls) <> 'array'
+                  OR base_urls = '[]'::jsonb;
+
+                ALTER TABLE keycloak.auth_gateway_allowed_apps
+                  ALTER COLUMN base_urls SET DEFAULT jsonb_build_array();
+
+                ALTER TABLE keycloak.auth_gateway_allowed_apps
+                  ALTER COLUMN base_urls SET NOT NULL;
+              \endif
+              SQL
+                then
+                  echo "auth gateway schema guard completed"
+                  exit 0
+                fi
+                echo "schema guard attempt ${attempt}/120 failed; retrying..."
+                sleep 5
+              done
+
+              echo "failed to normalize auth gateway schema"
+              exit 1
+---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -225,7 +322,7 @@ metadata:
     app.kubernetes.io/component: authentication
   annotations:
     reloader.stakater.com/auto: "true"
-    argocd.argoproj.io/sync-wave: "8"
+    argocd.argoproj.io/sync-wave: "9"
 spec:
   replicas: 1
   selector:
