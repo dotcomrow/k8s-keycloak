@@ -190,6 +190,46 @@ data:
     declare -A SA_ID_CACHE=()
     declare -A SA_REALM_ROLES_CACHE=()
     declare -A SA_CLIENT_ROLES_CACHE=()
+    declare -A IDP_MAPPER_NAMES_CACHE=()
+
+    refresh_idp_mapper_name_cache() {
+      local realm="$1"
+      local idp_alias="$2"
+      local key="${realm}|${idp_alias}"
+      local names=""
+      names="$($KCADM get "identity-provider/instances/${idp_alias}/mappers" -r "$realm" 2>/dev/null \
+        | tr -d '\r' \
+        | sed -n 's/.*"name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' || true)"
+      IDP_MAPPER_NAMES_CACHE[$key]="$names"
+    }
+
+    idp_mapper_exists_cached() {
+      local realm="$1"
+      local idp_alias="$2"
+      local mapper_name="$3"
+      local key="${realm}|${idp_alias}"
+      local names="${IDP_MAPPER_NAMES_CACHE[$key]-}"
+      if [ -z "${names:-}" ]; then
+        refresh_idp_mapper_name_cache "$realm" "$idp_alias"
+        names="${IDP_MAPPER_NAMES_CACHE[$key]-}"
+      fi
+      printf '%s\n' "$names" | grep -Fxq "$mapper_name"
+    }
+
+    idp_mapper_cache_add() {
+      local realm="$1"
+      local idp_alias="$2"
+      local mapper_name="$3"
+      local key="${realm}|${idp_alias}"
+      local names="${IDP_MAPPER_NAMES_CACHE[$key]-}"
+      if [ -z "${names:-}" ]; then
+        IDP_MAPPER_NAMES_CACHE[$key]="$mapper_name"
+        return 0
+      fi
+      if ! printf '%s\n' "$names" | grep -Fxq "$mapper_name"; then
+        IDP_MAPPER_NAMES_CACHE[$key]="${names}"$'\n'"${mapper_name}"
+      fi
+    }
     
     client_uuid() {
       local realm="$1"
@@ -1296,8 +1336,7 @@ data:
       if ! $KCADM get identity-provider/instances/github -r "$realm" >/dev/null 2>&1; then
         return 0
       fi
-      if $KCADM get "identity-provider/instances/github/mappers" -r "$realm" 2>/dev/null \
-        | grep -q "\"name\"[[:space:]]*:[[:space:]]*\"${mapper_name}\""; then
+      if idp_mapper_exists_cached "$realm" "github" "$mapper_name"; then
         return 0
       fi
       $KCADM create "identity-provider/instances/github/mappers" -r "$realm" \
@@ -1306,7 +1345,8 @@ data:
         -s "identityProviderMapper=github-user-attribute-mapper" \
         -s "config.\"jsonField\"=${json_field}" \
         -s "config.\"userAttribute\"=${user_attribute}" \
-        -s "config.\"syncMode\"=${sync_mode}" || true
+        -s "config.\"syncMode\"=${sync_mode}" >/dev/null 2>&1 || true
+      idp_mapper_cache_add "$realm" "github" "$mapper_name"
     }
     
     # Import OIDC claims from an external IdP (e.g., Google) into Keycloak user attributes.
@@ -1326,8 +1366,7 @@ data:
       if ! $KCADM get "identity-provider/instances/${idp_alias}" -r "$realm" >/dev/null 2>&1; then
         return 0
       fi
-      if $KCADM get "identity-provider/instances/${idp_alias}/mappers" -r "$realm" 2>/dev/null \
-        | grep -q "\"name\"[[:space:]]*:[[:space:]]*\"${mapper_name}\""; then
+      if idp_mapper_exists_cached "$realm" "$idp_alias" "$mapper_name"; then
         return 0
       fi
       $KCADM create "identity-provider/instances/${idp_alias}/mappers" -r "$realm" \
@@ -1337,6 +1376,7 @@ data:
         -s "config.\"claim\"=${claim}" \
         -s "config.\"user.attribute\"=${user_attribute}" \
         -s "config.\"syncMode\"=${sync_mode}" >/dev/null 2>&1 || true
+      idp_mapper_cache_add "$realm" "$idp_alias" "$mapper_name"
     }
     
     echo "Configuring admin realm: ${ADMIN_REALM}"
@@ -3056,8 +3096,9 @@ metadata:
     # Always rerun configurator on each sync operation so runtime settings
     # are reconciled from manifests, even when a prior Job already succeeded.
     argocd.argoproj.io/hook: Sync
-    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
-    argocd.argoproj.io/sync-options: Force=true,Replace=true
+    # Keep the currently running hook job instead of force-replacing it during
+    # operation resumes; this avoids repeated configurator restarts mid-sync.
+    argocd.argoproj.io/hook-delete-policy: HookSucceeded,HookFailed
     # Manual rollout stamp: bump this value to force a fresh configurator run.
     platform.suncoast.systems/configurator-rollout-stamp: "2026-05-06T21:45:00Z"
 spec:
