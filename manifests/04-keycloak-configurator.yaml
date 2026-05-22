@@ -37,7 +37,21 @@ data:
     KCADM="/opt/keycloak/bin/kcadm.sh"
     KCADM_CONFIG="/tmp/kcadm.config"
     KCADM_AUTH_TIMEOUT_SECONDS="${KCADM_AUTH_TIMEOUT_SECONDS:-20}"
+    KCADM_CMD_TIMEOUT_SECONDS="${KCADM_CMD_TIMEOUT_SECONDS:-30}"
     export KCADM_CONFIG
+    export KCADM_CMD_TIMEOUT_SECONDS
+    if command -v timeout >/dev/null 2>&1; then
+      cat > /tmp/kcadm-timeout-wrapper.sh <<'WRAPPER'
+    #!/usr/bin/env sh
+    set -eu
+    if command -v timeout >/dev/null 2>&1; then
+      exec timeout "${KCADM_CMD_TIMEOUT_SECONDS}" /opt/keycloak/bin/kcadm.sh "$@"
+    fi
+    exec /opt/keycloak/bin/kcadm.sh "$@"
+    WRAPPER
+      chmod +x /tmp/kcadm-timeout-wrapper.sh
+      KCADM="/tmp/kcadm-timeout-wrapper.sh"
+    fi
     # In dual-stack clusters Java may prefer unreachable IPv6 routes and hang kcadm auth.
     # Force IPv4 for configurator admin/client bootstrap calls.
     export JAVA_OPTS_APPEND="${JAVA_OPTS_APPEND:-} -Djava.net.preferIPv4Stack=true -Djava.net.preferIPv6Addresses=false"
@@ -146,9 +160,9 @@ data:
     kcadm_auth() {
       if command -v timeout >/dev/null 2>&1; then
         timeout "${KCADM_AUTH_TIMEOUT_SECONDS}" "$@"
-      else
-        "$@"
+        return 0
       fi
+      "$@"
     }
 
     login_with_client() {
