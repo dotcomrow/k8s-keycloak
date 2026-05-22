@@ -267,7 +267,7 @@ metadata:
   annotations:
     argocd.argoproj.io/hook: Sync
     argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
-    argocd.argoproj.io/sync-wave: "11"
+    argocd.argoproj.io/sync-wave: "10"
 spec:
   backoffLimit: 2
   template:
@@ -325,7 +325,7 @@ metadata:
   name: keycloak-auth-gateway-sync-apps
   namespace: keycloak
   annotations:
-    argocd.argoproj.io/sync-wave: "11"
+    argocd.argoproj.io/sync-wave: "10"
 spec:
   schedule: "*/10 * * * *"
   concurrencyPolicy: Forbid

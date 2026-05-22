@@ -320,6 +320,12 @@ data:
         "https://*.app.suncoast.systems/*",
         "https://internal.suncoast.systems/*",
         "https://internal-preview.suncoast.systems/*",
+        "https://external.suncoast.systems",
+        "https://external.suncoast.systems/",
+        "https://external.suncoast.systems/*",
+        "https://external-preview.suncoast.systems",
+        "https://external-preview.suncoast.systems/",
+        "https://external-preview.suncoast.systems/*",
         "https://www.suncoast.systems/*",
         "https://www-preview.suncoast.systems/*",
         "http://localhost:4173/*",
@@ -338,7 +344,9 @@ data:
         "http://127.0.0.1:4173",
         "https://127.0.0.1:4173",
         "https://login.suncoast.systems",
-        "https://login-internal.suncoast.systems"
+        "https://login-internal.suncoast.systems",
+        "https://external.suncoast.systems",
+        "https://external-preview.suncoast.systems"
       ],
       "attributes": {
         "pkce.code.challenge.method": "S256",
@@ -500,6 +508,12 @@ data:
         "https://*.app.suncoast.systems/*",
         "https://internal.suncoast.systems/*",
         "https://internal-preview.suncoast.systems/*",
+        "https://external.suncoast.systems",
+        "https://external.suncoast.systems/",
+        "https://external.suncoast.systems/*",
+        "https://external-preview.suncoast.systems",
+        "https://external-preview.suncoast.systems/",
+        "https://external-preview.suncoast.systems/*",
         "https://www.suncoast.systems/*",
         "https://www-preview.suncoast.systems/*",
         "http://localhost:4173/*",
@@ -519,6 +533,8 @@ data:
         "https://127.0.0.1:4173",
         "https://login.suncoast.systems",
         "https://login-internal.suncoast.systems",
+        "https://external.suncoast.systems",
+        "https://external-preview.suncoast.systems",
         "http://localhost:8080"
       ],
       "attributes": {

@@ -52,9 +52,9 @@ Management APIs (for GUI):
 - `PUT /v1/apps/{slug}`
 - `DELETE /v1/apps/{slug}`
 
-GitOps seed job for baseline app registrations:
-- `manifests/09-auth-gateway-seed-apps.yaml`
-- Upserts `shell`, `shell-prod`, `example-mfe-dev`, `example-mfe-prod`, `nifi-flow-mfe-dev`, and `nifi-flow-mfe-prod` on each Argo sync so they survive rebuilds.
+GitOps sync for app registrations:
+- `manifests/10-auth-gateway-sync-apps.yaml`
+- Bootstrap Job + CronJob reconcile `auth_gateway_allowed_apps` from the registry service API.
 
 Management APIs require:
 - `Authorization: Bearer <ADMIN_API_TOKEN>`
@@ -71,7 +71,7 @@ Deployment in this repo expects:
 
 ```sh
 kubectl apply -f manifests/07-auth-gateway.yaml
-kubectl apply -f manifests/09-auth-gateway-seed-apps.yaml
+kubectl apply -f manifests/10-auth-gateway-sync-apps.yaml
 ```
 
 Required Vault secret (KVv2 path `secret/data/keycloak-client-secret-auth-gateway-exchange`):
