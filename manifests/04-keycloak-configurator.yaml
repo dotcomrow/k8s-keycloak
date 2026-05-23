@@ -1614,7 +1614,12 @@ data:
       set_required_action_state "$EXTERNAL_REALM" "UPDATE_PROFILE" "false" "false"
       set_required_action_state "$EXTERNAL_REALM" "UPDATE_EMAIL" "false" "false"
     fi
-    # External app access tokens are kept short (15 minutes) and refreshed by shell runtime.
+    # Keep shell app access tokens aligned across internal/external realms (15 minutes).
+    # Internal otherwise falls back to Keycloak default (typically 5 minutes), which causes
+    # shorter internal sessions even when shell logic only follows token exp.
+    $KCADM update "realms/$INTERNAL_REALM" \
+      -s accessTokenLifespan=900 \
+      -s accessTokenLifespanForImplicitFlow=900 || true
     $KCADM update "realms/$EXTERNAL_REALM" \
       -s accessTokenLifespan=900 \
       -s accessTokenLifespanForImplicitFlow=900 || true
