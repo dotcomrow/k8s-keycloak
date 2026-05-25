@@ -331,28 +331,6 @@ data:
           }
         },
         {
-          "name": "audience-gravitee-introspection",
-          "protocol": "openid-connect",
-          "protocolMapper": "oidc-audience-mapper",
-          "consentRequired": false,
-          "config": {
-            "included.client.audience": "<path:secret/data/keycloak-client-id-gravitee-introspection#value>",
-            "access.token.claim": "true",
-            "id.token.claim": "false"
-          }
-        },
-        {
-          "name": "audience-openwebui",
-          "protocol": "openid-connect",
-          "protocolMapper": "oidc-audience-mapper",
-          "consentRequired": false,
-          "config": {
-            "included.client.audience": "<path:secret/data/keycloak-client-id-openwebui#value>",
-            "access.token.claim": "true",
-            "id.token.claim": "false"
-          }
-        },
-        {
           "name": "hasura-allowed-roles",
           "protocol": "openid-connect",
           "protocolMapper": "oidc-usermodel-client-role-mapper",
@@ -375,6 +353,20 @@ data:
           "config": {
             "claim.name": "https://hasura.io/jwt/claims.x-hasura-default-role",
             "claim.value": "user",
+            "jsonType.label": "String",
+            "access.token.claim": "true",
+            "id.token.claim": "false",
+            "userinfo.token.claim": "false"
+          }
+        },
+        {
+          "name": "hasura-user-id",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-property-mapper",
+          "consentRequired": false,
+          "config": {
+            "user.attribute": "id",
+            "claim.name": "https://hasura.io/jwt/claims.x-hasura-user-id",
             "jsonType.label": "String",
             "access.token.claim": "true",
             "id.token.claim": "false",

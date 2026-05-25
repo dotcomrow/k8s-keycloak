@@ -1695,9 +1695,13 @@ data:
         fi
         CID="$(client_uuid "$realm" "$effective_id")"
         if [ -n "${CID:-}" ]; then
-          $KCADM update "clients/$CID" -r "$realm" -f "$json_file" || true
+          if ! update_err="$($KCADM update "clients/$CID" -r "$realm" -f "$json_file" 2>&1)"; then
+            echo "⚠️  failed to update client ${effective_id} in realm ${realm}: ${update_err}"
+          fi
         else
-          $KCADM create clients -r "$realm" -f "$json_file" || true
+          if ! create_err="$($KCADM create clients -r "$realm" -f "$json_file" 2>&1)"; then
+            echo "⚠️  failed to create client ${effective_id} in realm ${realm}: ${create_err}"
+          fi
           CLIENT_UUID_CACHE["${realm}|${effective_id}"]=""
           CID="$(client_uuid "$realm" "$effective_id")"
         fi
