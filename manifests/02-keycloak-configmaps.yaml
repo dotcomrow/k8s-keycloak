@@ -298,6 +298,67 @@ data:
         }
       ]
     }
+  auth-gateway-exchange.json: |
+    {
+      "clientId": "auth-gateway-exchange",
+      "name": "Auth Gateway Exchange Client",
+      "protocol": "openid-connect",
+      "publicClient": false,
+      "clientAuthenticatorType": "client-secret",
+      "secret": "<path:secret/data/keycloak-client-secret-auth-gateway-exchange#value>",
+      "standardFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": true,
+      "authorizationServicesEnabled": false,
+      "attributes": {
+        "standard.token.exchange.enabled": "true"
+      },
+      "protocolMappers": [
+        {
+          "name": "hasura-allowed-roles",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-client-role-mapper",
+          "consentRequired": false,
+          "config": {
+            "usermodel.clientRoleMapping.clientId": "<path:secret/data/keycloak-client-id-graphql-api#value>",
+            "claim.name": "https://hasura.io/jwt/claims.x-hasura-allowed-roles",
+            "jsonType.label": "String",
+            "access.token.claim": "true",
+            "id.token.claim": "false",
+            "userinfo.token.claim": "false",
+            "multivalued": "true"
+          }
+        },
+        {
+          "name": "hasura-default-role",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-hardcoded-claim-mapper",
+          "consentRequired": false,
+          "config": {
+            "claim.name": "https://hasura.io/jwt/claims.x-hasura-default-role",
+            "claim.value": "user",
+            "jsonType.label": "String",
+            "access.token.claim": "true",
+            "id.token.claim": "false",
+            "userinfo.token.claim": "false"
+          }
+        },
+        {
+          "name": "hasura-user-id",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-property-mapper",
+          "consentRequired": false,
+          "config": {
+            "user.attribute": "id",
+            "claim.name": "https://hasura.io/jwt/claims.x-hasura-user-id",
+            "jsonType.label": "String",
+            "access.token.claim": "true",
+            "id.token.claim": "false",
+            "userinfo.token.claim": "false"
+          }
+        }
+      ]
+    }
   auth-gateway-public.json: |
     {
       "clientId": "auth-gateway-public",
@@ -390,6 +451,7 @@ data:
     # Format: <realm>:<allowed-client>=<target1>,<target2>
     # Client IDs can be overridden via /vault/secrets/client-id-<name> files.
     # Example: external:gravitee-introspection=openwebui,ollama
+    internal:auth-gateway-exchange=graphql-api
     external:auth-gateway-exchange=graphql-api
     external:graphql-api=openwebui
 ---
