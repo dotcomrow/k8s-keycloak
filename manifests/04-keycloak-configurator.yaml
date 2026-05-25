@@ -3101,9 +3101,9 @@ metadata:
     # Always rerun configurator on each sync operation so runtime settings
     # are reconciled from manifests, even when a prior Job already succeeded.
     argocd.argoproj.io/hook: Sync
-    # Keep the currently running hook job instead of force-replacing it during
-    # operation resumes; this avoids repeated configurator restarts mid-sync.
-    argocd.argoproj.io/hook-delete-policy: HookSucceeded,HookFailed
+    # Keep the last successful run so keycloak readiness gates can still observe
+    # completion on subsequent pod restarts; replace it on next sync.
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation,HookFailed
     # Manual rollout stamp: bump this value to force a fresh configurator run.
     platform.suncoast.systems/configurator-rollout-stamp: "2026-05-06T21:45:00Z"
 spec:

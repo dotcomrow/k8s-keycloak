@@ -1372,39 +1372,17 @@ spec:
               set -eu
               gate_file="/kc-configurator-gate/done"
               mkdir -p /kc-configurator-gate
-              pod_start_time=""
-              if [ -n "${HOSTNAME:-}" ]; then
-                pod_start_time="$(kubectl -n keycloak get pod "${HOSTNAME}" -o jsonpath='{.metadata.creationTimestamp}' 2>/dev/null || true)"
-              fi
-              echo "kc-configurator-gate pod start time: ${pod_start_time:-unknown}"
-
-              is_completion_current() {
-                completion_time="$1"
-                pod_start="${pod_start_time:-}"
-                if [ -z "${completion_time}" ] || [ -z "${pod_start}" ]; then
-                  return 1
-                fi
-                newest="$(printf '%s\n%s\n' "$completion_time" "$pod_start" | sort | tail -n1)"
-                [ "$newest" = "$completion_time" ]
-              }
+              echo "kc-configurator-gate waiting for keycloak-configurator completion"
 
               while true; do
                 succ="$(kubectl -n keycloak get job keycloak-configurator -o jsonpath='{.status.succeeded}' 2>/dev/null || true)"
                 succ="${succ:-0}"
                 completion_time="$(kubectl -n keycloak get job keycloak-configurator -o jsonpath='{.status.completionTime}' 2>/dev/null || true)"
                 completion_time="${completion_time:-}"
-                if [ -z "${pod_start_time:-}" ] && [ -n "${HOSTNAME:-}" ]; then
-                  pod_start_time="$(kubectl -n keycloak get pod "${HOSTNAME}" -o jsonpath='{.metadata.creationTimestamp}' 2>/dev/null || true)"
-                fi
                 if [ "$succ" -ge 1 ] 2>/dev/null; then
-                  if is_completion_current "$completion_time"; then
-                    date -u +%FT%TZ > "$gate_file"
-                    echo "✅ keycloak-configurator job completed for this pod (completionTime=${completion_time}); readiness gate opened."
-                    break
-                  fi
-                  echo "⏳ keycloak-configurator completion is stale for this pod (completionTime=${completion_time}, podStart=${pod_start_time:-unknown}); waiting for current sync run..."
-                  sleep 5
-                  continue
+                  date -u +%FT%TZ > "$gate_file"
+                  echo "✅ keycloak-configurator job completed (completionTime=${completion_time:-unknown}); readiness gate opened."
+                  break
                 fi
                 echo "⏳ waiting for keycloak-configurator job completion (succeeded=${succ}, completionTime=${completion_time:-none})..."
                 sleep 5
