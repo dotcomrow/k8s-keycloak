@@ -2854,7 +2854,7 @@ data:
           '  "decisionStrategy": "UNANIMOUS",' \
           '  "resources": ["Default Resource"],' \
           '  "scopes": ["token-exchange"],' \
-          "  \"policies\": [\"${policy_name}\"]" \
+          "  \"policies\": [\"${policy_id}\"]" \
           '}' > "$tmp_perm_json"
       else
         printf '%s\n' \
@@ -2864,7 +2864,7 @@ data:
           '  "logic": "POSITIVE",' \
           '  "decisionStrategy": "UNANIMOUS",' \
           '  "scopes": ["token-exchange"],' \
-          "  \"policies\": [\"${policy_name}\"]" \
+          "  \"policies\": [\"${policy_id}\"]" \
           '}' > "$tmp_perm_json"
       fi
       if [ -n "${perm_id:-}" ]; then
@@ -2889,13 +2889,13 @@ data:
           if ! $KCADM update "clients/$target_uuid/authz/resource-server/permission/scope/$perm_id" -r "$realm" \
             -s "resources=[\"${default_resource_name}\"]" \
             -s 'scopes=["token-exchange"]' \
-            -s "policies=[\"${policy_name}\"]"; then
+            -s "policies=[\"${policy_id}\"]"; then
             echo "⚠️  token exchange permission name-bind failed: realm=$realm target=$target_client_id allowed=$allowed_client_id perm_id=$perm_id"
           fi
         else
           if ! $KCADM update "clients/$target_uuid/authz/resource-server/permission/scope/$perm_id" -r "$realm" \
             -s 'scopes=["token-exchange"]' \
-            -s "policies=[\"${policy_name}\"]"; then
+            -s "policies=[\"${policy_id}\"]"; then
             echo "⚠️  token exchange permission name-bind failed (no default resource): realm=$realm target=$target_client_id allowed=$allowed_client_id perm_id=$perm_id"
           fi
         fi
@@ -2933,7 +2933,7 @@ data:
           if ! $KCADM update "clients/$target_uuid/authz/resource-server/permission/scope/$perm_id_default" -r "$realm" \
             -s "resources=[\"${default_resource_name}\"]" \
             -s 'scopes=["token-exchange"]' \
-            -s "policies=[\"${policy_name}\"]"; then
+            -s "policies=[\"${policy_id}\"]"; then
             echo "⚠️  token exchange default permission update failed: realm=$realm target=$target_client_id allowed=$allowed_client_id perm_id=$perm_id_default"
           else
             perm_dump_default="$($KCADM get "clients/$target_uuid/authz/resource-server/permission/scope/$perm_id_default" -r "$realm" 2>/dev/null | tr -d '\n' || true)"
@@ -2944,7 +2944,7 @@ data:
         else
           if ! $KCADM update "clients/$target_uuid/authz/resource-server/permission/scope/$perm_id_default" -r "$realm" \
             -s 'scopes=["token-exchange"]' \
-            -s "policies=[\"${policy_name}\"]"; then
+            -s "policies=[\"${policy_id}\"]"; then
             echo "⚠️  token exchange default permission update failed (no default resource): realm=$realm target=$target_client_id allowed=$allowed_client_id perm_id=$perm_id_default"
           fi
         fi
@@ -3126,19 +3126,7 @@ metadata:
     # Keep this in the same wave as keycloak deployment:
     # keycloak pods stay NotReady until this Job succeeds.
     argocd.argoproj.io/sync-wave: "5"
-    # Always rerun configurator on each sync operation so runtime settings
-    # are reconciled from manifests, even when a prior Job already succeeded.
-    argocd.argoproj.io/hook: Sync
-    # Keep the last run result (success or failure) so keycloak readiness gates
-    # can observe Job state and operators can inspect failures; replace it on
-    # the next sync before creating a new hook Job.
-    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
-    # Manual rollout stamp: bump this value to force a fresh configurator run.
-    platform.suncoast.systems/configurator-rollout-stamp: "2026-05-26T18:25:00Z"
 spec:
-  # Retain finished Jobs long enough for keycloak readiness-gate observation
-  # and troubleshooting, even if cluster-wide cleanup policies are enabled.
-  ttlSecondsAfterFinished: 604800
   # Never give up quickly: keep retrying until configuration succeeds.
   backoffLimit: 1000000
   template:
