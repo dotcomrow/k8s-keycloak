@@ -558,7 +558,11 @@ data:
     echo "Waiting for Keycloak admin API..."
     AUTH_MODE=""
     ADMIN_ESCALATED="false"
-    for i in {1..120}; do
+    AUTH_RETRY_MAX_ATTEMPTS="${KCADM_LOGIN_MAX_ATTEMPTS:-1800}"
+    AUTH_RETRY_SLEEP_SECONDS="${KCADM_LOGIN_RETRY_SECONDS:-2}"
+    auth_try=0
+    while [ "$auth_try" -lt "$AUTH_RETRY_MAX_ATTEMPTS" ]; do
+      auth_try=$((auth_try + 1))
       if login_with_admin; then
         AUTH_MODE="admin"
         break
@@ -567,7 +571,7 @@ data:
         AUTH_MODE="client"
         break
       fi
-      sleep 2
+      sleep "$AUTH_RETRY_SLEEP_SECONDS"
     done
     if [ -z "${AUTH_MODE:-}" ]; then
       echo "❌ Unable to authenticate to Keycloak admin API"
@@ -3129,7 +3133,7 @@ metadata:
     # completion on subsequent pod restarts; replace it on next sync.
     argocd.argoproj.io/hook-delete-policy: BeforeHookCreation,HookFailed
     # Manual rollout stamp: bump this value to force a fresh configurator run.
-    platform.suncoast.systems/configurator-rollout-stamp: "2026-05-26T16:55:00Z"
+    platform.suncoast.systems/configurator-rollout-stamp: "2026-05-26T18:25:00Z"
 spec:
   # Never give up quickly: keep retrying until configuration succeeds.
   backoffLimit: 1000000

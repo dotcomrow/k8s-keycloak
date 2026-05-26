@@ -1675,15 +1675,35 @@ spec:
 
                 echo "▶️  Starting Keycloak (attempt ${attempt}/${max_attempts})..."
                 request_preflight "ensure" "attempt=${attempt}"
+                run_kc_start() {
+                  local mode="$1"
+                  if [ "$mode" = "optimized" ]; then
+                    /opt/keycloak/bin/kc.sh start --optimized \
+                      --spi-connections-liquibase--quarkus--index-creation-threshold=0 &
+                  else
+                    /opt/keycloak/bin/kc.sh start \
+                      --spi-connections-liquibase--quarkus--index-creation-threshold=0 &
+                  fi
+                  kc_pid="$!"
+                  set +e
+                  wait "$kc_pid"
+                  rc="$?"
+                  set -e
+                  kc_pid=""
+                  return "$rc"
+                }
 
-                /opt/keycloak/bin/kc.sh start --optimized \
-                  --spi-connections-liquibase--quarkus--index-creation-threshold=0 &
-                kc_pid="$!"
-                set +e
-                wait "$kc_pid"
-                rc="$?"
-                set -e
-                kc_pid=""
+                rc=0
+                start_mode="${KC_USE_OPTIMIZED_START:-auto}"
+                if [ "$start_mode" = "false" ]; then
+                  run_kc_start "standard" || rc="$?"
+                else
+                  run_kc_start "optimized" || rc="$?"
+                  if [ "$rc" -eq 2 ] && log_tail 200 | grep -Fq "build time options have values that differ"; then
+                    echo "⚠️  Optimized startup build/options mismatch detected; retrying with standard startup."
+                    run_kc_start "standard" || rc="$?"
+                  fi
+                fi
 
                 if [ "$rc" -eq 0 ]; then
                   exit 0
