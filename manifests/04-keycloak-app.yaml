@@ -1372,8 +1372,6 @@ spec:
               set -eu
               gate_file="/kc-configurator-gate/done"
               mkdir -p /kc-configurator-gate
-              max_wait="${KC_CONFIGURATOR_GATE_MAX_WAIT_SECONDS:-180}"
-              start_ts="$(date +%s)"
               echo "kc-configurator-gate waiting for keycloak-configurator completion"
 
               while true; do
@@ -1384,13 +1382,6 @@ spec:
                 if [ "$succ" -ge 1 ] 2>/dev/null; then
                   date -u +%FT%TZ > "$gate_file"
                   echo "✅ keycloak-configurator job completed (completionTime=${completion_time:-unknown}); readiness gate opened."
-                  break
-                fi
-                now_ts="$(date +%s)"
-                elapsed="$((now_ts - start_ts))"
-                if [ "$elapsed" -ge "$max_wait" ] 2>/dev/null; then
-                  date -u +%FT%TZ > "$gate_file"
-                  echo "⚠️  timed out waiting ${elapsed}s for keycloak-configurator; opening readiness gate."
                   break
                 fi
                 echo "⏳ waiting for keycloak-configurator job completion (succeeded=${succ}, completionTime=${completion_time:-none})..."
