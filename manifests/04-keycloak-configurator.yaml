@@ -42,15 +42,15 @@ data:
     export KCADM_CMD_TIMEOUT_SECONDS
     if command -v timeout >/dev/null 2>&1; then
       cat > /tmp/kcadm-timeout-wrapper.sh <<'WRAPPER'
-#!/usr/bin/env sh
-set -eu
-REAL_KCADM="/opt/keycloak/bin/kcadm.sh"
-CONFIG_PATH="${KCADM_CONFIG:-/tmp/kcadm.config}"
-if command -v timeout >/dev/null 2>&1; then
-  exec timeout "${KCADM_CMD_TIMEOUT_SECONDS}" "$REAL_KCADM" --config "$CONFIG_PATH" "$@"
-fi
-exec "$REAL_KCADM" --config "$CONFIG_PATH" "$@"
-WRAPPER
+    #!/usr/bin/env sh
+    set -eu
+    REAL_KCADM="/opt/keycloak/bin/kcadm.sh"
+    CONFIG_PATH="${KCADM_CONFIG:-/tmp/kcadm.config}"
+    if command -v timeout >/dev/null 2>&1; then
+      exec timeout "${KCADM_CMD_TIMEOUT_SECONDS}" "$REAL_KCADM" --config "$CONFIG_PATH" "$@"
+    fi
+    exec "$REAL_KCADM" --config "$CONFIG_PATH" "$@"
+    WRAPPER
       chmod +x /tmp/kcadm-timeout-wrapper.sh
       KCADM="/tmp/kcadm-timeout-wrapper.sh"
     fi
