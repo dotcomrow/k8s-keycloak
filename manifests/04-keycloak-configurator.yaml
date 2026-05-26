@@ -35,7 +35,7 @@ data:
     INTERNAL_GITHUB_HIDE_ON_LOGIN="${APPS_GITHUB_HIDE_ON_LOGIN:-false}"
     INTERNAL_GITHUB_ONLY="${APPS_GITHUB_ONLY:-false}"
     KCADM="/opt/keycloak/bin/kcadm.sh"
-    KCADM_CONFIG="/tmp/kcadm.config"
+    KCADM_CONFIG="/opt/keycloak/.keycloak/kcadm.config"
     KCADM_AUTH_TIMEOUT_SECONDS="${KCADM_AUTH_TIMEOUT_SECONDS:-20}"
     KCADM_CMD_TIMEOUT_SECONDS="${KCADM_CMD_TIMEOUT_SECONDS:-30}"
     export KCADM_CONFIG
@@ -45,7 +45,7 @@ data:
     #!/usr/bin/env sh
     set -eu
     REAL_KCADM="/opt/keycloak/bin/kcadm.sh"
-    CONFIG_PATH="${KCADM_CONFIG:-/tmp/kcadm.config}"
+    CONFIG_PATH="${KCADM_CONFIG:-/opt/keycloak/.keycloak/kcadm.config}"
     if [ "$#" -eq 0 ]; then
       if command -v timeout >/dev/null 2>&1; then
         exec timeout "${KCADM_CMD_TIMEOUT_SECONDS}" "$REAL_KCADM"
