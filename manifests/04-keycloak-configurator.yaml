@@ -2736,14 +2736,14 @@ data:
       fi
     
       scope_csv="$($KCADM get "clients/$realm_mgmt_uuid/authz/resource-server/scope" -r "$realm" --fields id,name --format csv 2>/dev/null || true)"
-      token_exchange_scope_id="$(printf '%s\n' "$scope_csv" | grep '"token-exchange"' | head -n1 | cut -d',' -f1 | tr -d '"[:space:]')"
+      token_exchange_scope_id="$(printf '%s\n' "$scope_csv" | grep '"token-exchange"' | head -n1 | cut -d',' -f1 | tr -d '"[:space:]' || true)"
       if [ -z "${token_exchange_scope_id:-}" ]; then
         echo "⚠️  token exchange scope id not found in realm-management"
         return 0
       fi
     
       policy_csv="$($KCADM get "clients/$realm_mgmt_uuid/authz/resource-server/policy" -r "$realm" --fields id,name --format csv 2>/dev/null || true)"
-      token_exchange_permission_id="$(printf '%s\n' "$policy_csv" | grep "token-exchange.permission.client.${target_uuid}" | head -n1 | cut -d',' -f1 | tr -d '"[:space:]')"
+      token_exchange_permission_id="$(printf '%s\n' "$policy_csv" | grep "token-exchange.permission.client.${target_uuid}" | head -n1 | cut -d',' -f1 | tr -d '"[:space:]' || true)"
       if [ -z "${token_exchange_permission_id:-}" ]; then
         token_exchange_permission_id="$($KCADM get "clients/$realm_mgmt_uuid/authz/resource-server/permission/scope" -r "$realm" --fields id,name --format csv 2>/dev/null \
           | grep "token-exchange.permission.client.${target_uuid}" | head -n1 | cut -d',' -f1 | tr -d '"[:space:]' || true)"
@@ -2754,10 +2754,10 @@ data:
       fi
     
       resource_csv="$($KCADM get "clients/$realm_mgmt_uuid/authz/resource-server/resource" -r "$realm" --fields _id,name --format csv 2>/dev/null || true)"
-      client_resource_id="$(printf '%s\n' "$resource_csv" | grep "client.resource.${target_uuid}" | head -n1 | cut -d',' -f1 | tr -d '"[:space:]')"
+      client_resource_id="$(printf '%s\n' "$resource_csv" | grep "client.resource.${target_uuid}" | head -n1 | cut -d',' -f1 | tr -d '"[:space:]' || true)"
       if [ -z "${client_resource_id:-}" ]; then
         resource_csv="$($KCADM get "clients/$realm_mgmt_uuid/authz/resource-server/resource" -r "$realm" --fields id,name --format csv 2>/dev/null || true)"
-        client_resource_id="$(printf '%s\n' "$resource_csv" | grep "client.resource.${target_uuid}" | head -n1 | cut -d',' -f1 | tr -d '"[:space:]')"
+        client_resource_id="$(printf '%s\n' "$resource_csv" | grep "client.resource.${target_uuid}" | head -n1 | cut -d',' -f1 | tr -d '"[:space:]' || true)"
       fi
       if [ -z "${client_resource_id:-}" ]; then
         echo "⚠️  token exchange client resource not found for target_uuid=$target_uuid"
@@ -2766,7 +2766,7 @@ data:
       echo "ℹ️  token exchange ids: scope=$token_exchange_scope_id perm=$token_exchange_permission_id resource=$client_resource_id"
     
       policy_name="token-exchange-${target_client_id}-${allowed_client_id}"
-      policy_id="$(printf '%s\n' "$policy_csv" | grep "\"${policy_name}\"" | head -n1 | cut -d',' -f1 | tr -d '"[:space:]')"
+      policy_id="$(printf '%s\n' "$policy_csv" | grep "\"${policy_name}\"" | head -n1 | cut -d',' -f1 | tr -d '"[:space:]' || true)"
       tmp_policy_json="/tmp/token-exchange-policy-${realm}-${target_uuid}-${allowed_uuid}.json"
       printf '%s\n' \
         '{' \
@@ -2784,7 +2784,7 @@ data:
           return 0
         fi
         policy_csv="$($KCADM get "clients/$realm_mgmt_uuid/authz/resource-server/policy" -r "$realm" --fields id,name --format csv 2>/dev/null || true)"
-        policy_id="$(printf '%s\n' "$policy_csv" | grep "\"${policy_name}\"" | head -n1 | cut -d',' -f1 | tr -d '"[:space:]')"
+        policy_id="$(printf '%s\n' "$policy_csv" | grep "\"${policy_name}\"" | head -n1 | cut -d',' -f1 | tr -d '"[:space:]' || true)"
       else
         if ! $KCADM update "clients/$realm_mgmt_uuid/authz/resource-server/policy/$policy_id" -r "$realm" -f "$tmp_policy_json"; then
           echo "⚠️  token exchange policy update failed: realm=$realm target=$target_client_id allowed=$allowed_client_id policy_id=$policy_id"
@@ -2986,7 +2986,7 @@ metadata:
     # completion on subsequent pod restarts; replace it on next sync.
     argocd.argoproj.io/hook-delete-policy: BeforeHookCreation,HookFailed
     # Manual rollout stamp: bump this value to force a fresh configurator run.
-    platform.suncoast.systems/configurator-rollout-stamp: "2026-05-25T23:55:00Z"
+    platform.suncoast.systems/configurator-rollout-stamp: "2026-05-26T00:45:00Z"
 spec:
   # Never give up quickly: keep retrying until configuration succeeds.
   backoffLimit: 1000000
