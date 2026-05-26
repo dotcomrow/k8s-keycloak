@@ -46,10 +46,26 @@ data:
     set -eu
     REAL_KCADM="/opt/keycloak/bin/kcadm.sh"
     CONFIG_PATH="${KCADM_CONFIG:-/tmp/kcadm.config}"
-    if command -v timeout >/dev/null 2>&1; then
-      exec timeout "${KCADM_CMD_TIMEOUT_SECONDS}" "$REAL_KCADM" --config "$CONFIG_PATH" "$@"
+    if [ "$#" -eq 0 ]; then
+      if command -v timeout >/dev/null 2>&1; then
+        exec timeout "${KCADM_CMD_TIMEOUT_SECONDS}" "$REAL_KCADM"
+      fi
+      exec "$REAL_KCADM"
     fi
-    exec "$REAL_KCADM" --config "$CONFIG_PATH" "$@"
+    case "$1" in
+      -*)
+        if command -v timeout >/dev/null 2>&1; then
+          exec timeout "${KCADM_CMD_TIMEOUT_SECONDS}" "$REAL_KCADM" "$@"
+        fi
+        exec "$REAL_KCADM" "$@"
+        ;;
+    esac
+    CMD="$1"
+    shift
+    if command -v timeout >/dev/null 2>&1; then
+      exec timeout "${KCADM_CMD_TIMEOUT_SECONDS}" "$REAL_KCADM" "$CMD" --config "$CONFIG_PATH" "$@"
+    fi
+    exec "$REAL_KCADM" "$CMD" --config "$CONFIG_PATH" "$@"
     WRAPPER
       chmod +x /tmp/kcadm-timeout-wrapper.sh
       KCADM="/tmp/kcadm-timeout-wrapper.sh"
@@ -169,12 +185,12 @@ data:
 
     login_with_client() {
       [ -n "${CONFIG_CLIENT_SECRET:-}" ] || return 1
-      kcadm_auth "$KCADM" config credentials --config "$KCADM_CONFIG" --server "$SERVER" --realm "$ADMIN_REALM" \
+      kcadm_auth "$KCADM" config credentials --server "$SERVER" --realm "$ADMIN_REALM" \
         --client "$CONFIG_CLIENT_ID" --secret "$CONFIG_CLIENT_SECRET" >/dev/null 2>&1
     }
 
     login_with_admin() {
-      kcadm_auth "$KCADM" config credentials --config "$KCADM_CONFIG" --server "$SERVER" --realm "$ADMIN_REALM" \
+      kcadm_auth "$KCADM" config credentials --server "$SERVER" --realm "$ADMIN_REALM" \
         --user "$KEYCLOAK_ADMIN" --password "$KEYCLOAK_ADMIN_PASSWORD" >/dev/null 2>&1
     }
     
@@ -3113,7 +3129,7 @@ metadata:
     # completion on subsequent pod restarts; replace it on next sync.
     argocd.argoproj.io/hook-delete-policy: BeforeHookCreation,HookFailed
     # Manual rollout stamp: bump this value to force a fresh configurator run.
-    platform.suncoast.systems/configurator-rollout-stamp: "2026-05-26T14:50:00Z"
+    platform.suncoast.systems/configurator-rollout-stamp: "2026-05-26T16:35:00Z"
 spec:
   # Never give up quickly: keep retrying until configuration succeeds.
   backoffLimit: 1000000
