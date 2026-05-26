@@ -1444,7 +1444,7 @@ spec:
 
             # Feature flags
             - name: KC_FEATURES
-              value: "token-exchange,token-exchange-standard,token-exchange-external-internal"
+              value: "token-exchange-standard"
 
             # Logging
             - name: KC_LOG
