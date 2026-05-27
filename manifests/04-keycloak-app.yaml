@@ -1403,7 +1403,7 @@ spec:
 
         # --- Keycloak runtime ---
         - name: keycloak
-          image: ghcr.io/dotcomrow/keycloak-image:sha-a9789d9
+          image: ghcr.io/dotcomrow/keycloak-image:sha-9bf29aa
           imagePullPolicy: Always
           ports:
             - containerPort: 8080
@@ -1502,6 +1502,7 @@ spec:
                 GRAPHQL_API_CLIENT_ID="$(tr -d '\r\n' < /vault/secrets/client-id-graphql-api)"
               fi
               export GRAPHQL_API_CLIENT_ID
+              export GITHUB_ADMIN_GRANT_ALL="${GITHUB_ADMIN_GRANT_ALL:-false}"
               export DEBUG_ALWAYS_GRANT="${DEBUG_ALWAYS_GRANT:-false}"
               export GITHUB_ADMIN_USERNAMES="${GITHUB_ADMIN_USERNAMES:-}"
               append_role_map_entry() {
