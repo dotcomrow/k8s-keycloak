@@ -3126,6 +3126,8 @@ metadata:
     # Keep this in the same wave as keycloak deployment:
     # keycloak pods stay NotReady until this Job succeeds.
     argocd.argoproj.io/sync-wave: "5"
+    # Job pod template is immutable; force recreate on spec changes.
+    argocd.argoproj.io/sync-options: Force=true,Replace=true
 spec:
   # Never give up quickly: keep retrying until configuration succeeds.
   backoffLimit: 1000000
