@@ -487,6 +487,7 @@ data:
         "https://external-preview.suncoast.systems"
       ],
       "attributes": {
+        "access.token.lifespan": "900",
         "pkce.code.challenge.method": "S256",
         "standard.token.exchange.enabled": "true",
         "post.logout.redirect.uris": "+"
@@ -677,6 +678,7 @@ data:
         "http://localhost:8080"
       ],
       "attributes": {
+        "access.token.lifespan": "900",
         "pkce.code.challenge.method": "S256",
         "standard.token.exchange.enabled": "true",
         "post.logout.redirect.uris": "+"

@@ -1818,6 +1818,19 @@ data:
         echo "ℹ️  client not found for standard flow enforcement: $clientId"
       fi
     }
+
+    enforce_client_access_token_lifespan() {
+      local realm="$1"
+      local clientId="$2"
+      local lifespan_seconds="$3"
+      CID="$(client_uuid "$realm" "$clientId")"
+      if [ -n "${CID:-}" ]; then
+        $KCADM update "clients/$CID" -r "$realm" \
+          -s "attributes.\"access.token.lifespan\"=${lifespan_seconds}" || true
+      else
+        echo "ℹ️  client not found for token lifespan enforcement: $clientId"
+      fi
+    }
     
     clear_pkce_for_client() {
       local realm="$1"
@@ -2006,6 +2019,8 @@ data:
     if [ "$INTERNAL_DISABLE_DIRECT_GRANTS" = "true" ]; then
       disable_direct_grants_for_clients "$INTERNAL_REALM"
     fi
+    enforce_client_access_token_lifespan "$INTERNAL_REALM" "auth-gateway-public" "900"
+    enforce_client_access_token_lifespan "$INTERNAL_REALM" "shell-spa-public" "900"
     clear_pkce_for_client "$INTERNAL_REALM" "$DROOLS_WORKBENCH_CLIENT_ID"
     
     log_progress "Applying external realm clients and auth settings..."
