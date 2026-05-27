@@ -1436,6 +1436,10 @@ spec:
             # Feature flags
             - name: KC_FEATURES
               value: "token-exchange,token-exchange-standard,token-exchange-external-internal"
+            # Allow larger subject_token payloads for OIDC token exchange.
+            # Default is 4000 and currently truncates internal user tokens.
+            - name: KC_SPI_LOGIN_PROTOCOL__OPENID_CONNECT__REQ_PARAMS_DEFAULT_MAX_SIZE
+              value: "12000"
 
             # Logging
             - name: KC_LOG
