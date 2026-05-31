@@ -244,13 +244,11 @@ spec:
               path "secret/data/vaultadmin"                       { capabilities = ["read"] }
               path "secret/data/keycloak-oauth-client-id"         { capabilities = ["read"] }
               path "secret/data/keycloak-oauth-client-secret"     { capabilities = ["read"] }
-              path "secret/data/keycloak-github-role-map"         { capabilities = ["read"] }
               path "secret/data/keycloak-google-client-id"        { capabilities = ["read"] }
               path "secret/data/keycloak-google-client-secret"    { capabilities = ["read"] }
               path "secret/data/keycloak-google-admin-email"      { capabilities = ["read"] }
               path "secret/data/keycloak-google-admin-group"      { capabilities = ["read"] }
               path "secret/data/keycloak-google-sa-json"          { capabilities = ["read"] }
-              path "secret/data/keycloak-google-group-role-map"   { capabilities = ["read"] }
               path "secret/data/keycloak-configurator-client-secret" { capabilities = ["read"] }
               path "secret/data/keycloak-client-secret-*"         { capabilities = ["read"] }
               path "secret/data/keycloak-client-id-*"             { capabilities = ["read"] }
@@ -358,13 +356,11 @@ spec:
               path "secret/data/vaultadmin"                       { capabilities = ["read"] }
               path "secret/data/keycloak-oauth-client-id"         { capabilities = ["read"] }
               path "secret/data/keycloak-oauth-client-secret"     { capabilities = ["read"] }
-              path "secret/data/keycloak-github-role-map"         { capabilities = ["read"] }
               path "secret/data/keycloak-google-client-id"        { capabilities = ["read"] }
               path "secret/data/keycloak-google-client-secret"    { capabilities = ["read"] }
               path "secret/data/keycloak-google-admin-email"      { capabilities = ["read"] }
               path "secret/data/keycloak-google-admin-group"      { capabilities = ["read"] }
               path "secret/data/keycloak-google-sa-json"          { capabilities = ["read"] }
-              path "secret/data/keycloak-google-group-role-map"   { capabilities = ["read"] }
               path "secret/data/keycloak-configurator-client-secret" { capabilities = ["read"] }
               path "secret/data/keycloak-client-secret-*"         { capabilities = ["read"] }
               path "secret/data/keycloak-client-id-*"             { capabilities = ["read"] }

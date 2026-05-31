@@ -925,9 +925,6 @@ spec:
         vault.hashicorp.com/agent-inject-secret-keycloak-admin-team: "secret/data/keycloak-admin-team"
         vault.hashicorp.com/agent-inject-template-keycloak-admin-team: |
           {{- with secret "secret/data/keycloak-admin-team" -}}{{ .Data.data.value }}{{- end -}}
-        vault.hashicorp.com/agent-inject-secret-github-role-map: "secret/data/keycloak-github-role-map"
-        vault.hashicorp.com/agent-inject-template-github-role-map: |
-          {{- with secret "secret/data/keycloak-github-role-map" -}}{{ .Data.data.value }}{{- end -}}
 
         # Google OIDC + Groups (Cloud Identity)
         vault.hashicorp.com/agent-inject-secret-google-client-id: "secret/data/keycloak-google-client-id"
@@ -945,9 +942,6 @@ spec:
         vault.hashicorp.com/agent-inject-secret-google-sa-json: "secret/data/keycloak-google-sa-json"
         vault.hashicorp.com/agent-inject-template-google-sa-json: |
           {{- with secret "secret/data/keycloak-google-sa-json" -}}{{ .Data.data.value }}{{- end -}}
-        vault.hashicorp.com/agent-inject-secret-google-group-role-map: "secret/data/keycloak-google-group-role-map"
-        vault.hashicorp.com/agent-inject-template-google-group-role-map: |
-          {{- with secret "secret/data/keycloak-google-group-role-map" -}}{{ .Data.data.value }}{{- end -}}
         vault.hashicorp.com/agent-inject-secret-keycloak-configurator-client-secret: "secret/data/keycloak-configurator-client-secret"
         vault.hashicorp.com/agent-inject-template-keycloak-configurator-client-secret: |
           {{- with secret "secret/data/keycloak-configurator-client-secret" -}}{{ .Data.data.value }}{{- end -}}
@@ -1403,7 +1397,7 @@ spec:
 
         # --- Keycloak runtime ---
         - name: keycloak
-          image: ghcr.io/dotcomrow/keycloak-image:sha-9bf29aa
+          image: ghcr.io/dotcomrow/keycloak-image:sha-81baae9
           imagePullPolicy: Always
           ports:
             - containerPort: 8080
@@ -1467,8 +1461,6 @@ spec:
               value: "/"
             - name: KC_HTTP_COOKIE_SAME_SITE
               value: "NONE"
-            - name: KEYCLOAK_RULES_ADMIN_TEAM
-              value: "rules_admin"
           command: ["/bin/bash","-lc"]
           args:
             - |
@@ -1483,106 +1475,11 @@ spec:
               # Export org/team for the custom provider
               export GITHUB_ORG="$(cat /vault/secrets/github-org)"
               export GITHUB_TEAM="$(cat /vault/secrets/keycloak-admin-team)"
-              export RULES_ADMIN_TEAM="${KEYCLOAK_RULES_ADMIN_TEAM:-rules_admin}"
-              DROOLS_WORKBENCH_CLIENT_ID="drools-workbench-5k32f99itpcixgacte"
-              if [ -s /vault/secrets/client-id-drools-workbench ]; then
-                DROOLS_WORKBENCH_CLIENT_ID="$(tr -d '\r\n' < /vault/secrets/client-id-drools-workbench)"
-              fi
-              export DROOLS_WORKBENCH_CLIENT_ID
-              GRAPHQL_API_CLIENT_ID="graphql-api"
-              if [ -s /opt/keycloak/data/clients/external/graphql-api.json ]; then
-                graph_id="$(sed -n "s/.*\"clientId\"[[:space:]]*:[[:space:]]*\"\\([^\"]*\\)\".*/\\1/p" /opt/keycloak/data/clients/external/graphql-api.json | head -n1 | tr -d '\r')"
-                path_prefix="<pat"
-                path_prefix="${path_prefix}h:"
-                if [ -n "${graph_id:-}" ] && ! printf '%s' "$graph_id" | grep -q "^${path_prefix}"; then
-                  GRAPHQL_API_CLIENT_ID="$graph_id"
-                fi
-              fi
-              if [ -s /vault/secrets/client-id-graphql-api ]; then
-                GRAPHQL_API_CLIENT_ID="$(tr -d '\r\n' < /vault/secrets/client-id-graphql-api)"
-              fi
-              export GRAPHQL_API_CLIENT_ID
               export GITHUB_ADMIN_GRANT_ALL="${GITHUB_ADMIN_GRANT_ALL:-false}"
               export DEBUG_ALWAYS_GRANT="${DEBUG_ALWAYS_GRANT:-false}"
               export GITHUB_ADMIN_USERNAMES="${GITHUB_ADMIN_USERNAMES:-}"
-              append_role_map_entry() {
-                local json="$1"
-                local key="$2"
-                local role="$3"
-                local trimmed=""
-                local json_flat=""
-                local role_escaped=""
-                local key_regex=""
-                local role_regex=""
-                local key_repl=""
-                if [ -z "${key:-}" ] || [ -z "${role:-}" ]; then
-                  printf '%s' "$json"
-                  return 0
-                fi
-                if [ -z "${json:-}" ]; then
-                  printf '{"%s":["%s"]}' "$key" "$role"
-                  return 0
-                fi
-                json_flat="$(printf '%s' "$json" | tr -d '\n')"
-                key_regex="$(printf '%s' "$key" | sed 's/[.[\\*^$(){}+?|]/\\\\&/g; s/|/\\\\|/g')"
-                role_regex="$(printf '%s' "$role" | sed 's/[.[\\*^$(){}+?|]/\\\\&/g; s/|/\\\\|/g')"
-                key_repl="$(printf '%s' "$key" | sed 's/[&|]/\\\\&/g')"
-                if printf '%s' "$json_flat" | grep -q "\"${key_regex}\""; then
-                  if printf '%s' "$json_flat" | grep -q "\"${key_regex}\"[[:space:]]*:[[:space:]]*\\[[^]]*\"${role_regex}\""; then
-                    printf '%s' "$json_flat"
-                    return 0
-                  fi
-                  role_escaped="$(printf '%s' "$role" | sed 's/[&|]/\\\\&/g')"
-                  printf '%s' "$json_flat" | sed "s|\"${key_regex}\"[[:space:]]*:[[:space:]]*\\[\\([^]]*\\)\\]|\"${key_repl}\":[\\1,\"${role_escaped}\"]|"
-                  return 0
-                fi
-                trimmed="$(printf '%s' "$json_flat" | sed 's/[[:space:]]*$//')"
-                if printf '%s' "$trimmed" | grep -q '^{' && printf '%s' "$trimmed" | grep -q '}$'; then
-                  local inner="${trimmed#\{}"
-                  inner="${inner%\}}"
-                  if [ -z "${inner//[[:space:]]/}" ]; then
-                    printf '{"%s":["%s"]}' "$key" "$role"
-                  else
-                    printf '%s' "${trimmed%\}}"
-                    printf ',\"%s\":[\"%s\"]}' "$key" "$role"
-                  fi
-                  return 0
-                fi
-                printf '%s' "$json"
-              }
-              if [ -s /vault/secrets/github-role-map ]; then
-                export GITHUB_ROLE_MAP="$(cat /vault/secrets/github-role-map)"
-              else
-                export GITHUB_ROLE_MAP='{"myorg/openwebui":["realm:openwebui_access"]}'
-              fi
-              if [ -n "${GITHUB_ORG:-}" ] && [ -n "${GITHUB_TEAM:-}" ]; then
-                admin_key="${GITHUB_ORG}/${GITHUB_TEAM}"
-                export GITHUB_ROLE_MAP="$(append_role_map_entry "$GITHUB_ROLE_MAP" "$admin_key" "client:realm-management:realm-admin")"
-              fi
-              if [ -n "${GITHUB_ORG:-}" ] && [ -n "${RULES_ADMIN_TEAM:-}" ]; then
-                rules_admin_key="${GITHUB_ORG}/${RULES_ADMIN_TEAM}"
-                export GITHUB_ROLE_MAP="$(append_role_map_entry "$GITHUB_ROLE_MAP" "$rules_admin_key" "realm:admin")"
-                export GITHUB_ROLE_MAP="$(append_role_map_entry "$GITHUB_ROLE_MAP" "$rules_admin_key" "realm:rest-all")"
-                export GITHUB_ROLE_MAP="$(append_role_map_entry "$GITHUB_ROLE_MAP" "$rules_admin_key" "realm:drools_access")"
-                export GITHUB_ROLE_MAP="$(append_role_map_entry "$GITHUB_ROLE_MAP" "$rules_admin_key" "realm:drools_admin")"
-                export GITHUB_ROLE_MAP="$(append_role_map_entry "$GITHUB_ROLE_MAP" "$rules_admin_key" "realm:drools_service_access")"
-                export GITHUB_ROLE_MAP="$(append_role_map_entry "$GITHUB_ROLE_MAP" "$rules_admin_key" "realm:kie-server")"
-                export GITHUB_ROLE_MAP="$(append_role_map_entry "$GITHUB_ROLE_MAP" "$rules_admin_key" "realm:process-admin")"
-                export GITHUB_ROLE_MAP="$(append_role_map_entry "$GITHUB_ROLE_MAP" "$rules_admin_key" "realm:manager")"
-                export GITHUB_ROLE_MAP="$(append_role_map_entry "$GITHUB_ROLE_MAP" "$rules_admin_key" "realm:rest-project")"
-                export GITHUB_ROLE_MAP="$(append_role_map_entry "$GITHUB_ROLE_MAP" "$rules_admin_key" "realm:user")"
-                export GITHUB_ROLE_MAP="$(append_role_map_entry "$GITHUB_ROLE_MAP" "$rules_admin_key" "client:realm-management:realm-admin")"
-                export GITHUB_ROLE_MAP="$(append_role_map_entry "$GITHUB_ROLE_MAP" "$rules_admin_key" "client:${DROOLS_WORKBENCH_CLIENT_ID}:admin")"
-                export GITHUB_ROLE_MAP="$(append_role_map_entry "$GITHUB_ROLE_MAP" "$rules_admin_key" "client:${DROOLS_WORKBENCH_CLIENT_ID}:analyst")"
-                export GITHUB_ROLE_MAP="$(append_role_map_entry "$GITHUB_ROLE_MAP" "$rules_admin_key" "client:${DROOLS_WORKBENCH_CLIENT_ID}:developer")"
-                export GITHUB_ROLE_MAP="$(append_role_map_entry "$GITHUB_ROLE_MAP" "$rules_admin_key" "client:${DROOLS_WORKBENCH_CLIENT_ID}:user")"
-                export GITHUB_ROLE_MAP="$(append_role_map_entry "$GITHUB_ROLE_MAP" "$rules_admin_key" "client:${DROOLS_WORKBENCH_CLIENT_ID}:manager")"
-                export GITHUB_ROLE_MAP="$(append_role_map_entry "$GITHUB_ROLE_MAP" "$rules_admin_key" "client:${DROOLS_WORKBENCH_CLIENT_ID}:process-admin")"
-                export GITHUB_ROLE_MAP="$(append_role_map_entry "$GITHUB_ROLE_MAP" "$rules_admin_key" "client:${DROOLS_WORKBENCH_CLIENT_ID}:rest-all")"
-                export GITHUB_ROLE_MAP="$(append_role_map_entry "$GITHUB_ROLE_MAP" "$rules_admin_key" "client:${DROOLS_WORKBENCH_CLIENT_ID}:rest-project")"
-              fi
-              # Keep JSON alias for providers expecting GITHUB_ROLE_MAP_JSON.
-              export GITHUB_ROLE_MAP_JSON="$GITHUB_ROLE_MAP"
+              export GITHUB_AUTO_ROLES="${GITHUB_AUTO_ROLES:-true}"
+              export GITHUB_ROLE_PREFIX="${GITHUB_ROLE_PREFIX:-}"
 
               # Google Groups auth (Cloud Identity)
               export GOOGLE_ADMIN_EMAIL="$(cat /vault/secrets/google-admin-email)"
@@ -1591,16 +1488,17 @@ spec:
                 EXTERNAL_ADMIN_GROUP="$(tr -d '\r\n' < /vault/secrets/google-admin-group)"
               fi
               export GOOGLE_SA_JSON_PATH="/vault/secrets/google-sa-json"
-              export GOOGLE_GROUP_ROLE_MAP="$(cat /vault/secrets/google-group-role-map 2>/dev/null || true)"
-              export GOOGLE_ROLE_PREFIX="ggl:"
-              export GOOGLE_AUTO_ROLES="true"
-              export GOOGLE_STRICT_REVOKE="true"
-              export GOOGLE_GROUPS_TTL_SECONDS="600"
-              if [ -z "${GOOGLE_GROUP_ROLE_MAP:-}" ]; then
-                export GOOGLE_GROUP_ROLE_MAP='{"tier-pro@yourdomain.com":["realm:tier_pro"],"feature-x@yourdomain.com":["realm:feature_x"]}'
-              fi
+              export GOOGLE_ROLE_PREFIX="${GOOGLE_ROLE_PREFIX:-}"
+              export GOOGLE_AUTO_ROLES="${GOOGLE_AUTO_ROLES:-true}"
+              export GOOGLE_STRICT_REVOKE="${GOOGLE_STRICT_REVOKE:-true}"
+              export GOOGLE_GROUPS_TTL_SECONDS="${GOOGLE_GROUPS_TTL_SECONDS:-600}"
+              export GOOGLE_GROUPS="${GOOGLE_GROUPS:-}"
               if [ -n "${EXTERNAL_ADMIN_GROUP:-}" ]; then
-                export GOOGLE_GROUP_ROLE_MAP="$(append_role_map_entry "$GOOGLE_GROUP_ROLE_MAP" "$EXTERNAL_ADMIN_GROUP" "client:realm-management:realm-admin")"
+                if [ -n "${GOOGLE_GROUPS:-}" ]; then
+                  export GOOGLE_GROUPS="${GOOGLE_GROUPS},${EXTERNAL_ADMIN_GROUP}"
+                else
+                  export GOOGLE_GROUPS="${EXTERNAL_ADMIN_GROUP}"
+                fi
               fi
 
               sync_dir="/kc-preflight"

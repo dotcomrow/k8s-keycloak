@@ -11,12 +11,7 @@ data:
     
     ADMIN_REALM="master"
     INTERNAL_REALM="${KEYCLOAK_INTERNAL_REALM:-internal}"
-    EXTERNAL_REALM="${KEYCLOAK_EXTERNAL_REALM:-${KEYCLOAK_REALM:-apps}}"
-    LEGACY_EXTERNAL_REALM="${KEYCLOAK_LEGACY_EXTERNAL_REALM:-apps}"
-    MIGRATE_APPS_REALM="${KEYCLOAK_MIGRATE_APPS_REALM:-false}"
-    MIGRATE_APPS_REALM_MODE="${KEYCLOAK_MIGRATE_APPS_REALM_MODE:-auto}"
-    MIGRATE_APPS_REALM_DELETE_SOURCE="${KEYCLOAK_MIGRATE_APPS_REALM_DELETE_SOURCE:-false}"
-    MIGRATE_APPS_REALM_FORCE_DELETE="${KEYCLOAK_MIGRATE_APPS_REALM_FORCE_DELETE:-false}"
+    EXTERNAL_REALM="${KEYCLOAK_EXTERNAL_REALM:-${KEYCLOAK_REALM:-external}}"
     SERVER="http://keycloak-bootstrap.keycloak.svc.cluster.local:8080"
     FLOW_GH="GitHub-PostLogin"
     FLOW_GGL="Google-PostLogin"
@@ -97,18 +92,11 @@ data:
     CLIENT_SECRET="$(cat /vault/secrets/github-client-secret)"
     GITHUB_ORG="$(cat /vault/secrets/github-org)"
     GITHUB_TEAM="$(cat /vault/secrets/keycloak-admin-team)"
-    RULES_ADMIN_TEAM="${KEYCLOAK_RULES_ADMIN_TEAM:-rules_admin}"
     GOOGLE_CLIENT_ID="$(cat /vault/secrets/google-client-id 2>/dev/null || true)"
     GOOGLE_CLIENT_SECRET="$(cat /vault/secrets/google-client-secret 2>/dev/null || true)"
-    GITHUB_ROLE_MAP_JSON="$(cat /vault/secrets/github-role-map 2>/dev/null || true)"
-    GOOGLE_GROUP_ROLE_MAP_JSON="$(cat /vault/secrets/google-group-role-map 2>/dev/null || true)"
     EXTERNAL_ADMIN_EMAIL=""
     if [ -s /vault/secrets/google-admin-email ]; then
       EXTERNAL_ADMIN_EMAIL="$(tr -d '\r\n' < /vault/secrets/google-admin-email)"
-    fi
-    EXTERNAL_ADMIN_GROUP=""
-    if [ -s /vault/secrets/google-admin-group ]; then
-      EXTERNAL_ADMIN_GROUP="$(tr -d '\r\n' < /vault/secrets/google-admin-group)"
     fi
     EXTERNAL_ADMIN_MODE="${KEYCLOAK_EXTERNAL_ADMIN_MODE:-user}"
     INTERNAL_REALM_ROLES_RAW="${KEYCLOAK_INTERNAL_REALM_ROLES:-}"
@@ -329,82 +317,6 @@ data:
       line="$(printf '%s\n' "$csv" | grep -m1 "\"${mapper_name}\"" || true)"
       printf '%s' "$line" | cut -d',' -f1 | tr -d '"' | tr -d '[:space:]'
     }
-    
-    append_role_map_entry() {
-      local json="$1"
-      local key="$2"
-      local role="$3"
-      local trimmed=""
-      local json_flat=""
-      local role_escaped=""
-      local key_regex=""
-      local role_regex=""
-      local key_repl=""
-      if [ -z "${key:-}" ] || [ -z "${role:-}" ]; then
-        printf '%s' "$json"
-        return 0
-      fi
-      if [ -z "${json:-}" ]; then
-        printf '{"%s":["%s"]}' "$key" "$role"
-        return 0
-      fi
-      json_flat="$(printf '%s' "$json" | tr -d '\n')"
-      key_regex="$(printf '%s' "$key" | sed 's/[.[\\*^$(){}+?|]/\\\\&/g; s/|/\\\\|/g')"
-      role_regex="$(printf '%s' "$role" | sed 's/[.[\\*^$(){}+?|]/\\\\&/g; s/|/\\\\|/g')"
-      key_repl="$(printf '%s' "$key" | sed 's/[&|]/\\\\&/g')"
-      if printf '%s' "$json_flat" | grep -q "\"${key_regex}\""; then
-        if printf '%s' "$json_flat" | grep -q "\"${key_regex}\"[[:space:]]*:[[:space:]]*\\[[^]]*\"${role_regex}\""; then
-          printf '%s' "$json_flat"
-          return 0
-        fi
-        role_escaped="$(printf '%s' "$role" | sed 's/[&|]/\\\\&/g')"
-        printf '%s' "$json_flat" | sed "s|\"${key_regex}\"[[:space:]]*:[[:space:]]*\\[\\([^]]*\\)\\]|\"${key_repl}\":[\\1,\"${role_escaped}\"]|"
-        return 0
-      fi
-      trimmed="$(printf '%s' "$json_flat" | sed 's/[[:space:]]*$//')"
-      if printf '%s' "$trimmed" | grep -q '^{' && printf '%s' "$trimmed" | grep -q '}$'; then
-        local inner="${trimmed#\{}"
-        inner="${inner%\}}"
-        if [ -z "${inner//[[:space:]]/}" ]; then
-          printf '{"%s":["%s"]}' "$key" "$role"
-        else
-          printf '%s' "${trimmed%\}}"
-          printf ',\"%s\":[\"%s\"]}' "$key" "$role"
-        fi
-        return 0
-      fi
-      printf '%s' "$json"
-    }
-    
-    if [ -n "${GITHUB_ORG:-}" ] && [ -n "${GITHUB_TEAM:-}" ]; then
-      admin_key="${GITHUB_ORG}/${GITHUB_TEAM}"
-      GITHUB_ROLE_MAP_JSON="$(append_role_map_entry "$GITHUB_ROLE_MAP_JSON" "$admin_key" "client:realm-management:realm-admin")"
-    fi
-    if [ -n "${GITHUB_ORG:-}" ] && [ -n "${RULES_ADMIN_TEAM:-}" ]; then
-      rules_admin_key="${GITHUB_ORG}/${RULES_ADMIN_TEAM}"
-      GITHUB_ROLE_MAP_JSON="$(append_role_map_entry "$GITHUB_ROLE_MAP_JSON" "$rules_admin_key" "realm:admin")"
-      GITHUB_ROLE_MAP_JSON="$(append_role_map_entry "$GITHUB_ROLE_MAP_JSON" "$rules_admin_key" "realm:rest-all")"
-      GITHUB_ROLE_MAP_JSON="$(append_role_map_entry "$GITHUB_ROLE_MAP_JSON" "$rules_admin_key" "realm:drools_access")"
-      GITHUB_ROLE_MAP_JSON="$(append_role_map_entry "$GITHUB_ROLE_MAP_JSON" "$rules_admin_key" "realm:drools_admin")"
-      GITHUB_ROLE_MAP_JSON="$(append_role_map_entry "$GITHUB_ROLE_MAP_JSON" "$rules_admin_key" "realm:drools_service_access")"
-      GITHUB_ROLE_MAP_JSON="$(append_role_map_entry "$GITHUB_ROLE_MAP_JSON" "$rules_admin_key" "realm:kie-server")"
-      GITHUB_ROLE_MAP_JSON="$(append_role_map_entry "$GITHUB_ROLE_MAP_JSON" "$rules_admin_key" "realm:process-admin")"
-      GITHUB_ROLE_MAP_JSON="$(append_role_map_entry "$GITHUB_ROLE_MAP_JSON" "$rules_admin_key" "realm:manager")"
-      GITHUB_ROLE_MAP_JSON="$(append_role_map_entry "$GITHUB_ROLE_MAP_JSON" "$rules_admin_key" "realm:rest-project")"
-      GITHUB_ROLE_MAP_JSON="$(append_role_map_entry "$GITHUB_ROLE_MAP_JSON" "$rules_admin_key" "realm:user")"
-      GITHUB_ROLE_MAP_JSON="$(append_role_map_entry "$GITHUB_ROLE_MAP_JSON" "$rules_admin_key" "client:realm-management:realm-admin")"
-      GITHUB_ROLE_MAP_JSON="$(append_role_map_entry "$GITHUB_ROLE_MAP_JSON" "$rules_admin_key" "client:${DROOLS_WORKBENCH_CLIENT_ID}:admin")"
-      GITHUB_ROLE_MAP_JSON="$(append_role_map_entry "$GITHUB_ROLE_MAP_JSON" "$rules_admin_key" "client:${DROOLS_WORKBENCH_CLIENT_ID}:analyst")"
-      GITHUB_ROLE_MAP_JSON="$(append_role_map_entry "$GITHUB_ROLE_MAP_JSON" "$rules_admin_key" "client:${DROOLS_WORKBENCH_CLIENT_ID}:developer")"
-      GITHUB_ROLE_MAP_JSON="$(append_role_map_entry "$GITHUB_ROLE_MAP_JSON" "$rules_admin_key" "client:${DROOLS_WORKBENCH_CLIENT_ID}:user")"
-      GITHUB_ROLE_MAP_JSON="$(append_role_map_entry "$GITHUB_ROLE_MAP_JSON" "$rules_admin_key" "client:${DROOLS_WORKBENCH_CLIENT_ID}:manager")"
-      GITHUB_ROLE_MAP_JSON="$(append_role_map_entry "$GITHUB_ROLE_MAP_JSON" "$rules_admin_key" "client:${DROOLS_WORKBENCH_CLIENT_ID}:process-admin")"
-      GITHUB_ROLE_MAP_JSON="$(append_role_map_entry "$GITHUB_ROLE_MAP_JSON" "$rules_admin_key" "client:${DROOLS_WORKBENCH_CLIENT_ID}:rest-all")"
-      GITHUB_ROLE_MAP_JSON="$(append_role_map_entry "$GITHUB_ROLE_MAP_JSON" "$rules_admin_key" "client:${DROOLS_WORKBENCH_CLIENT_ID}:rest-project")"
-    fi
-    if [ "$EXTERNAL_ADMIN_MODE" = "group" ] && [ -n "${EXTERNAL_ADMIN_GROUP:-}" ]; then
-      GOOGLE_GROUP_ROLE_MAP_JSON="$(append_role_map_entry "$GOOGLE_GROUP_ROLE_MAP_JSON" "$EXTERNAL_ADMIN_GROUP" "client:realm-management:realm-admin")"
-    fi
     
     ensure_configurator_client() {
       [ -n "${CONFIG_CLIENT_SECRET:-}" ] || { echo "⚠️  Missing configurator client secret (skipping client auth)"; return 1; }
@@ -655,135 +567,6 @@ data:
       fi
       fatal "Failed to ensure realm: ${realm}"
     }
-    
-    export_partial_realm() {
-      local realm="$1"
-      local outfile="$2"
-      local errfile="${outfile}.err"
-      if ! $KCADM create "realms/${realm}/partial-export" \
-        -s exportClients=true \
-        -s exportGroupsAndRoles=true \
-        -s exportUsers=true \
-        > "$outfile" 2> "$errfile"; then
-        echo "⚠️  Partial export failed for realm ${realm}: $(tail -n1 "$errfile" 2>/dev/null || true)"
-        return 1
-      fi
-      if ! grep -q '^[[:space:]]*[{[]' "$outfile"; then
-        echo "⚠️  Partial export output missing JSON for realm ${realm}"
-        if [ -s "$errfile" ]; then
-          echo "⚠️  Partial export stderr: $(tail -n1 "$errfile")"
-        fi
-        return 1
-      fi
-      return 0
-    }
-    
-    import_partial_realm() {
-      local realm="$1"
-      local infile="$2"
-      local out=""
-      out="$($KCADM create "realms/${realm}/partialImport" \
-        -s ifResourceExists=OVERWRITE -f "$infile" 2>&1 || true)"
-      if echo "$out" | grep -qiE "error|exception|failed"; then
-        echo "⚠️  Partial import failed for realm ${realm}: ${out}"
-        return 1
-      fi
-      return 0
-    }
-    
-    try_rename_realm() {
-      local from="$1"
-      local to="$2"
-      local out=""
-      out="$($KCADM update "realms/${from}" -s "realm=${to}" -s enabled=true 2>&1 || true)"
-      if [ -z "${out:-}" ]; then
-        return 0
-      fi
-      if echo "$out" | grep -qiE "error|exception|failed"; then
-        echo "⚠️  Rename realm failed (${from} -> ${to}): ${out}"
-        return 1
-      fi
-      return 0
-    }
-    
-    delete_realm() {
-      local realm="$1"
-      if ! realm_exists "$realm"; then
-        return 0
-      fi
-      $KCADM delete "realms/${realm}" >/dev/null 2>&1 || true
-      if realm_exists "$realm"; then
-        echo "⚠️  Failed to delete realm: ${realm}"
-        return 1
-      fi
-      echo "✅ Deleted realm: ${realm}"
-      return 0
-    }
-    
-    migrate_apps_realm() {
-      if [ "${MIGRATE_APPS_REALM}" != "true" ]; then
-        return 0
-      fi
-      local source="${LEGACY_EXTERNAL_REALM}"
-      local target="${EXTERNAL_REALM}"
-      if [ -z "${source:-}" ] || [ -z "${target:-}" ]; then
-        echo "⚠️  Migration skipped: missing source/target realm names."
-        return 0
-      fi
-      if [ "$source" = "$target" ]; then
-        echo "ℹ️  Legacy realm matches target (${target}); no migration needed."
-        return 0
-      fi
-      if ! realm_exists "$source"; then
-        echo "ℹ️  Legacy realm not found (${source}); skipping migration."
-        return 0
-      fi
-      if realm_exists "$target"; then
-        echo "⚠️  Both legacy (${source}) and target (${target}) realms exist; skipping migration to avoid overwrite."
-        if [ "$MIGRATE_APPS_REALM_DELETE_SOURCE" = "true" ] && [ "$MIGRATE_APPS_REALM_FORCE_DELETE" = "true" ]; then
-          delete_realm "$source" || true
-        fi
-        return 0
-      fi
-    
-      echo "🔁 Migrating realm '${source}' -> '${target}' (mode: ${MIGRATE_APPS_REALM_MODE})"
-    
-      if [ "$MIGRATE_APPS_REALM_MODE" != "export-import" ]; then
-        if try_rename_realm "$source" "$target"; then
-          if realm_exists "$target" && ! realm_exists "$source"; then
-            echo "✅ Realm renamed: ${source} -> ${target}"
-            return 0
-          fi
-        fi
-        if [ "$MIGRATE_APPS_REALM_MODE" = "rename" ]; then
-          fatal "Realm rename failed; set KEYCLOAK_MIGRATE_APPS_REALM_MODE=export-import to fallback."
-        fi
-        echo "⚠️  Realm rename failed; falling back to export/import."
-      fi
-    
-      ensure_realm "$target"
-    
-      local tmp_dir="/tmp/keycloak-migrations"
-      local export_file=""
-      mkdir -p "$tmp_dir"
-      export_file="${tmp_dir}/realm-${source}-partial-export.json"
-    
-      if ! export_partial_realm "$source" "$export_file"; then
-        fatal "Partial export failed for realm '${source}'"
-      fi
-    
-      if ! import_partial_realm "$target" "$export_file"; then
-        fatal "Partial import failed for realm '${target}'"
-      fi
-    
-      echo "✅ Partial export/import completed for '${source}' -> '${target}'"
-    
-      if [ "$MIGRATE_APPS_REALM_DELETE_SOURCE" = "true" ]; then
-        delete_realm "$source" || true
-      fi
-    }
-    
-    migrate_apps_realm
     
     ensure_realm "${INTERNAL_REALM}"
     ensure_realm "${EXTERNAL_REALM}"
@@ -2079,106 +1862,6 @@ data:
     ensure_default_role_member "$EXTERNAL_REALM" "drools_access"
     ensure_default_role_member "$EXTERNAL_REALM" "platform_batch_ui_user"
     
-    ensure_roles_from_map() {
-      local realm="$1"
-      local json="$2"
-      local spec_count=0
-      if [ -z "${json:-}" ]; then
-        return 0
-      fi
-      local specs
-      specs=$(printf '%s' "$json" | tr -d '\n' | grep -o '"\\(realm\\|client\\):[^"]*"' | tr -d '"' || true)
-      if [ -z "${specs:-}" ]; then
-        return 0
-      fi
-      while read -r spec; do
-        [ -z "${spec:-}" ] && continue
-        spec_count=$((spec_count + 1))
-        log_progress "role-map spec ${spec_count} (${realm}): ${spec}"
-        case "$spec" in
-          realm:*)
-            role="${spec#realm:}"
-            [ -z "${role:-}" ] && continue
-            $KCADM get "roles/$role" -r "$realm" >/dev/null 2>&1 || \
-              $KCADM create roles -r "$realm" -s "name=$role" || true
-            ;;
-          client:*)
-            rest="${spec#client:}"
-            cid="${rest%%:*}"
-            role="${rest#*:}"
-          if [ -z "${cid:-}" ] || [ -z "${role:-}" ] || [ "$cid" = "$role" ]; then
-            continue
-          fi
-          CLIENT_UUID="$(client_uuid "$realm" "$cid")"
-          if [ -n "${CLIENT_UUID:-}" ]; then
-            $KCADM get "clients/$CLIENT_UUID/roles/$role" -r "$realm" >/dev/null 2>&1 || \
-              $KCADM create "clients/$CLIENT_UUID/roles" -r "$realm" -s "name=$role" || true
-            else
-              echo "info: client not found for role spec: $spec"
-            fi
-            ;;
-        esac
-      done <<<"$specs"
-    }
-    
-    ensure_google_group_role_composites_from_map() {
-      local realm="$1"
-      local json="$2"
-      local group_count=0
-      if [ -z "${json:-}" ]; then
-        return 0
-      fi
-      local entries
-      entries="$(printf '%s' "$json" | tr -d '\n' | grep -o '"[^"]*"[[:space:]]*:[[:space:]]*\[[^]]*\]' || true)"
-      if [ -z "${entries:-}" ]; then
-        return 0
-      fi
-      while IFS= read -r entry; do
-        [ -z "${entry:-}" ] && continue
-        local group_key=""
-        local group_slug=""
-        local group_role=""
-        local specs=""
-        group_key="$(printf '%s' "$entry" | sed -n 's/^"\([^"]*\)".*/\1/p')"
-        [ -z "${group_key:-}" ] && continue
-        group_slug="$(printf '%s' "$group_key" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9]/-/g; s/-\{2,\}/-/g; s/^-//; s/-$//')"
-        [ -z "${group_slug:-}" ] && continue
-        group_role="ggl:${group_slug}"
-        group_count=$((group_count + 1))
-        log_progress "google-group composite map ${group_count}: ${group_role}"
-        if ! $KCADM get "roles/$group_role" -r "$realm" >/dev/null 2>&1; then
-          log_progress "google-group role missing, skipping composites: ${group_role}"
-          continue
-        fi
-        specs="$(printf '%s' "$entry" | grep -o '"\\(realm\\|client\\):[^"]*"' | tr -d '"' || true)"
-        [ -z "${specs:-}" ] && continue
-        while read -r spec; do
-          [ -z "${spec:-}" ] && continue
-          case "$spec" in
-            realm:*)
-              role="${spec#realm:}"
-              [ -z "${role:-}" ] && continue
-              $KCADM add-roles -r "$realm" --rname "$group_role" --rolename "$role" >/dev/null 2>&1 || true
-              ;;
-            client:*)
-              rest="${spec#client:}"
-              cid="${rest%%:*}"
-              role="${rest#*:}"
-              if [ -z "${cid:-}" ] || [ -z "${role:-}" ] || [ "$cid" = "$role" ]; then
-                continue
-              fi
-              $KCADM add-roles -r "$realm" --rname "$group_role" --cclientid "$cid" --rolename "$role" >/dev/null 2>&1 || true
-              ;;
-          esac
-        done <<<"$specs"
-      done <<<"$entries"
-    }
-    
-    log_progress "Applying role maps..."
-    ensure_roles_from_map "$INTERNAL_REALM" "$GITHUB_ROLE_MAP_JSON"
-    ensure_roles_from_map "$EXTERNAL_REALM" "$GOOGLE_GROUP_ROLE_MAP_JSON"
-    ensure_google_group_role_composites_from_map "$EXTERNAL_REALM" "$GOOGLE_GROUP_ROLE_MAP_JSON"
-    
     ensure_client_roles() {
       local realm="$1"
       local clientId="$2"
@@ -3188,9 +2871,6 @@ spec:
         vault.hashicorp.com/agent-inject-secret-keycloak-admin-team: "secret/data/keycloak-admin-team"
         vault.hashicorp.com/agent-inject-template-keycloak-admin-team: |
           {{- with secret "secret/data/keycloak-admin-team" -}}{{ .Data.data.value }}{{- end -}}
-        vault.hashicorp.com/agent-inject-secret-github-role-map: "secret/data/keycloak-github-role-map"
-        vault.hashicorp.com/agent-inject-template-github-role-map: |
-          {{- with secret "secret/data/keycloak-github-role-map" -}}{{ .Data.data.value }}{{- end -}}
         # Google OIDC + Groups (Cloud Identity)
         vault.hashicorp.com/agent-inject-secret-google-client-id: "secret/data/keycloak-google-client-id"
         vault.hashicorp.com/agent-inject-template-google-client-id: |
@@ -3207,9 +2887,6 @@ spec:
         vault.hashicorp.com/agent-inject-secret-google-sa-json: "secret/data/keycloak-google-sa-json"
         vault.hashicorp.com/agent-inject-template-google-sa-json: |
           {{- with secret "secret/data/keycloak-google-sa-json" -}}{{ .Data.data.value }}{{- end -}}
-        vault.hashicorp.com/agent-inject-secret-google-group-role-map: "secret/data/keycloak-google-group-role-map"
-        vault.hashicorp.com/agent-inject-template-google-group-role-map: |
-          {{- with secret "secret/data/keycloak-google-group-role-map" -}}{{ .Data.data.value }}{{- end -}}
         vault.hashicorp.com/agent-inject-secret-keycloak-configurator-client-secret: "secret/data/keycloak-configurator-client-secret"
         vault.hashicorp.com/agent-inject-template-keycloak-configurator-client-secret: |
           {{- with secret "secret/data/keycloak-configurator-client-secret" -}}{{ .Data.data.value }}{{- end -}}
@@ -3318,7 +2995,7 @@ spec:
       containers:
         # --- One-time configuration sidecar (IdPs + flows + attach providers) ---
         - name: keycloak-configurator
-          image: ghcr.io/dotcomrow/keycloak-image:sha-9bf29aa
+          image: ghcr.io/dotcomrow/keycloak-image:sha-81baae9
           imagePullPolicy: Always
           env:
             - name: KEYCLOAK_REALM
@@ -3327,16 +3004,6 @@ spec:
               value: "internal"
             - name: KEYCLOAK_EXTERNAL_REALM
               value: "external"
-            - name: KEYCLOAK_LEGACY_EXTERNAL_REALM
-              value: "apps"
-            - name: KEYCLOAK_MIGRATE_APPS_REALM
-              value: "true"
-            - name: KEYCLOAK_MIGRATE_APPS_REALM_MODE
-              value: "auto"
-            - name: KEYCLOAK_MIGRATE_APPS_REALM_DELETE_SOURCE
-              value: "true"
-            - name: KEYCLOAK_MIGRATE_APPS_REALM_FORCE_DELETE
-              value: "false"
             - name: KEYCLOAK_INTERNAL_REALM_ROLES
               valueFrom:
                 configMapKeyRef:
@@ -3370,8 +3037,6 @@ spec:
               value: "suncoast-account"
             - name: KEYCLOAK_EXTERNAL_ADMIN_MODE
               value: "group"
-            - name: KEYCLOAK_RULES_ADMIN_TEAM
-              value: "rules_admin"
             - name: ADMIN_GITHUB_ENABLED
               value: "false"
             - name: PROVIDER_WARN
