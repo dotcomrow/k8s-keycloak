@@ -192,6 +192,134 @@ data:
       margin: 0.3rem 0 0;
     }
 
+    #suncoast-account-roles-panel {
+      margin-bottom: 1rem;
+      padding: 0.85rem 1rem;
+      border: 1px solid #d2dbe5;
+      background: #f8fafc;
+      color: #1f2933;
+      border-radius: 6px;
+    }
+
+    #suncoast-account-roles-panel h3 {
+      margin: 0 0 0.45rem 0;
+      font-size: 1rem;
+      font-weight: 600;
+      color: #111827;
+    }
+
+    #suncoast-account-roles-panel .suncoast-roles-help {
+      margin: 0 0 0.55rem 0;
+      color: #334155;
+      font-size: 0.9rem;
+      line-height: 1.35;
+    }
+
+    #suncoast-account-roles-panel .suncoast-roles-summary {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 0.4rem;
+      margin-bottom: 0.65rem;
+    }
+
+    #suncoast-account-roles-panel .suncoast-roles-summary-item {
+      border: 1px solid #dbe5ef;
+      border-radius: 0.45rem;
+      background: #ffffff;
+      padding: 0.4rem 0.45rem;
+      min-height: 3.2rem;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+    }
+
+    #suncoast-account-roles-panel .suncoast-roles-summary-label {
+      font-size: 0.72rem;
+      color: #475569;
+      margin-bottom: 0.12rem;
+    }
+
+    #suncoast-account-roles-panel .suncoast-roles-summary-value {
+      font-size: 1rem;
+      font-weight: 700;
+      color: #0f172a;
+      line-height: 1.1;
+    }
+
+    #suncoast-account-roles-panel .suncoast-roles-list-wrapper {
+      display: grid;
+      gap: 0.5rem;
+    }
+
+    #suncoast-account-roles-panel .suncoast-roles-list-title {
+      margin: 0;
+      font-size: 0.84rem;
+      font-weight: 600;
+      color: #0f172a;
+    }
+
+    #suncoast-account-roles-panel .suncoast-roles-list {
+      margin: 0;
+      padding: 0.45rem;
+      border: 1px solid #dbe5ef;
+      border-radius: 0.45rem;
+      background: #ffffff;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.34rem;
+      max-height: 10.5rem;
+      overflow: auto;
+    }
+
+    #suncoast-account-roles-panel .suncoast-role-chip {
+      display: inline-block;
+      border: 1px solid #d0d7e2;
+      border-radius: 999px;
+      background: #f8fafc;
+      color: #111827;
+      padding: 0.14rem 0.45rem;
+      font-size: 0.72rem;
+      line-height: 1.2;
+      white-space: nowrap;
+    }
+
+    #suncoast-account-roles-panel .suncoast-roles-empty {
+      margin: 0;
+      color: #64748b;
+      font-style: italic;
+      font-size: 0.82rem;
+    }
+
+    #suncoast-account-roles-panel .suncoast-roles-tree {
+      margin: 0;
+      padding-left: 1rem;
+      display: grid;
+      gap: 0.35rem;
+      color: #1f2937;
+      font-size: 0.82rem;
+      line-height: 1.3;
+    }
+
+    #suncoast-account-roles-panel .suncoast-roles-tree li::marker {
+      color: #475569;
+    }
+
+    #suncoast-account-roles-panel .suncoast-roles-note {
+      margin: 0.3rem 0 0;
+      font-size: 0.78rem;
+      color: #475569;
+    }
+
+    #suncoast-account-roles-section {
+      scroll-margin-top: 5.5rem;
+    }
+
+    @media (max-width: 860px) {
+      #suncoast-account-roles-panel .suncoast-roles-summary {
+        grid-template-columns: 1fr;
+      }
+    }
+
     #suncoast-account-return-link {
       display: none !important;
     }
@@ -236,6 +364,15 @@ data:
       var accountProfilePromise = null;
       var idpProfileRouteKey = "";
       var idpProfileFetchStarted = false;
+      var ROLES_PANEL_ID = "suncoast-account-roles-panel";
+      var ROLES_SECTION_ANCHOR_ID = "suncoast-account-roles-section";
+      var ROLES_JUMP_LINK_ID = "suncoast-account-roles-jump-link";
+      var ROLES_LOADING_TEXT = "Loading role mappings...";
+      var ROLES_UNAVAILABLE_TEXT = "Role details are unavailable for this account.";
+      var ROLES_INHERITANCE_UNAVAILABLE_TEXT = "Inheritance details require role-mapping permissions.";
+      var rolesStatePromise = null;
+      var rolesRouteKey = "";
+      var rolesFetchStarted = false;
 
       function hideElement(el) {
         if (!el) {
@@ -531,6 +668,171 @@ data:
         }
       }
 
+      function normalizeString(value) {
+        if (typeof value !== "string") {
+          return "";
+        }
+        return value.trim();
+      }
+
+      function decodeBase64UrlSegment(value) {
+        if (!value || typeof value !== "string") {
+          return "";
+        }
+        var normalized = value.replace(/-/g, "+").replace(/_/g, "/");
+        while (normalized.length % 4 !== 0) {
+          normalized += "=";
+        }
+        try {
+          return atob(normalized);
+        } catch (err) {
+          return "";
+        }
+      }
+
+      function parseJwtPayload(token) {
+        if (!looksLikeJwt(token)) {
+          return {};
+        }
+        var parts = token.split(".");
+        if (parts.length !== 3) {
+          return {};
+        }
+        var decoded = decodeBase64UrlSegment(parts[1]);
+        if (!decoded) {
+          return {};
+        }
+        var payload = safeJsonParse(decoded);
+        if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+          return {};
+        }
+        return payload;
+      }
+
+      function makeRoleKey(scope, clientId, roleName) {
+        var normalizedScope = normalizeString(scope).toLowerCase();
+        var normalizedClient = normalizeString(clientId).toLowerCase();
+        var normalizedRole = normalizeString(roleName).toLowerCase();
+        return normalizedScope + "|" + normalizedClient + "|" + normalizedRole;
+      }
+
+      function addRoleEntry(map, scope, clientId, roleName, options) {
+        if (!map || typeof map !== "object") {
+          return;
+        }
+        var normalizedScope = normalizeString(scope).toLowerCase();
+        var normalizedRole = normalizeString(roleName);
+        if (!normalizedScope || !normalizedRole) {
+          return;
+        }
+        var normalizedClientId = normalizedScope === "client" ? normalizeString(clientId) : "";
+        if (normalizedScope === "client" && !normalizedClientId) {
+          return;
+        }
+        var key = makeRoleKey(normalizedScope, normalizedClientId, normalizedRole);
+        if (!Object.prototype.hasOwnProperty.call(map, key)) {
+          map[key] = {
+            key: key,
+            scope: normalizedScope,
+            clientId: normalizedClientId,
+            role: normalizedRole,
+            composite: false,
+            inherited: false
+          };
+        }
+        if (options && typeof options === "object") {
+          if (options.composite === true) {
+            map[key].composite = true;
+          }
+          if (options.inherited === true) {
+            map[key].inherited = true;
+          }
+        }
+      }
+
+      function roleDisplayName(roleEntry) {
+        if (!roleEntry || typeof roleEntry !== "object") {
+          return "";
+        }
+        if (roleEntry.scope === "client") {
+          return roleEntry.clientId + ":" + roleEntry.role;
+        }
+        return roleEntry.role;
+      }
+
+      function sortRoleEntries(left, right) {
+        var leftName = roleDisplayName(left).toLowerCase();
+        var rightName = roleDisplayName(right).toLowerCase();
+        if (leftName < rightName) {
+          return -1;
+        }
+        if (leftName > rightName) {
+          return 1;
+        }
+        return 0;
+      }
+
+      function roleEntriesFromMap(map) {
+        if (!map || typeof map !== "object") {
+          return [];
+        }
+        var entries = [];
+        Object.keys(map).forEach(function (key) {
+          if (Object.prototype.hasOwnProperty.call(map, key)) {
+            entries.push(map[key]);
+          }
+        });
+        entries.sort(sortRoleEntries);
+        return entries;
+      }
+
+      function collectEffectiveRolesFromToken(token) {
+        var payload = parseJwtPayload(token);
+        var map = {};
+
+        function addRealmRoles(value) {
+          if (!Array.isArray(value)) {
+            return;
+          }
+          value.forEach(function (roleName) {
+            addRoleEntry(map, "realm", "", roleName, { inherited: true });
+          });
+        }
+
+        addRealmRoles(payload.roles);
+        if (
+          payload.realm_access &&
+          typeof payload.realm_access === "object" &&
+          !Array.isArray(payload.realm_access)
+        ) {
+          addRealmRoles(payload.realm_access.roles);
+        }
+        if (
+          payload.resource_access &&
+          typeof payload.resource_access === "object" &&
+          !Array.isArray(payload.resource_access)
+        ) {
+          Object.keys(payload.resource_access).forEach(function (clientId) {
+            var clientValue = payload.resource_access[clientId];
+            if (!clientValue || typeof clientValue !== "object" || Array.isArray(clientValue)) {
+              return;
+            }
+            if (!Array.isArray(clientValue.roles)) {
+              return;
+            }
+            clientValue.roles.forEach(function (roleName) {
+              addRoleEntry(map, "client", clientId, roleName, { inherited: true });
+            });
+          });
+        }
+
+        return {
+          payload: payload,
+          roles: roleEntriesFromMap(map),
+          roleMap: map
+        };
+      }
+
       function findAccountAccessToken() {
         var stores = [window.sessionStorage, window.localStorage];
         for (var s = 0; s < stores.length; s += 1) {
@@ -590,6 +892,189 @@ data:
           }
           return response.json();
         });
+      }
+
+      function requestJson(endpoint, token) {
+        var headers = {
+          Accept: "application/json"
+        };
+        if (token) {
+          headers.Authorization = "Bearer " + token;
+        }
+        return fetch(endpoint, {
+          method: "GET",
+          credentials: "include",
+          headers: headers
+        }).then(function (response) {
+          if (!response.ok) {
+            throw new Error("HTTP " + response.status);
+          }
+          return response.json();
+        });
+      }
+
+      function parseDirectRolesFromMappings(mappingsResponse) {
+        var directRoles = [];
+        if (!mappingsResponse || typeof mappingsResponse !== "object") {
+          return directRoles;
+        }
+
+        var realmMappings = Array.isArray(mappingsResponse.realmMappings)
+          ? mappingsResponse.realmMappings
+          : [];
+        realmMappings.forEach(function (entry) {
+          var roleName = normalizeString(entry && entry.name);
+          if (!roleName) {
+            return;
+          }
+          directRoles.push({
+            scope: "realm",
+            clientId: "",
+            clientUuid: "",
+            role: roleName,
+            composite: Boolean(entry && entry.composite)
+          });
+        });
+
+        var clientMappings =
+          mappingsResponse.clientMappings &&
+          typeof mappingsResponse.clientMappings === "object" &&
+          !Array.isArray(mappingsResponse.clientMappings)
+            ? mappingsResponse.clientMappings
+            : {};
+        Object.keys(clientMappings).forEach(function (key) {
+          var clientEntry = clientMappings[key];
+          if (!clientEntry || typeof clientEntry !== "object" || Array.isArray(clientEntry)) {
+            return;
+          }
+          var clientId = normalizeString(clientEntry.client) || normalizeString(key);
+          var clientUuid = normalizeString(clientEntry.id);
+          var mappings = Array.isArray(clientEntry.mappings) ? clientEntry.mappings : [];
+          mappings.forEach(function (mappingRole) {
+            var roleName = normalizeString(mappingRole && mappingRole.name);
+            if (!roleName || !clientId) {
+              return;
+            }
+            directRoles.push({
+              scope: "client",
+              clientId: clientId,
+              clientUuid: clientUuid,
+              role: roleName,
+              composite: Boolean(mappingRole && mappingRole.composite)
+            });
+          });
+        });
+
+        return directRoles;
+      }
+
+      function fetchCompositeChildrenForRole(realm, token, roleEntry, clientIdLookup) {
+        if (!roleEntry || !roleEntry.composite) {
+          return Promise.resolve([]);
+        }
+        var realmName = normalizeString(realm);
+        if (!realmName) {
+          return Promise.resolve([]);
+        }
+
+        var baseAdmin = window.location.origin + "/admin/realms/" + encodeURIComponent(realmName);
+        var endpoint = "";
+        if (roleEntry.scope === "realm") {
+          endpoint =
+            baseAdmin + "/roles/" + encodeURIComponent(roleEntry.role) + "/composites?briefRepresentation=true";
+        } else if (roleEntry.scope === "client" && roleEntry.clientUuid) {
+          endpoint =
+            baseAdmin +
+            "/clients/" +
+            encodeURIComponent(roleEntry.clientUuid) +
+            "/roles/" +
+            encodeURIComponent(roleEntry.role) +
+            "/composites?briefRepresentation=true";
+        } else {
+          return Promise.resolve([]);
+        }
+
+        return requestJson(endpoint, token)
+          .then(function (composites) {
+            if (!Array.isArray(composites)) {
+              return [];
+            }
+            return composites
+              .map(function (entry) {
+                if (!entry || typeof entry !== "object") {
+                  return null;
+                }
+                var roleName = normalizeString(entry.name);
+                if (!roleName) {
+                  return null;
+                }
+                if (entry.clientRole) {
+                  var compositeContainerId = normalizeString(entry.containerId);
+                  var compositeClientId =
+                    (clientIdLookup &&
+                      Object.prototype.hasOwnProperty.call(clientIdLookup, compositeContainerId) &&
+                      normalizeString(clientIdLookup[compositeContainerId])) ||
+                    compositeContainerId;
+                  return {
+                    scope: "client",
+                    clientId: compositeClientId,
+                    role: roleName
+                  };
+                }
+                return {
+                  scope: "realm",
+                  clientId: "",
+                  role: roleName
+                };
+              })
+              .filter(Boolean);
+          })
+          .catch(function () {
+            return [];
+          });
+      }
+
+      function buildCompositeTree(realm, token, directRoles) {
+        if (!Array.isArray(directRoles) || !directRoles.length) {
+          return Promise.resolve({ available: false, edges: [] });
+        }
+
+        var directCompositeRoles = directRoles.filter(function (roleEntry) {
+          return Boolean(roleEntry && roleEntry.composite);
+        });
+        if (!directCompositeRoles.length) {
+          return Promise.resolve({ available: true, edges: [] });
+        }
+
+        var clientIdLookup = {};
+        directRoles.forEach(function (roleEntry) {
+          if (!roleEntry || roleEntry.scope !== "client") {
+            return;
+          }
+          var roleClientUuid = normalizeString(roleEntry.clientUuid);
+          var roleClientId = normalizeString(roleEntry.clientId);
+          if (!roleClientUuid || !roleClientId) {
+            return;
+          }
+          clientIdLookup[roleClientUuid] = roleClientId;
+        });
+
+        var requests = directCompositeRoles.map(function (roleEntry) {
+          return fetchCompositeChildrenForRole(realm, token, roleEntry, clientIdLookup).then(function (children) {
+            return {
+              parent: roleEntry,
+              children: children
+            };
+          });
+        });
+
+        return Promise.all(requests)
+          .then(function (edges) {
+            return { available: true, edges: edges };
+          })
+          .catch(function () {
+            return { available: false, edges: [] };
+          });
       }
 
       function fetchAccountProfile() {
@@ -756,6 +1241,383 @@ data:
         }
       }
 
+      function findRolesJumpTarget() {
+        var panel = document.getElementById(ROLES_PANEL_ID);
+        if (!panel) {
+          return null;
+        }
+        var anchor = panel.querySelector("#" + ROLES_SECTION_ANCHOR_ID);
+        return anchor || panel;
+      }
+
+      function ensureRolesJumpLink() {
+        if (!isPersonalInfoPage()) {
+          var existing = document.getElementById(ROLES_JUMP_LINK_ID);
+          if (existing && existing.parentElement) {
+            existing.parentElement.removeChild(existing);
+          }
+          return;
+        }
+
+        var target = findRolesJumpTarget();
+        if (!target) {
+          return;
+        }
+
+        var existingLink = document.getElementById(ROLES_JUMP_LINK_ID);
+        if (existingLink) {
+          existingLink.setAttribute("href", "#" + ROLES_SECTION_ANCHOR_ID);
+          return;
+        }
+
+        var jumpLists = [
+          "[data-testid='jump-to-section'] ul",
+          "[data-testid='jumpToSection'] ul",
+          "nav[aria-label='Jump to section'] ul",
+          "[aria-label='Jump to section'] ul"
+        ];
+        var list = null;
+        for (var i = 0; i < jumpLists.length; i += 1) {
+          list = document.querySelector(jumpLists[i]);
+          if (list) {
+            break;
+          }
+        }
+        if (!list) {
+          return;
+        }
+
+        var listItem = document.createElement("li");
+        var link = document.createElement("a");
+        link.id = ROLES_JUMP_LINK_ID;
+        link.href = "#" + ROLES_SECTION_ANCHOR_ID;
+        link.textContent = "Roles";
+        listItem.appendChild(link);
+        list.appendChild(listItem);
+      }
+
+      function renderRoleList(container, roles, emptyText) {
+        if (!container) {
+          return;
+        }
+        container.replaceChildren();
+        if (!Array.isArray(roles) || roles.length === 0) {
+          var empty = document.createElement("p");
+          empty.className = "suncoast-roles-empty";
+          empty.textContent = emptyText;
+          container.appendChild(empty);
+          return;
+        }
+        roles.forEach(function (entry) {
+          var chip = document.createElement("span");
+          chip.className = "suncoast-role-chip";
+          chip.textContent = roleDisplayName(entry);
+          container.appendChild(chip);
+        });
+      }
+
+      function renderCompositeTree(container, compositeTree) {
+        if (!container) {
+          return;
+        }
+        container.replaceChildren();
+        if (
+          !compositeTree ||
+          typeof compositeTree !== "object" ||
+          !Array.isArray(compositeTree.edges) ||
+          compositeTree.edges.length === 0
+        ) {
+          var none = document.createElement("p");
+          none.className = "suncoast-roles-empty";
+          none.textContent = "No composite role expansion detected.";
+          container.appendChild(none);
+          return;
+        }
+
+        var list = document.createElement("ul");
+        list.className = "suncoast-roles-tree";
+        compositeTree.edges.forEach(function (edge) {
+          if (!edge || !edge.parent) {
+            return;
+          }
+          var item = document.createElement("li");
+          var children = Array.isArray(edge.children) ? edge.children : [];
+          if (!children.length) {
+            item.textContent = roleDisplayName(edge.parent) + " → (no child roles)";
+            list.appendChild(item);
+            return;
+          }
+          var childNames = children
+            .map(function (child) {
+              return roleDisplayName(child);
+            })
+            .filter(Boolean)
+            .sort();
+          item.textContent = roleDisplayName(edge.parent) + " → " + childNames.join(", ");
+          list.appendChild(item);
+        });
+        if (!list.children.length) {
+          var fallback = document.createElement("p");
+          fallback.className = "suncoast-roles-empty";
+          fallback.textContent = "No composite role expansion detected.";
+          container.appendChild(fallback);
+          return;
+        }
+        container.appendChild(list);
+      }
+
+      function renderRolesPanel(state) {
+        if (!isPersonalInfoPage()) {
+          var existing = document.getElementById(ROLES_PANEL_ID);
+          if (existing && existing.parentElement) {
+            existing.parentElement.removeChild(existing);
+          }
+          return;
+        }
+        var container = findPersonalInfoContainer();
+        if (!container) {
+          return;
+        }
+        var note = document.getElementById(NOTE_ID);
+        var anchor = findPersonalInfoInsertAnchor(container);
+        var parent = container;
+        if (anchor && anchor.parentElement && anchor.parentElement !== container) {
+          parent = anchor.parentElement;
+        }
+
+        var panel = document.getElementById(ROLES_PANEL_ID) || document.createElement("section");
+        panel.id = ROLES_PANEL_ID;
+        panel.replaceChildren();
+
+        var titleAnchor = document.createElement("span");
+        titleAnchor.id = ROLES_SECTION_ANCHOR_ID;
+        panel.appendChild(titleAnchor);
+
+        var title = document.createElement("h3");
+        title.textContent = "Roles";
+        panel.appendChild(title);
+
+        var helpText = document.createElement("p");
+        helpText.className = "suncoast-roles-help";
+        helpText.textContent =
+          "Roles are derived from current identity-provider memberships and Keycloak composite mappings.";
+        panel.appendChild(helpText);
+
+        if (!state || state.status === "loading") {
+          var loading = document.createElement("p");
+          loading.className = "suncoast-roles-empty";
+          loading.textContent = ROLES_LOADING_TEXT;
+          panel.appendChild(loading);
+        } else {
+          var summary = document.createElement("div");
+          summary.className = "suncoast-roles-summary";
+
+          function appendSummary(label, value) {
+            var card = document.createElement("div");
+            card.className = "suncoast-roles-summary-item";
+            var cardLabel = document.createElement("span");
+            cardLabel.className = "suncoast-roles-summary-label";
+            cardLabel.textContent = label;
+            var cardValue = document.createElement("span");
+            cardValue.className = "suncoast-roles-summary-value";
+            cardValue.textContent = String(value);
+            card.appendChild(cardLabel);
+            card.appendChild(cardValue);
+            summary.appendChild(card);
+          }
+
+          appendSummary("Effective roles", state.effectiveRoles.length);
+          appendSummary("Direct roles", state.directRoles.length);
+          appendSummary("Inherited roles", state.inheritedRoles.length);
+          panel.appendChild(summary);
+
+          var directWrap = document.createElement("div");
+          directWrap.className = "suncoast-roles-list-wrapper";
+          var directTitle = document.createElement("p");
+          directTitle.className = "suncoast-roles-list-title";
+          directTitle.textContent = "Direct mappings";
+          var directList = document.createElement("div");
+          directList.className = "suncoast-roles-list";
+          renderRoleList(directList, state.directRoles, "No direct role mappings found.");
+          directWrap.appendChild(directTitle);
+          directWrap.appendChild(directList);
+          panel.appendChild(directWrap);
+
+          var inheritedWrap = document.createElement("div");
+          inheritedWrap.className = "suncoast-roles-list-wrapper";
+          var inheritedTitle = document.createElement("p");
+          inheritedTitle.className = "suncoast-roles-list-title";
+          inheritedTitle.textContent = "Inherited/effective-only roles";
+          var inheritedList = document.createElement("div");
+          inheritedList.className = "suncoast-roles-list";
+          renderRoleList(
+            inheritedList,
+            state.inheritedRoles,
+            "No inherited roles detected beyond direct mappings."
+          );
+          inheritedWrap.appendChild(inheritedTitle);
+          inheritedWrap.appendChild(inheritedList);
+          panel.appendChild(inheritedWrap);
+
+          var treeWrap = document.createElement("div");
+          treeWrap.className = "suncoast-roles-list-wrapper";
+          var treeTitle = document.createElement("p");
+          treeTitle.className = "suncoast-roles-list-title";
+          treeTitle.textContent = "Composite inheritance";
+          var treeBody = document.createElement("div");
+          renderCompositeTree(treeBody, state.compositeTree);
+          treeWrap.appendChild(treeTitle);
+          treeWrap.appendChild(treeBody);
+          panel.appendChild(treeWrap);
+
+          if (!state.directMappingsAvailable) {
+            var unavailable = document.createElement("p");
+            unavailable.className = "suncoast-roles-note";
+            unavailable.textContent = ROLES_INHERITANCE_UNAVAILABLE_TEXT;
+            panel.appendChild(unavailable);
+          } else if (!state.compositeTree.available) {
+            var compositeUnavailable = document.createElement("p");
+            compositeUnavailable.className = "suncoast-roles-note";
+            compositeUnavailable.textContent = ROLES_UNAVAILABLE_TEXT;
+            panel.appendChild(compositeUnavailable);
+          }
+        }
+
+        if (!panel.parentElement) {
+          if (note && note.parentElement === parent && note.nextSibling) {
+            parent.insertBefore(panel, note.nextSibling);
+          } else {
+            parent.insertBefore(panel, anchor || null);
+          }
+        }
+        ensureRolesJumpLink();
+      }
+
+      function fetchRolesState() {
+        if (rolesStatePromise) {
+          return rolesStatePromise;
+        }
+
+        var token = findAccountAccessToken();
+        if (!token) {
+          rolesStatePromise = Promise.resolve({
+            status: "unavailable",
+            directMappingsAvailable: false,
+            effectiveRoles: [],
+            directRoles: [],
+            inheritedRoles: [],
+            compositeTree: { available: false, edges: [] }
+          });
+          return rolesStatePromise;
+        }
+
+        var effectiveState = collectEffectiveRolesFromToken(token);
+        var effectiveRoles = effectiveState.roles;
+        var directRoleMap = {};
+        var directRoles = [];
+        var inheritedRoles = [];
+        var realm = getRealmFromPath();
+        var userId = normalizeString(effectiveState.payload.sub);
+
+        if (!realm || !userId) {
+          rolesStatePromise = Promise.resolve({
+            status: "ready",
+            directMappingsAvailable: false,
+            effectiveRoles: effectiveRoles,
+            directRoles: [],
+            inheritedRoles: effectiveRoles,
+            compositeTree: { available: false, edges: [] }
+          });
+          return rolesStatePromise;
+        }
+
+        var mappingsEndpoint =
+          window.location.origin +
+          "/admin/realms/" +
+          encodeURIComponent(realm) +
+          "/users/" +
+          encodeURIComponent(userId) +
+          "/role-mappings";
+
+        rolesStatePromise = requestJson(mappingsEndpoint, token)
+          .then(function (mappingsResponse) {
+            var directRaw = parseDirectRolesFromMappings(mappingsResponse);
+            directRaw.forEach(function (entry) {
+              addRoleEntry(directRoleMap, entry.scope, entry.clientId, entry.role, {
+                composite: entry.composite
+              });
+            });
+            directRoles = roleEntriesFromMap(directRoleMap);
+
+            effectiveRoles.forEach(function (entry) {
+              if (!Object.prototype.hasOwnProperty.call(directRoleMap, entry.key)) {
+                inheritedRoles.push(entry);
+              }
+            });
+
+            return buildCompositeTree(realm, token, directRaw).then(function (compositeTree) {
+              return {
+                status: "ready",
+                directMappingsAvailable: true,
+                effectiveRoles: effectiveRoles,
+                directRoles: directRoles,
+                inheritedRoles: inheritedRoles,
+                compositeTree: compositeTree
+              };
+            });
+          })
+          .catch(function () {
+            return {
+              status: "ready",
+              directMappingsAvailable: false,
+              effectiveRoles: effectiveRoles,
+              directRoles: [],
+              inheritedRoles: effectiveRoles,
+              compositeTree: { available: false, edges: [] }
+            };
+          });
+
+        return rolesStatePromise;
+      }
+
+      function ensureRolesPanel() {
+        if (!isPersonalInfoPage()) {
+          var existingPanel = document.getElementById(ROLES_PANEL_ID);
+          if (existingPanel && existingPanel.parentElement) {
+            existingPanel.parentElement.removeChild(existingPanel);
+          }
+          return;
+        }
+
+        var routeKey = currentRouteKey();
+        if (rolesRouteKey !== routeKey) {
+          rolesRouteKey = routeKey;
+          rolesFetchStarted = false;
+          rolesStatePromise = null;
+        }
+
+        renderRolesPanel({ status: "loading" });
+        if (rolesFetchStarted) {
+          return;
+        }
+        rolesFetchStarted = true;
+
+        fetchRolesState()
+          .then(function (state) {
+            renderRolesPanel(state);
+          })
+          .catch(function () {
+            renderRolesPanel({
+              status: "unavailable",
+              directMappingsAvailable: false,
+              effectiveRoles: [],
+              directRoles: [],
+              inheritedRoles: [],
+              compositeTree: { available: false, edges: [] }
+            });
+          });
+      }
+
       function ensureIdpProfilePanel() {
         // Disabled intentionally: account-console self-fetch can cause load stalls
         // and retry loops under some auth/cookie states.
@@ -842,6 +1704,7 @@ data:
         hideDeviceSignOutControls();
         lockPersonalInfoFields();
         addReadonlyNote();
+        ensureRolesPanel();
         ensureIdpProfilePanel();
       }
 
