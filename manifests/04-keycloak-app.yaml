@@ -476,23 +476,136 @@ data:
       }
 
       function findPersonalInfoContainer() {
+        var root =
+          document.querySelector("[role='main']") ||
+          document.querySelector("main") ||
+          document.body;
+        if (!root) {
+          return null;
+        }
+
+        var candidates = [];
+
+        function addCandidate(node) {
+          if (!node) {
+            return;
+          }
+          if (candidates.indexOf(node) !== -1) {
+            return;
+          }
+          candidates.push(node);
+        }
+
         var selectors = [
           "[data-testid='personal-info-form']",
           "[data-testid='personal-info']",
           "[data-testid='personalInfo']",
           "[data-testid='page-user-profile']",
           "[data-testid='user-profile']",
-          "main form[data-testid='personal-info-form']",
-          "main [data-testid='personal-info'] form",
-          "main .pf-v5-c-page__main-section",
-          "main form"
+          "form[data-testid='personal-info-form']",
+          "[data-testid='personal-info'] form",
+          "form"
         ];
         for (var i = 0; i < selectors.length; i += 1) {
-          var container = document.querySelector(selectors[i]);
-          if (container) {
-            return container;
+          var matches = root.querySelectorAll(selectors[i]);
+          for (var m = 0; m < matches.length; m += 1) {
+            addCandidate(matches[m]);
           }
         }
+
+        function hasAnyField(node, selectorsList) {
+          if (!node) {
+            return false;
+          }
+          for (var idx = 0; idx < selectorsList.length; idx += 1) {
+            if (node.querySelector(selectorsList[idx])) {
+              return true;
+            }
+          }
+          return false;
+        }
+
+        function scoreCandidate(node) {
+          if (!node || typeof node.querySelector !== "function") {
+            return 0;
+          }
+          var score = 0;
+          if (node.matches && node.matches("form")) {
+            score += 2;
+          }
+          if (
+            hasAnyField(node, [
+              "input[name='username']",
+              "input[id='username']",
+              "input[id*='username']",
+              "input[name='preferred_username']",
+              "input[id*='preferred']"
+            ])
+          ) {
+            score += 4;
+          }
+          if (
+            hasAnyField(node, [
+              "input[name='email']",
+              "input[id='email']",
+              "input[id*='email']"
+            ])
+          ) {
+            score += 4;
+          }
+          if (
+            hasAnyField(node, [
+              "input[name='firstName']",
+              "input[id*='first']",
+              "input[name='given_name']"
+            ])
+          ) {
+            score += 2;
+          }
+          if (
+            hasAnyField(node, [
+              "input[name='lastName']",
+              "input[id*='last']",
+              "input[name='family_name']"
+            ])
+          ) {
+            score += 2;
+          }
+          if (
+            hasAnyField(node, [
+              "select[name='locale']",
+              "input[name='locale']"
+            ])
+          ) {
+            score += 1;
+          }
+          var text = (node.textContent || "").toLowerCase();
+          if (text.indexOf("personal info") !== -1 || text.indexOf("personal information") !== -1) {
+            score += 1;
+          }
+          return score;
+        }
+
+        var best = null;
+        var bestScore = 0;
+        for (var c = 0; c < candidates.length; c += 1) {
+          var candidate = candidates[c];
+          var score = scoreCandidate(candidate);
+          if (score > bestScore) {
+            best = candidate;
+            bestScore = score;
+          }
+        }
+
+        if (best) {
+          return best;
+        }
+
+        var existingPanel = document.getElementById(ROLES_PANEL_ID);
+        if (existingPanel && existingPanel.parentElement) {
+          return existingPanel.parentElement;
+        }
+
         return null;
       }
 
@@ -861,7 +974,143 @@ data:
         };
       }
 
+      function collectTokenCandidatesFromValue(value, sink, depth) {
+        if (!sink || !Array.isArray(sink)) {
+          return;
+        }
+        if (depth > 4) {
+          return;
+        }
+        if (!value) {
+          return;
+        }
+        if (typeof value === "string") {
+          var normalized = value.trim();
+          if (looksLikeJwt(normalized)) {
+            sink.push(normalized);
+          }
+          return;
+        }
+        if (Array.isArray(value)) {
+          for (var i = 0; i < value.length; i += 1) {
+            collectTokenCandidatesFromValue(value[i], sink, depth + 1);
+          }
+          return;
+        }
+        if (typeof value !== "object") {
+          return;
+        }
+
+        var knownTokenKeys = [
+          "access_token",
+          "accessToken",
+          "id_token",
+          "idToken",
+          "token",
+          "refresh_token",
+          "refreshToken"
+        ];
+        for (var k = 0; k < knownTokenKeys.length; k += 1) {
+          var knownKey = knownTokenKeys[k];
+          if (!Object.prototype.hasOwnProperty.call(value, knownKey)) {
+            continue;
+          }
+          collectTokenCandidatesFromValue(value[knownKey], sink, depth + 1);
+        }
+
+        var keys = Object.keys(value);
+        for (var idx = 0; idx < keys.length; idx += 1) {
+          var key = keys[idx];
+          collectTokenCandidatesFromValue(value[key], sink, depth + 1);
+        }
+      }
+
+      function scoreTokenCandidate(token, payload, effectiveRoles) {
+        var score = 0;
+        var rolesCount = Array.isArray(effectiveRoles) ? effectiveRoles.length : 0;
+        if (rolesCount > 0) {
+          score += rolesCount * 100;
+        }
+        if (payload && typeof payload === "object") {
+          if (
+            payload.realm_access &&
+            typeof payload.realm_access === "object" &&
+            !Array.isArray(payload.realm_access)
+          ) {
+            score += 40;
+          }
+          if (
+            payload.resource_access &&
+            typeof payload.resource_access === "object" &&
+            !Array.isArray(payload.resource_access)
+          ) {
+            score += 25;
+          }
+          var typ = normalizeString(payload.typ).toLowerCase();
+          if (typ.indexOf("bearer") !== -1 || typ.indexOf("access") !== -1) {
+            score += 10;
+          }
+          if (typ.indexOf("id") !== -1) {
+            score += 4;
+          }
+          if (typ.indexOf("refresh") !== -1) {
+            score -= 20;
+          }
+          var expRaw = payload.exp;
+          var expNumber =
+            typeof expRaw === "number"
+              ? expRaw
+              : typeof expRaw === "string"
+                ? Number(expRaw)
+                : NaN;
+          if (Number.isFinite(expNumber) && expNumber > 0) {
+            var nowSeconds = Math.floor(Date.now() / 1000);
+            if (expNumber > nowSeconds) {
+              score += 5;
+            } else {
+              score -= 50;
+            }
+          }
+          var azp = normalizeString(payload.azp).toLowerCase();
+          if (azp.indexOf("account") !== -1 || azp.indexOf("auth-gateway") !== -1) {
+            score += 4;
+          }
+          var aud = payload.aud;
+          if (typeof aud === "string") {
+            var audValue = aud.toLowerCase();
+            if (audValue.indexOf("account") !== -1 || audValue.indexOf("auth-gateway") !== -1) {
+              score += 4;
+            }
+          } else if (Array.isArray(aud)) {
+            for (var i = 0; i < aud.length; i += 1) {
+              var audEntry = normalizeString(aud[i]).toLowerCase();
+              if (audEntry.indexOf("account") !== -1 || audEntry.indexOf("auth-gateway") !== -1) {
+                score += 4;
+                break;
+              }
+            }
+          }
+        }
+        if (token && token.length > 0) {
+          score += Math.min(10, Math.floor(token.length / 150));
+        }
+        return score;
+      }
+
       function findAccountAccessToken() {
+        var candidates = [];
+
+        function addCandidatesFromRawValue(rawValue) {
+          if (!rawValue) {
+            return;
+          }
+          var localCandidates = [];
+          collectTokenCandidatesFromValue(rawValue, localCandidates, 0);
+          for (var i = 0; i < localCandidates.length; i += 1) {
+            candidates.push(localCandidates[i]);
+          }
+        }
+
         var stores = [window.sessionStorage, window.localStorage];
         for (var s = 0; s < stores.length; s += 1) {
           var store = null;
@@ -883,20 +1132,61 @@ data:
               if (!value) {
                 continue;
               }
-              if (looksLikeJwt(value)) {
-                return value;
-              }
+              addCandidatesFromRawValue(value);
               var parsed = safeJsonParse(value);
-              var token = tokenFromObject(parsed);
-              if (token) {
-                return token;
-              }
+              addCandidatesFromRawValue(parsed);
             }
           } catch (err) {
             continue;
           }
         }
-        return "";
+
+        var globalTokenSources = [
+          "__KEYCLOAK__",
+          "__keycloak__",
+          "keycloak",
+          "Keycloak",
+          "kcAuth",
+          "kcContext",
+          "__INITIAL_STATE__",
+          "__PRELOADED_STATE__"
+        ];
+        for (var g = 0; g < globalTokenSources.length; g += 1) {
+          var sourceKey = globalTokenSources[g];
+          try {
+            if (Object.prototype.hasOwnProperty.call(window, sourceKey)) {
+              addCandidatesFromRawValue(window[sourceKey]);
+            }
+          } catch (err) {
+            continue;
+          }
+        }
+
+        if (!candidates.length) {
+          return "";
+        }
+
+        var uniqueCandidates = [];
+        candidates.forEach(function (token) {
+          if (!token || uniqueCandidates.indexOf(token) !== -1) {
+            return;
+          }
+          uniqueCandidates.push(token);
+        });
+
+        var bestToken = "";
+        var bestScore = -Infinity;
+        uniqueCandidates.forEach(function (token) {
+          var payload = parseJwtPayload(token);
+          var effective = collectEffectiveRolesFromToken(token);
+          var score = scoreTokenCandidate(token, payload, effective.roles);
+          if (score > bestScore) {
+            bestScore = score;
+            bestToken = token;
+          }
+        });
+
+        return bestToken;
       }
 
       function requestAccountProfile(endpoint, token) {
@@ -1506,21 +1796,6 @@ data:
           return;
         }
         var container = findPersonalInfoContainer();
-        if (!container) {
-          var fallbackSelectors = [
-            "[role='main'] .pf-v5-c-page__main-section",
-            "main .pf-v5-c-page__main-section",
-            "[role='main']",
-            "main"
-          ];
-          for (var fallbackIndex = 0; fallbackIndex < fallbackSelectors.length; fallbackIndex += 1) {
-            var fallbackContainer = document.querySelector(fallbackSelectors[fallbackIndex]);
-            if (fallbackContainer) {
-              container = fallbackContainer;
-              break;
-            }
-          }
-        }
         if (!container) {
           return;
         }
