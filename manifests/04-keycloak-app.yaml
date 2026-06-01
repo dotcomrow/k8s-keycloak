@@ -410,7 +410,12 @@ data:
         if (!hash) {
           return true;
         }
-        return hash.indexOf("personal-info") !== -1 || hash === "#/" || hash === "#";
+        return (
+          hash.indexOf("personal-info") !== -1 ||
+          hash === "#/" ||
+          hash === "#" ||
+          hash.indexOf(ROLES_SECTION_ANCHOR_ID.toLowerCase()) !== -1
+        );
       }
 
       function hidePasswordWidgets() {
@@ -455,8 +460,12 @@ data:
         var selectors = [
           "[data-testid='personal-info-form']",
           "[data-testid='personal-info']",
+          "[data-testid='personalInfo']",
+          "[data-testid='page-user-profile']",
+          "[data-testid='user-profile']",
           "main form[data-testid='personal-info-form']",
           "main [data-testid='personal-info'] form",
+          "main .pf-v5-c-page__main-section",
           "main form"
         ];
         for (var i = 0; i < selectors.length; i += 1) {
@@ -1254,7 +1263,12 @@ data:
         if (!isPersonalInfoPage()) {
           var existing = document.getElementById(ROLES_JUMP_LINK_ID);
           if (existing && existing.parentElement) {
-            existing.parentElement.removeChild(existing);
+            var existingListItem = existing.closest("li");
+            if (existingListItem && existingListItem.parentElement) {
+              existingListItem.parentElement.removeChild(existingListItem);
+            } else {
+              existing.parentElement.removeChild(existing);
+            }
           }
           return;
         }
@@ -1266,7 +1280,17 @@ data:
 
         var existingLink = document.getElementById(ROLES_JUMP_LINK_ID);
         if (existingLink) {
-          existingLink.setAttribute("href", "#" + ROLES_SECTION_ANCHOR_ID);
+          existingLink.setAttribute("href", "#/personal-info");
+          if (existingLink.getAttribute("data-suncoast-roles-bound") !== "true") {
+            existingLink.setAttribute("data-suncoast-roles-bound", "true");
+            existingLink.addEventListener("click", function (event) {
+              event.preventDefault();
+              var targetPanel = document.getElementById(ROLES_PANEL_ID);
+              if (targetPanel && typeof targetPanel.scrollIntoView === "function") {
+                targetPanel.scrollIntoView({ behavior: "smooth", block: "start" });
+              }
+            });
+          }
           return;
         }
 
@@ -1287,11 +1311,43 @@ data:
           return;
         }
 
-        var listItem = document.createElement("li");
-        var link = document.createElement("a");
+        var templateLink = list.querySelector("a");
+        var templateListItem = templateLink ? templateLink.closest("li") : list.querySelector("li");
+        var listItem = templateListItem
+          ? templateListItem.cloneNode(true)
+          : document.createElement("li");
+        if (!templateListItem) {
+          listItem.className = "pf-v5-c-nav__item";
+        }
+        if (listItem.classList) {
+          listItem.classList.remove("pf-m-current", "active");
+        }
+        listItem.removeAttribute("aria-current");
+
+        var link = listItem.querySelector("a");
+        if (!link) {
+          link = document.createElement("a");
+          link.className = "pf-v5-c-nav__link";
+          listItem.appendChild(link);
+        }
+        if (link.classList) {
+          link.classList.remove("pf-m-current", "active");
+        }
+        link.removeAttribute("aria-current");
+
         link.id = ROLES_JUMP_LINK_ID;
-        link.href = "#" + ROLES_SECTION_ANCHOR_ID;
+        link.href = "#/personal-info";
         link.textContent = "Roles";
+        link.setAttribute("data-suncoast-roles-bound", "true");
+        link.setAttribute("aria-label", "Roles");
+        link.addEventListener("click", function (event) {
+          event.preventDefault();
+          var targetPanel = document.getElementById(ROLES_PANEL_ID);
+          if (targetPanel && typeof targetPanel.scrollIntoView === "function") {
+            targetPanel.scrollIntoView({ behavior: "smooth", block: "start" });
+          }
+        });
+
         listItem.appendChild(link);
         list.appendChild(listItem);
       }
