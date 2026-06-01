@@ -376,9 +376,13 @@ data:
       var ROLES_PANEL_ID = "suncoast-account-roles-panel";
       var ROLES_SECTION_ANCHOR_ID = "suncoast-account-roles-section";
       var ROLES_JUMP_LINK_ID = "suncoast-account-roles-jump-link";
-      var ROLES_LOADING_TEXT = "Loading role mappings...";
+      var ROLES_LOADING_TEXT = "Loading role memberships...";
       var ROLES_UNAVAILABLE_TEXT = "Role details are unavailable for this account.";
-      var ROLES_INHERITANCE_UNAVAILABLE_TEXT = "Inheritance details require role-mapping permissions.";
+      var ROLES_INHERITANCE_UNAVAILABLE_TEXT = "Composite inheritance details are unavailable.";
+      var ROLES_IDP_LOOKUP_UNAVAILABLE_TEXT =
+        "Live identity-provider membership lookup is unavailable. Displayed roles are token-derived only.";
+      var ROLES_HELP_TEXT =
+        "Roles are derived from current identity-provider memberships (team/group names) and token-derived effective roles.";
       var rolesStatePromise = null;
       var rolesRouteKey = "";
       var rolesFetchStarted = false;
@@ -927,6 +931,55 @@ data:
         return entries;
       }
 
+      function mergeRoleEntries(primaryRoles, secondaryRoles) {
+        var merged = {};
+        var mergedOrder = [];
+
+        function addEntries(entries) {
+          if (!Array.isArray(entries)) {
+            return;
+          }
+          entries.forEach(function (entry) {
+            if (!entry || typeof entry !== "object") {
+              return;
+            }
+            var key = makeRoleKey(entry.scope, entry.clientId, entry.role);
+            if (!key) {
+              return;
+            }
+            if (!Object.prototype.hasOwnProperty.call(merged, key)) {
+              merged[key] = {
+                key: key,
+                scope: entry.scope,
+                clientId: entry.clientId || "",
+                role: entry.role,
+                composite: Boolean(entry.composite),
+                inherited: Boolean(entry.inherited)
+              };
+              mergedOrder.push(key);
+              return;
+            }
+            if (entry.composite === true) {
+              merged[key].composite = true;
+            }
+            if (entry.inherited === true) {
+              merged[key].inherited = true;
+            }
+          });
+        }
+
+        addEntries(primaryRoles);
+        addEntries(secondaryRoles);
+
+        var output = mergedOrder
+          .map(function (key) {
+            return merged[key];
+          })
+          .filter(Boolean);
+        output.sort(sortRoleEntries);
+        return output;
+      }
+
       function collectEffectiveRolesFromToken(token) {
         var payload = parseJwtPayload(token);
         var map = {};
@@ -1189,6 +1242,127 @@ data:
         return bestToken;
       }
 
+      function readInputValueBySelectors(selectors) {
+        for (var i = 0; i < selectors.length; i += 1) {
+          var input = document.querySelector(selectors[i]);
+          if (!input || typeof input.value === "undefined") {
+            continue;
+          }
+          var value = normalizeString(input.value);
+          if (value) {
+            return value;
+          }
+        }
+        return "";
+      }
+
+      function readCurrentUserIdentifiers() {
+        var username = readInputValueBySelectors([
+          "input[name='username']",
+          "input[id='username']",
+          "input[name='preferred_username']",
+          "input[id*='preferred']"
+        ]);
+        var email = readInputValueBySelectors([
+          "input[name='email']",
+          "input[id='email']",
+          "input[id*='email']"
+        ]);
+        return {
+          username: username,
+          email: email
+        };
+      }
+
+      function pickBestUserIdFromAdminResults(results, identifiers) {
+        if (!Array.isArray(results) || !results.length) {
+          return "";
+        }
+        var normalizedUsername = normalizeString(identifiers && identifiers.username).toLowerCase();
+        var normalizedEmail = normalizeString(identifiers && identifiers.email).toLowerCase();
+
+        var exactMatch = "";
+        for (var i = 0; i < results.length; i += 1) {
+          var entry = results[i];
+          if (!entry || typeof entry !== "object") {
+            continue;
+          }
+          var entryId = normalizeString(entry.id);
+          if (!entryId) {
+            continue;
+          }
+          var entryUsername = normalizeString(entry.username).toLowerCase();
+          var entryEmail = normalizeString(entry.email).toLowerCase();
+          if (normalizedUsername && entryUsername && entryUsername === normalizedUsername) {
+            exactMatch = entryId;
+            break;
+          }
+          if (normalizedEmail && entryEmail && entryEmail === normalizedEmail) {
+            exactMatch = entryId;
+            break;
+          }
+        }
+        if (exactMatch) {
+          return exactMatch;
+        }
+
+        for (var j = 0; j < results.length; j += 1) {
+          var candidate = results[j];
+          if (!candidate || typeof candidate !== "object") {
+            continue;
+          }
+          var candidateId = normalizeString(candidate.id);
+          if (candidateId) {
+            return candidateId;
+          }
+        }
+        return "";
+      }
+
+      function resolveCurrentUserIdFromAdmin(realm, token, identifiers) {
+        var realmName = normalizeString(realm);
+        if (!realmName) {
+          return Promise.resolve("");
+        }
+        var username = normalizeString(identifiers && identifiers.username);
+        var email = normalizeString(identifiers && identifiers.email);
+        if (!username && !email) {
+          return Promise.resolve("");
+        }
+
+        var base = window.location.origin + "/admin/realms/" + encodeURIComponent(realmName) + "/users";
+        var queries = [];
+        if (username) {
+          queries.push(base + "?exact=true&briefRepresentation=true&max=5&username=" + encodeURIComponent(username));
+        }
+        if (email) {
+          queries.push(base + "?exact=true&briefRepresentation=true&max=5&email=" + encodeURIComponent(email));
+        }
+        if (username || email) {
+          var searchQuery = username || email;
+          queries.push(base + "?briefRepresentation=true&max=10&search=" + encodeURIComponent(searchQuery));
+        }
+
+        function tryQuery(index) {
+          if (index >= queries.length) {
+            return Promise.resolve("");
+          }
+          return requestJson(queries[index], token)
+            .then(function (results) {
+              var resolvedId = pickBestUserIdFromAdminResults(results, identifiers);
+              if (resolvedId) {
+                return resolvedId;
+              }
+              return tryQuery(index + 1);
+            })
+            .catch(function () {
+              return tryQuery(index + 1);
+            });
+        }
+
+        return tryQuery(0);
+      }
+
       function requestAccountProfile(endpoint, token) {
         var headers = {
           Accept: "application/json"
@@ -1249,6 +1423,344 @@ data:
             window.clearTimeout(timeoutHandle);
           }
           throw error;
+        });
+      }
+
+      function requestJsonExternal(endpoint, token, extraHeaders) {
+        var headers = {
+          Accept: "application/json"
+        };
+        if (token) {
+          headers.Authorization = "Bearer " + token;
+        }
+        if (extraHeaders && typeof extraHeaders === "object") {
+          Object.keys(extraHeaders).forEach(function (key) {
+            headers[key] = extraHeaders[key];
+          });
+        }
+
+        var timeoutMs = 10000;
+        var controller = null;
+        var timeoutHandle = null;
+        if (typeof AbortController === "function") {
+          controller = new AbortController();
+          timeoutHandle = window.setTimeout(function () {
+            if (controller) {
+              controller.abort();
+            }
+          }, timeoutMs);
+        }
+
+        return fetch(endpoint, {
+          method: "GET",
+          credentials: "omit",
+          headers: headers,
+          signal: controller ? controller.signal : undefined
+        }).then(function (response) {
+          if (timeoutHandle !== null) {
+            window.clearTimeout(timeoutHandle);
+          }
+          if (!response.ok) {
+            throw new Error("HTTP " + response.status);
+          }
+          return response.json();
+        }).catch(function (error) {
+          if (timeoutHandle !== null) {
+            window.clearTimeout(timeoutHandle);
+          }
+          throw error;
+        });
+      }
+
+      function normalizeProviderAlias(value) {
+        return normalizeString(value).toLowerCase();
+      }
+
+      function normalizeRoleName(value) {
+        var normalized = normalizeString(value);
+        if (!normalized) {
+          return "";
+        }
+        return normalized.replace(/\s+/g, "_");
+      }
+
+      function parseBrokerTokenResponse(raw) {
+        var normalizedRaw = normalizeString(raw);
+        if (!normalizedRaw) {
+          return "";
+        }
+        if (looksLikeJwt(normalizedRaw)) {
+          return normalizedRaw;
+        }
+
+        var parsed = safeJsonParse(normalizedRaw);
+        if (typeof parsed === "string" && looksLikeJwt(parsed)) {
+          return parsed;
+        }
+        if (parsed && typeof parsed === "object") {
+          var objectToken = tokenFromObject(parsed);
+          if (objectToken) {
+            return objectToken;
+          }
+        }
+
+        if (normalizedRaw.charAt(0) === "\"" && normalizedRaw.charAt(normalizedRaw.length - 1) === "\"") {
+          var unwrapped = normalizedRaw.slice(1, normalizedRaw.length - 1);
+          if (looksLikeJwt(unwrapped)) {
+            return unwrapped;
+          }
+        }
+
+        return "";
+      }
+
+      function requestBrokerToken(realm, providerAlias, token) {
+        if (!realm || !providerAlias || !token) {
+          return Promise.resolve("");
+        }
+        var endpoint =
+          window.location.origin +
+          "/realms/" +
+          encodeURIComponent(realm) +
+          "/broker/" +
+          encodeURIComponent(providerAlias) +
+          "/token";
+        return fetch(endpoint, {
+          method: "GET",
+          credentials: "include",
+          headers: {
+            Accept: "application/json, text/plain",
+            Authorization: "Bearer " + token
+          }
+        }).then(function (response) {
+          if (!response.ok) {
+            throw new Error("HTTP " + response.status);
+          }
+          return response.text();
+        }).then(function (body) {
+          return parseBrokerTokenResponse(body);
+        }).catch(function () {
+          return "";
+        });
+      }
+
+      function addRoleNamesFromClaimValue(roleNames, value) {
+        if (!Array.isArray(roleNames)) {
+          return;
+        }
+        if (Array.isArray(value)) {
+          value.forEach(function (entry) {
+            var normalized = normalizeRoleName(entry);
+            if (normalized && roleNames.indexOf(normalized) === -1) {
+              roleNames.push(normalized);
+            }
+          });
+          return;
+        }
+        var single = normalizeRoleName(value);
+        if (single && roleNames.indexOf(single) === -1) {
+          roleNames.push(single);
+        }
+      }
+
+      function addRoleNamesFromClaims(roleNames, claims) {
+        if (!Array.isArray(roleNames) || !claims || typeof claims !== "object" || Array.isArray(claims)) {
+          return;
+        }
+        addRoleNamesFromClaimValue(roleNames, claims.roles);
+        addRoleNamesFromClaimValue(roleNames, claims.groups);
+        addRoleNamesFromClaimValue(roleNames, claims.team_names);
+        addRoleNamesFromClaimValue(roleNames, claims.teams);
+
+        if (
+          claims.realm_access &&
+          typeof claims.realm_access === "object" &&
+          !Array.isArray(claims.realm_access)
+        ) {
+          addRoleNamesFromClaimValue(roleNames, claims.realm_access.roles);
+        }
+      }
+
+      function roleEntriesFromNames(roleNames) {
+        var roleMap = {};
+        if (!Array.isArray(roleNames)) {
+          return [];
+        }
+        roleNames.forEach(function (roleName) {
+          addRoleEntry(roleMap, "realm", "", roleName, { inherited: false });
+        });
+        return roleEntriesFromMap(roleMap);
+      }
+
+      function fetchLinkedProviderAliases(realm, token, fallbackProviderAlias) {
+        if (!realm || !token) {
+          if (fallbackProviderAlias) {
+            return Promise.resolve([fallbackProviderAlias]);
+          }
+          return Promise.resolve([]);
+        }
+        var endpoint =
+          window.location.origin +
+          "/realms/" +
+          encodeURIComponent(realm) +
+          "/account/linked-accounts";
+
+        return requestJson(endpoint, token)
+          .then(function (payload) {
+            var aliases = [];
+            if (!Array.isArray(payload)) {
+              return aliases;
+            }
+            payload.forEach(function (entry) {
+              if (!entry || typeof entry !== "object") {
+                return;
+              }
+              var connected =
+                entry.connected === true ||
+                entry.linked === true ||
+                normalizeString(String(entry.connected || "")).toLowerCase() === "true" ||
+                normalizeString(String(entry.linked || "")).toLowerCase() === "true";
+              if (!connected) {
+                return;
+              }
+              var alias = normalizeProviderAlias(entry.providerAlias || entry.provider || entry.alias || "");
+              if (!alias || aliases.indexOf(alias) !== -1) {
+                return;
+              }
+              aliases.push(alias);
+            });
+            if (!aliases.length && fallbackProviderAlias) {
+              aliases.push(fallbackProviderAlias);
+            }
+            return aliases;
+          })
+          .catch(function () {
+            if (fallbackProviderAlias) {
+              return [fallbackProviderAlias];
+            }
+            return [];
+          });
+      }
+
+      function fetchGithubRolesFromToken(brokerToken) {
+        if (!brokerToken) {
+          return Promise.resolve([]);
+        }
+        return requestJsonExternal("https://api.github.com/user/teams?per_page=100", brokerToken, {
+          "X-GitHub-Api-Version": "2022-11-28",
+          "Accept": "application/vnd.github+json"
+        }).then(function (teams) {
+          if (!Array.isArray(teams)) {
+            return [];
+          }
+          var roleNames = [];
+          teams.forEach(function (team) {
+            if (!team || typeof team !== "object") {
+              return;
+            }
+            var roleName = normalizeRoleName(team.slug || team.name || "");
+            if (!roleName || roleNames.indexOf(roleName) !== -1) {
+              return;
+            }
+            roleNames.push(roleName);
+          });
+          return roleNames;
+        });
+      }
+
+      function fetchGoogleRolesFromToken(brokerToken) {
+        if (!brokerToken) {
+          return Promise.resolve([]);
+        }
+        var roleNames = [];
+        var payload = parseJwtPayload(brokerToken);
+        addRoleNamesFromClaims(roleNames, payload);
+        return requestJsonExternal("https://www.googleapis.com/oauth2/v3/userinfo", brokerToken)
+          .then(function (userinfo) {
+            addRoleNamesFromClaims(roleNames, userinfo);
+            return roleNames;
+          })
+          .catch(function () {
+            return roleNames;
+          });
+      }
+
+      function fetchGenericRolesFromToken(brokerToken) {
+        if (!brokerToken) {
+          return Promise.resolve([]);
+        }
+        var roleNames = [];
+        var payload = parseJwtPayload(brokerToken);
+        addRoleNamesFromClaims(roleNames, payload);
+        return Promise.resolve(roleNames);
+      }
+
+      function fetchProviderRoles(realm, providerAlias, token) {
+        var alias = normalizeProviderAlias(providerAlias);
+        if (!alias) {
+          return Promise.resolve([]);
+        }
+        return requestBrokerToken(realm, alias, token).then(function (brokerToken) {
+          if (!brokerToken) {
+            throw new Error("Missing broker token");
+          }
+          if (alias.indexOf("github") !== -1) {
+            return fetchGithubRolesFromToken(brokerToken);
+          }
+          if (alias.indexOf("google") !== -1) {
+            return fetchGoogleRolesFromToken(brokerToken);
+          }
+          return fetchGenericRolesFromToken(brokerToken);
+        });
+      }
+
+      function fetchIdpDirectRoles(realm, token, fallbackProviderAlias) {
+        return fetchLinkedProviderAliases(realm, token, fallbackProviderAlias).then(function (aliases) {
+          if (!Array.isArray(aliases) || !aliases.length) {
+            return {
+              roles: [],
+              lookupAvailable: false
+            };
+          }
+          var providerRequests = aliases.map(function (alias) {
+            return fetchProviderRoles(realm, alias, token).then(function (providerRoles) {
+              return {
+                ok: true,
+                roles: Array.isArray(providerRoles) ? providerRoles : []
+              };
+            }).catch(function () {
+              return {
+                ok: false,
+                roles: []
+              };
+            });
+          });
+          return Promise.all(providerRequests).then(function (results) {
+            var roleNames = [];
+            var lookupAvailable = false;
+            results.forEach(function (providerResult) {
+              if (providerResult && providerResult.ok) {
+                lookupAvailable = true;
+              }
+              var providerRoles = providerResult && Array.isArray(providerResult.roles)
+                ? providerResult.roles
+                : [];
+              if (!Array.isArray(providerRoles)) {
+                return;
+              }
+              providerRoles.forEach(function (roleName) {
+                var normalized = normalizeRoleName(roleName);
+                if (!normalized || roleNames.indexOf(normalized) !== -1) {
+                  return;
+                }
+                roleNames.push(normalized);
+              });
+            });
+            return {
+              roles: roleEntriesFromNames(roleNames),
+              lookupAvailable: lookupAvailable
+            };
+          });
         });
       }
 
@@ -1627,9 +2139,19 @@ data:
 
         var existingLink = document.getElementById(ROLES_JUMP_LINK_ID);
         if (existingLink) {
-          if (existingLink.tagName.toLowerCase() === "a") {
-            existingLink.setAttribute("href", "#/personal-info");
+          if (existingLink.tagName.toLowerCase() !== "button") {
+            var replacement = document.createElement("button");
+            replacement.type = "button";
+            replacement.id = ROLES_JUMP_LINK_ID;
+            replacement.className = existingLink.className || "pf-v5-c-nav__link";
+            replacement.textContent = existingLink.textContent || "Roles";
+            replacement.setAttribute("aria-label", "Roles");
+            if (existingLink.parentElement) {
+              existingLink.parentElement.replaceChild(replacement, existingLink);
+              existingLink = replacement;
+            }
           }
+          existingLink.removeAttribute("href");
           bindRolesJumpAction(existingLink);
           return;
         }
@@ -1667,12 +2189,16 @@ data:
         listItem.removeAttribute("aria-current");
 
         var control = listItem.querySelector("a, button, [role='link'], [role='button']");
-        if (!control) {
-          control = document.createElement("button");
-          control.type = "button";
-          control.className = "pf-v5-c-nav__link";
-          listItem.appendChild(control);
+        var controlClassName = control && control.className ? control.className : "pf-v5-c-nav__link";
+        var controlElement = document.createElement("button");
+        controlElement.type = "button";
+        controlElement.className = controlClassName;
+        if (control && control.parentElement === listItem) {
+          listItem.replaceChild(controlElement, control);
+        } else {
+          listItem.appendChild(controlElement);
         }
+        control = controlElement;
         if (control.classList) {
           control.classList.remove("pf-m-current", "active");
         }
@@ -1681,11 +2207,7 @@ data:
         control.id = ROLES_JUMP_LINK_ID;
         control.textContent = "Roles";
         control.setAttribute("aria-label", "Roles");
-        if (control.tagName.toLowerCase() === "a") {
-          control.setAttribute("href", "#/personal-info");
-        } else {
-          control.removeAttribute("href");
-        }
+        control.removeAttribute("href");
         bindRolesJumpAction(control);
 
         if (!listItem.contains(control)) {
@@ -1799,11 +2321,9 @@ data:
         if (!container) {
           return;
         }
-        var note = document.getElementById(NOTE_ID);
-        var anchor = findPersonalInfoInsertAnchor(container);
         var parent = container;
-        if (anchor && anchor.parentElement && anchor.parentElement !== container) {
-          parent = anchor.parentElement;
+        if (container.matches && container.matches("form") && container.parentElement) {
+          parent = container.parentElement;
         }
 
         var panel = document.getElementById(ROLES_PANEL_ID) || document.createElement("section");
@@ -1820,8 +2340,7 @@ data:
 
         var helpText = document.createElement("p");
         helpText.className = "suncoast-roles-help";
-        helpText.textContent =
-          "Roles are derived from current identity-provider memberships and Keycloak composite mappings.";
+        helpText.textContent = ROLES_HELP_TEXT;
         panel.appendChild(helpText);
 
         if (!state || state.status === "loading") {
@@ -1856,10 +2375,10 @@ data:
           directWrap.className = "suncoast-roles-list-wrapper";
           var directTitle = document.createElement("p");
           directTitle.className = "suncoast-roles-list-title";
-          directTitle.textContent = "Direct mappings";
+          directTitle.textContent = "IdP memberships (direct roles)";
           var directList = document.createElement("div");
           directList.className = "suncoast-roles-list";
-          renderRoleList(directList, state.directRoles, "No direct role mappings found.");
+          renderRoleList(directList, state.directRoles, "No direct IDP memberships detected.");
           directWrap.appendChild(directTitle);
           directWrap.appendChild(directList);
           panel.appendChild(directWrap);
@@ -1868,13 +2387,13 @@ data:
           inheritedWrap.className = "suncoast-roles-list-wrapper";
           var inheritedTitle = document.createElement("p");
           inheritedTitle.className = "suncoast-roles-list-title";
-          inheritedTitle.textContent = "Inherited/effective-only roles";
+          inheritedTitle.textContent = "Effective-only roles (derived/composite)";
           var inheritedList = document.createElement("div");
           inheritedList.className = "suncoast-roles-list";
           renderRoleList(
             inheritedList,
             state.inheritedRoles,
-            "No inherited roles detected beyond direct mappings."
+            "No additional effective roles detected beyond direct memberships."
           );
           inheritedWrap.appendChild(inheritedTitle);
           inheritedWrap.appendChild(inheritedList);
@@ -1894,9 +2413,9 @@ data:
           if (!state.directMappingsAvailable) {
             var unavailable = document.createElement("p");
             unavailable.className = "suncoast-roles-note";
-            unavailable.textContent = ROLES_INHERITANCE_UNAVAILABLE_TEXT;
+            unavailable.textContent = ROLES_IDP_LOOKUP_UNAVAILABLE_TEXT;
             panel.appendChild(unavailable);
-          } else if (!state.compositeTree.available) {
+          } else if (state.status === "unavailable") {
             var compositeUnavailable = document.createElement("p");
             compositeUnavailable.className = "suncoast-roles-note";
             compositeUnavailable.textContent = ROLES_UNAVAILABLE_TEXT;
@@ -1904,12 +2423,13 @@ data:
           }
         }
 
+        if (panel.parentElement && panel.parentElement !== parent) {
+          panel.parentElement.removeChild(panel);
+        }
         if (!panel.parentElement) {
-          if (note && note.parentElement === parent && note.nextSibling) {
-            parent.insertBefore(panel, note.nextSibling);
-          } else {
-            parent.insertBefore(panel, anchor || null);
-          }
+          parent.appendChild(panel);
+        } else if (panel.parentElement === parent && panel !== parent.lastElementChild) {
+          parent.appendChild(panel);
         }
         ensureRolesJumpLink();
       }
@@ -1933,67 +2453,74 @@ data:
         }
 
         var effectiveState = collectEffectiveRolesFromToken(token);
-        var effectiveRoles = effectiveState.roles;
-        var directRoleMap = {};
-        var directRoles = [];
-        var inheritedRoles = [];
+        var effectiveTokenRoles = Array.isArray(effectiveState.roles) ? effectiveState.roles : [];
         var realm = getRealmFromPath();
-        var userId = normalizeString(effectiveState.payload.sub);
+        var providerAliasFromToken = normalizeProviderAlias(
+          (effectiveState.payload && (effectiveState.payload.identity_provider || effectiveState.payload.idp)) || ""
+        );
 
-        if (!realm || !userId) {
+        if (!realm) {
           rolesStatePromise = Promise.resolve({
             status: "ready",
             directMappingsAvailable: false,
-            effectiveRoles: effectiveRoles,
+            effectiveRoles: effectiveTokenRoles,
             directRoles: [],
-            inheritedRoles: effectiveRoles,
+            inheritedRoles: effectiveTokenRoles,
             compositeTree: { available: false, edges: [] }
           });
           return rolesStatePromise;
         }
 
-        var mappingsEndpoint =
-          window.location.origin +
-          "/admin/realms/" +
-          encodeURIComponent(realm) +
-          "/users/" +
-          encodeURIComponent(userId) +
-          "/role-mappings";
+        rolesStatePromise = fetchIdpDirectRoles(realm, token, providerAliasFromToken)
+          .then(function (idpLookup) {
+            var directRoles = idpLookup && Array.isArray(idpLookup.roles) ? idpLookup.roles : [];
+            var directLookupAvailable = Boolean(idpLookup && idpLookup.lookupAvailable);
+            var directRoleMap = {};
+            var effectiveRoleMap = {};
+            var inheritedRoles = [];
 
-        rolesStatePromise = requestJson(mappingsEndpoint, token)
-          .then(function (mappingsResponse) {
-            var directRaw = parseDirectRolesFromMappings(mappingsResponse);
-            directRaw.forEach(function (entry) {
+            (Array.isArray(directRoles) ? directRoles : []).forEach(function (entry) {
               addRoleEntry(directRoleMap, entry.scope, entry.clientId, entry.role, {
-                composite: entry.composite
+                composite: Boolean(entry.composite),
+                inherited: false
+              });
+              addRoleEntry(effectiveRoleMap, entry.scope, entry.clientId, entry.role, {
+                composite: Boolean(entry.composite),
+                inherited: false
               });
             });
-            directRoles = roleEntriesFromMap(directRoleMap);
 
+            effectiveTokenRoles.forEach(function (entry) {
+              addRoleEntry(effectiveRoleMap, entry.scope, entry.clientId, entry.role, {
+                composite: Boolean(entry.composite),
+                inherited: true
+              });
+            });
+
+            var normalizedDirectRoles = roleEntriesFromMap(directRoleMap);
+            var effectiveRoles = roleEntriesFromMap(effectiveRoleMap);
             effectiveRoles.forEach(function (entry) {
               if (!Object.prototype.hasOwnProperty.call(directRoleMap, entry.key)) {
                 inheritedRoles.push(entry);
               }
             });
 
-            return buildCompositeTree(realm, token, directRaw).then(function (compositeTree) {
-              return {
-                status: "ready",
-                directMappingsAvailable: true,
-                effectiveRoles: effectiveRoles,
-                directRoles: directRoles,
-                inheritedRoles: inheritedRoles,
-                compositeTree: compositeTree
-              };
-            });
+            return {
+              status: "ready",
+              directMappingsAvailable: directLookupAvailable,
+              effectiveRoles: effectiveRoles,
+              directRoles: normalizedDirectRoles,
+              inheritedRoles: inheritedRoles,
+              compositeTree: { available: false, edges: [] }
+            };
           })
           .catch(function () {
             return {
               status: "ready",
               directMappingsAvailable: false,
-              effectiveRoles: effectiveRoles,
+              effectiveRoles: effectiveTokenRoles,
               directRoles: [],
-              inheritedRoles: effectiveRoles,
+              inheritedRoles: effectiveTokenRoles,
               compositeTree: { available: false, edges: [] }
             };
           });
@@ -2694,7 +3221,7 @@ spec:
 
         # --- Keycloak runtime ---
         - name: keycloak
-          image: ghcr.io/dotcomrow/keycloak-image:sha-81baae9
+          image: ghcr.io/dotcomrow/keycloak-image:sha-adade66
           imagePullPolicy: Always
           ports:
             - containerPort: 8080
