@@ -314,6 +314,15 @@ data:
       scroll-margin-top: 5.5rem;
     }
 
+    #suncoast-account-roles-jump-link,
+    #suncoast-account-roles-jump-link:visited,
+    #suncoast-account-roles-jump-link:hover,
+    #suncoast-account-roles-jump-link:focus,
+    #suncoast-account-roles-jump-link:active {
+      color: inherit !important;
+      text-decoration: none !important;
+    }
+
     @media (max-width: 860px) {
       #suncoast-account-roles-panel .suncoast-roles-summary {
         grid-template-columns: 1fr;
@@ -407,15 +416,24 @@ data:
         if (/\/account-security(?:\/|$)/.test(path) || /\/groups(?:\/|$)/.test(path) || /\/organizations(?:\/|$)/.test(path) || /\/resources(?:\/|$)/.test(path) || /\/oid4vci(?:\/|$)/.test(path) || /\/applications(?:\/|$)/.test(path)) {
           return false;
         }
-        if (!hash) {
+        var hashRoute = hash.replace(/^#\/?/, "").replace(/^\/+/, "");
+        if (!hashRoute) {
           return true;
         }
-        return (
-          hash.indexOf("personal-info") !== -1 ||
-          hash === "#/" ||
-          hash === "#" ||
-          hash.indexOf(ROLES_SECTION_ANCHOR_ID.toLowerCase()) !== -1
-        );
+        if (
+          hashRoute.indexOf("personal-info") === 0 ||
+          hashRoute.indexOf(ROLES_SECTION_ANCHOR_ID.toLowerCase()) !== -1
+        ) {
+          return true;
+        }
+        var blockedPrefixes = ["account-security", "groups", "organizations", "resources", "oid4vci", "applications"];
+        for (var i = 0; i < blockedPrefixes.length; i += 1) {
+          var prefix = blockedPrefixes[i];
+          if (hashRoute === prefix || hashRoute.indexOf(prefix + "/") === 0) {
+            return false;
+          }
+        }
+        return true;
       }
 
       function hidePasswordWidgets() {
@@ -1431,6 +1449,21 @@ data:
           return;
         }
         var container = findPersonalInfoContainer();
+        if (!container) {
+          var fallbackSelectors = [
+            "[role='main'] .pf-v5-c-page__main-section",
+            "main .pf-v5-c-page__main-section",
+            "[role='main']",
+            "main"
+          ];
+          for (var fallbackIndex = 0; fallbackIndex < fallbackSelectors.length; fallbackIndex += 1) {
+            var fallbackContainer = document.querySelector(fallbackSelectors[fallbackIndex]);
+            if (fallbackContainer) {
+              container = fallbackContainer;
+              break;
+            }
+          }
+        }
         if (!container) {
           return;
         }
