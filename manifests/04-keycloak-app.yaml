@@ -382,6 +382,7 @@ data:
       var rolesStatePromise = null;
       var rolesRouteKey = "";
       var rolesFetchStarted = false;
+      var rolesLastResolvedState = null;
 
       function hideElement(el) {
         if (!el) {
@@ -928,15 +929,36 @@ data:
         if (token) {
           headers.Authorization = "Bearer " + token;
         }
+        var timeoutMs = 8000;
+        var controller = null;
+        var timeoutHandle = null;
+        if (typeof AbortController === "function") {
+          controller = new AbortController();
+          timeoutHandle = window.setTimeout(function () {
+            if (controller) {
+              controller.abort();
+            }
+          }, timeoutMs);
+        }
+
         return fetch(endpoint, {
           method: "GET",
           credentials: "include",
-          headers: headers
+          headers: headers,
+          signal: controller ? controller.signal : undefined
         }).then(function (response) {
+          if (timeoutHandle !== null) {
+            window.clearTimeout(timeoutHandle);
+          }
           if (!response.ok) {
             throw new Error("HTTP " + response.status);
           }
           return response.json();
+        }).catch(function (error) {
+          if (timeoutHandle !== null) {
+            window.clearTimeout(timeoutHandle);
+          }
+          throw error;
         });
       }
 
@@ -1278,6 +1300,23 @@ data:
       }
 
       function ensureRolesJumpLink() {
+        function bindRolesJumpAction(control) {
+          if (!control) {
+            return;
+          }
+          if (control.getAttribute("data-suncoast-roles-bound") === "true") {
+            return;
+          }
+          control.setAttribute("data-suncoast-roles-bound", "true");
+          control.addEventListener("click", function (event) {
+            event.preventDefault();
+            var targetPanel = document.getElementById(ROLES_PANEL_ID);
+            if (targetPanel && typeof targetPanel.scrollIntoView === "function") {
+              targetPanel.scrollIntoView({ behavior: "smooth", block: "start" });
+            }
+          });
+        }
+
         if (!isPersonalInfoPage()) {
           var existing = document.getElementById(ROLES_JUMP_LINK_ID);
           if (existing && existing.parentElement) {
@@ -1298,17 +1337,10 @@ data:
 
         var existingLink = document.getElementById(ROLES_JUMP_LINK_ID);
         if (existingLink) {
-          existingLink.setAttribute("href", "#/personal-info");
-          if (existingLink.getAttribute("data-suncoast-roles-bound") !== "true") {
-            existingLink.setAttribute("data-suncoast-roles-bound", "true");
-            existingLink.addEventListener("click", function (event) {
-              event.preventDefault();
-              var targetPanel = document.getElementById(ROLES_PANEL_ID);
-              if (targetPanel && typeof targetPanel.scrollIntoView === "function") {
-                targetPanel.scrollIntoView({ behavior: "smooth", block: "start" });
-              }
-            });
+          if (existingLink.tagName.toLowerCase() === "a") {
+            existingLink.setAttribute("href", "#/personal-info");
           }
+          bindRolesJumpAction(existingLink);
           return;
         }
 
@@ -1329,8 +1361,10 @@ data:
           return;
         }
 
-        var templateLink = list.querySelector("a");
-        var templateListItem = templateLink ? templateLink.closest("li") : list.querySelector("li");
+        var templateInteractive = list.querySelector("a, button, [role='link'], [role='button']");
+        var templateListItem = templateInteractive
+          ? templateInteractive.closest("li")
+          : list.querySelector("li");
         var listItem = templateListItem
           ? templateListItem.cloneNode(true)
           : document.createElement("li");
@@ -1342,32 +1376,55 @@ data:
         }
         listItem.removeAttribute("aria-current");
 
-        var link = listItem.querySelector("a");
-        if (!link) {
-          link = document.createElement("a");
-          link.className = "pf-v5-c-nav__link";
-          listItem.appendChild(link);
+        var control = listItem.querySelector("a, button, [role='link'], [role='button']");
+        if (!control) {
+          control = document.createElement("button");
+          control.type = "button";
+          control.className = "pf-v5-c-nav__link";
+          listItem.appendChild(control);
         }
-        if (link.classList) {
-          link.classList.remove("pf-m-current", "active");
+        if (control.classList) {
+          control.classList.remove("pf-m-current", "active");
         }
-        link.removeAttribute("aria-current");
+        control.removeAttribute("aria-current");
 
-        link.id = ROLES_JUMP_LINK_ID;
-        link.href = "#/personal-info";
-        link.textContent = "Roles";
-        link.setAttribute("data-suncoast-roles-bound", "true");
-        link.setAttribute("aria-label", "Roles");
-        link.addEventListener("click", function (event) {
-          event.preventDefault();
-          var targetPanel = document.getElementById(ROLES_PANEL_ID);
-          if (targetPanel && typeof targetPanel.scrollIntoView === "function") {
-            targetPanel.scrollIntoView({ behavior: "smooth", block: "start" });
+        control.id = ROLES_JUMP_LINK_ID;
+        control.textContent = "Roles";
+        control.setAttribute("aria-label", "Roles");
+        if (control.tagName.toLowerCase() === "a") {
+          control.setAttribute("href", "#/personal-info");
+        } else {
+          control.removeAttribute("href");
+        }
+        bindRolesJumpAction(control);
+
+        if (!listItem.contains(control)) {
+          listItem.appendChild(control);
+        }
+
+        var personalInfoItem = null;
+        var navItems = list.querySelectorAll("li");
+        for (var navIndex = 0; navIndex < navItems.length; navIndex += 1) {
+          var navItem = navItems[navIndex];
+          var navControl = navItem.querySelector("a, button, [role='link'], [role='button']");
+          if (!navControl) {
+            continue;
           }
-        });
-
-        listItem.appendChild(link);
-        list.appendChild(listItem);
+          var navText = (navControl.textContent || "").trim().toLowerCase();
+          if (navText === "personal info" || navText === "personalinfo") {
+            personalInfoItem = navItem;
+            break;
+          }
+        }
+        if (personalInfoItem && personalInfoItem.parentElement === list) {
+          if (personalInfoItem.nextSibling) {
+            list.insertBefore(listItem, personalInfoItem.nextSibling);
+          } else {
+            list.appendChild(listItem);
+          }
+        } else {
+          list.appendChild(listItem);
+        }
       }
 
       function renderRoleList(container, roles, emptyText) {
@@ -1683,27 +1740,40 @@ data:
           rolesRouteKey = routeKey;
           rolesFetchStarted = false;
           rolesStatePromise = null;
+          rolesLastResolvedState = null;
+        }
+
+        if (rolesLastResolvedState) {
+          renderRolesPanel(rolesLastResolvedState);
+          return;
+        }
+
+        if (rolesFetchStarted) {
+          if (!document.getElementById(ROLES_PANEL_ID)) {
+            renderRolesPanel({ status: "loading" });
+          }
+          return;
         }
 
         renderRolesPanel({ status: "loading" });
-        if (rolesFetchStarted) {
-          return;
-        }
         rolesFetchStarted = true;
 
         fetchRolesState()
           .then(function (state) {
+            rolesLastResolvedState = state;
             renderRolesPanel(state);
           })
           .catch(function () {
-            renderRolesPanel({
+            var unavailableState = {
               status: "unavailable",
               directMappingsAvailable: false,
               effectiveRoles: [],
               directRoles: [],
               inheritedRoles: [],
               compositeTree: { available: false, edges: [] }
-            });
+            };
+            rolesLastResolvedState = unavailableState;
+            renderRolesPanel(unavailableState);
           });
       }
 
