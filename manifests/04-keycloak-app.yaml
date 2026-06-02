@@ -329,6 +329,9 @@ data:
     #suncoast-account-roles-jump-link:hover,
     #suncoast-account-roles-jump-link:focus,
     #suncoast-account-roles-jump-link:active {
+      background: transparent !important;
+      border: 0 !important;
+      box-shadow: none !important;
       color: inherit !important;
       text-decoration: none !important;
     }
@@ -2213,6 +2216,26 @@ data:
       }
 
       function ensureRolesJumpLink() {
+        function clearJumpSelectionState(element) {
+          if (!element) {
+            return;
+          }
+          element.removeAttribute("aria-current");
+          element.removeAttribute("aria-selected");
+          element.removeAttribute("data-current");
+          element.removeAttribute("data-active");
+          if (element.classList) {
+            element.classList.remove(
+              "pf-m-current",
+              "pf-m-active",
+              "pf-m-selected",
+              "active",
+              "current",
+              "selected"
+            );
+          }
+        }
+
         function bindRolesJumpAction(control) {
           if (!control) {
             return;
@@ -2250,19 +2273,21 @@ data:
 
         var existingLink = document.getElementById(ROLES_JUMP_LINK_ID);
         if (existingLink) {
-          if (existingLink.tagName.toLowerCase() !== "button") {
-            var replacement = document.createElement("button");
-            replacement.type = "button";
+          if (existingLink.tagName.toLowerCase() !== "a") {
+            var replacement = document.createElement("a");
             replacement.id = ROLES_JUMP_LINK_ID;
             replacement.className = existingLink.className || "pf-v5-c-nav__link";
             replacement.textContent = existingLink.textContent || "Roles";
             replacement.setAttribute("aria-label", "Roles");
+            replacement.setAttribute("href", "#" + ROLES_SECTION_ANCHOR_ID);
             if (existingLink.parentElement) {
               existingLink.parentElement.replaceChild(replacement, existingLink);
               existingLink = replacement;
             }
           }
-          existingLink.removeAttribute("href");
+          existingLink.setAttribute("href", "#" + ROLES_SECTION_ANCHOR_ID);
+          clearJumpSelectionState(existingLink);
+          clearJumpSelectionState(existingLink.closest("li"));
           bindRolesJumpAction(existingLink);
           return;
         }
@@ -2294,15 +2319,14 @@ data:
         if (!templateListItem) {
           listItem.className = "pf-v5-c-nav__item";
         }
-        if (listItem.classList) {
-          listItem.classList.remove("pf-m-current", "active");
-        }
-        listItem.removeAttribute("aria-current");
+        clearJumpSelectionState(listItem);
+        listItem.querySelectorAll("[aria-current], [aria-selected], .pf-m-current, .pf-m-active, .pf-m-selected, .active, .current, .selected").forEach(function (element) {
+          clearJumpSelectionState(element);
+        });
 
         var control = listItem.querySelector("a, button, [role='link'], [role='button']");
         var controlClassName = control && control.className ? control.className : "pf-v5-c-nav__link";
-        var controlElement = document.createElement("button");
-        controlElement.type = "button";
+        var controlElement = document.createElement("a");
         controlElement.className = controlClassName;
         if (control && control.parentElement === listItem) {
           listItem.replaceChild(controlElement, control);
@@ -2310,15 +2334,12 @@ data:
           listItem.appendChild(controlElement);
         }
         control = controlElement;
-        if (control.classList) {
-          control.classList.remove("pf-m-current", "active");
-        }
-        control.removeAttribute("aria-current");
+        clearJumpSelectionState(control);
 
         control.id = ROLES_JUMP_LINK_ID;
         control.textContent = "Roles";
         control.setAttribute("aria-label", "Roles");
-        control.removeAttribute("href");
+        control.setAttribute("href", "#" + ROLES_SECTION_ANCHOR_ID);
         bindRolesJumpAction(control);
 
         if (!listItem.contains(control)) {
