@@ -1792,6 +1792,53 @@ data:
         -s "config.\"userinfo.token.claim\"=true" || true
       refresh_client_mapper_cache "$realm" "$CID"
     }
+
+    ensure_suncoast_membership_roles_mapper() {
+      local realm="$1"
+      local clientId="$2"
+      local mapper_name="suncoast-membership-roles"
+      local claim_name="${SUNCOAST_MEMBERSHIP_ROLES_CLAIM:-suncoast_roles}"
+      local ttl_seconds="${SUNCOAST_MEMBERSHIP_TOKEN_CACHE_TTL_SECONDS:-300}"
+      local mapper_id=""
+      local mapper_json=""
+      CID="$(client_uuid "$realm" "$clientId")"
+      [ -z "${CID:-}" ] && return 0
+
+      mapper_id="$(client_mapper_id "$realm" "$CID" "$mapper_name")"
+      if [ -n "${mapper_id:-}" ]; then
+        mapper_json="$($KCADM get "clients/$CID/protocol-mappers/models/$mapper_id" -r "$realm" 2>/dev/null || true)"
+        if [ -n "${mapper_json:-}" ] \
+          && printf '%s' "$mapper_json" | grep -Eq '"protocolMapper"[[:space:]]*:[[:space:]]*"suncoast-membership-roles-mapper"' \
+          && printf '%s' "$mapper_json" | grep -Eq '"claim\.name"[[:space:]]*:[[:space:]]*"'"${claim_name}"'"' \
+          && printf '%s' "$mapper_json" | grep -Eq '"cache\.ttl\.seconds"[[:space:]]*:[[:space:]]*"'"${ttl_seconds}"'"'; then
+          return 0
+        fi
+        $KCADM update "clients/$CID/protocol-mappers/models/$mapper_id" -r "$realm" \
+          -s "name=${mapper_name}" \
+          -s "protocol=openid-connect" \
+          -s "protocolMapper=suncoast-membership-roles-mapper" \
+          -s "config.\"claim.name\"=${claim_name}" \
+          -s "config.\"cache.ttl.seconds\"=${ttl_seconds}" \
+          -s "config.\"access.token.claim\"=true" \
+          -s "config.\"id.token.claim\"=true" \
+          -s "config.\"userinfo.token.claim\"=true" \
+          -s "config.\"introspection.token.claim\"=true" || true
+        refresh_client_mapper_cache "$realm" "$CID"
+        return 0
+      fi
+
+      $KCADM create "clients/$CID/protocol-mappers/models" -r "$realm" \
+        -s "name=${mapper_name}" \
+        -s "protocol=openid-connect" \
+        -s "protocolMapper=suncoast-membership-roles-mapper" \
+        -s "config.\"claim.name\"=${claim_name}" \
+        -s "config.\"cache.ttl.seconds\"=${ttl_seconds}" \
+        -s "config.\"access.token.claim\"=true" \
+        -s "config.\"id.token.claim\"=true" \
+        -s "config.\"userinfo.token.claim\"=true" \
+        -s "config.\"introspection.token.claim\"=true" || true
+      refresh_client_mapper_cache "$realm" "$CID"
+    }
     
     log_progress() {
       echo "⏱️  $(date -u +%FT%TZ) $*"
@@ -1804,6 +1851,8 @@ data:
     fi
     enforce_client_access_token_lifespan "$INTERNAL_REALM" "auth-gateway-public" "900"
     enforce_client_access_token_lifespan "$INTERNAL_REALM" "shell-spa-public" "900"
+    ensure_suncoast_membership_roles_mapper "$INTERNAL_REALM" "auth-gateway-public"
+    ensure_suncoast_membership_roles_mapper "$INTERNAL_REALM" "shell-spa-public"
     clear_pkce_for_client "$INTERNAL_REALM" "$DROOLS_WORKBENCH_CLIENT_ID"
     
     log_progress "Applying external realm clients and auth settings..."
@@ -1812,6 +1861,8 @@ data:
       disable_direct_grants_for_clients "$EXTERNAL_REALM"
     fi
     enforce_standard_flow_for_client "$EXTERNAL_REALM" "$GRAPHQL_API_CLIENT_ID"
+    ensure_suncoast_membership_roles_mapper "$EXTERNAL_REALM" "auth-gateway-public"
+    ensure_suncoast_membership_roles_mapper "$EXTERNAL_REALM" "shell-spa-public"
     enforce_pkce_for_client "$EXTERNAL_REALM" "$OPENWEBUI_CLIENT_ID"
     ensure_realm_roles_in_scope_mapper "$EXTERNAL_REALM" "$OPENWEBUI_CLIENT_ID"
     ensure_realm_roles_in_userinfo_mapper "$EXTERNAL_REALM" "$OPENWEBUI_CLIENT_ID"
@@ -2995,7 +3046,7 @@ spec:
       containers:
         # --- One-time configuration sidecar (IdPs + flows + attach providers) ---
         - name: keycloak-configurator
-          image: ghcr.io/dotcomrow/keycloak-image:sha-adade66
+          image: ghcr.io/dotcomrow/keycloak-image:sha-61fb161
           imagePullPolicy: Always
           env:
             - name: KEYCLOAK_REALM
