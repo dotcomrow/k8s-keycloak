@@ -45,8 +45,8 @@ spec:
     template:
       type: Opaque
   data:
-      - secretKey: value
-        remoteRef:
+    - secretKey: value
+      remoteRef:
         # Vault KVv2 path: secret/data/cloudflare-tunnel-keycloak-token
         key: cloudflare-tunnel-keycloak-token
         property: value
