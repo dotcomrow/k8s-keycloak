@@ -263,8 +263,8 @@ spec:
                 ttl="48h"
 
               vault policy write "externalsecrets-keycloak" - <<'EOF'
-              path "secret/data/keycloak-cloudflare-tunnel-token" { capabilities = ["read"] }
-              path "secret/metadata/keycloak-cloudflare-tunnel-token" { capabilities = ["read", "list"] }
+              path "secret/data/cloudflare-tunnel-keycloak-token" { capabilities = ["read"] }
+              path "secret/metadata/cloudflare-tunnel-keycloak-token" { capabilities = ["read", "list"] }
               path "secret/data/auth-gateway-admin-api" { capabilities = ["read"] }
               path "secret/metadata/auth-gateway-admin-api" { capabilities = ["read", "list"] }
               path "secret/data/auth-gateway-registry-read-token" { capabilities = ["read"] }
@@ -375,8 +375,8 @@ spec:
                 ttl="48h"
 
               vault policy write "externalsecrets-keycloak" - <<'EOF'
-              path "secret/data/keycloak-cloudflare-tunnel-token" { capabilities = ["read"] }
-              path "secret/metadata/keycloak-cloudflare-tunnel-token" { capabilities = ["read", "list"] }
+              path "secret/data/cloudflare-tunnel-keycloak-token" { capabilities = ["read"] }
+              path "secret/metadata/cloudflare-tunnel-keycloak-token" { capabilities = ["read", "list"] }
               path "secret/data/auth-gateway-admin-api" { capabilities = ["read"] }
               path "secret/metadata/auth-gateway-admin-api" { capabilities = ["read", "list"] }
               path "secret/data/auth-gateway-registry-read-token" { capabilities = ["read"] }
