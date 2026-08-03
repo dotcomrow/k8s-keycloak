@@ -530,7 +530,9 @@ data:
     # Client IDs can be overridden via /vault/secrets/client-id-<name> files.
     # Example: external:gravitee-introspection=openwebui,ollama
     internal:auth-gateway-exchange=graphql-api
+    internal:cms-site-internal=graphql-api
     external:auth-gateway-exchange=graphql-api
+    external:cms-site-external=graphql-api
     external:graphql-api=openwebui
 ---
 apiVersion: v1
