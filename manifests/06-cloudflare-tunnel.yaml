@@ -59,6 +59,9 @@ metadata:
   annotations:
     reloader.stakater.com/auto: "true"
     argocd.argoproj.io/sync-wave: "6"
+  labels:
+    app: cloudflared
+    platform.suncoast.systems/vpa-exclude: "true"
 spec:
   replicas: 2
   selector:
@@ -90,6 +93,13 @@ spec:
                 secretKeyRef:
                   name: cloudflare-tunnel-keycloak-token
                   key: value
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 500m
+              memory: 256Mi
           livenessProbe:
             httpGet:
               path: /ready
