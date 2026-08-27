@@ -16,6 +16,7 @@ spec:
       backends:
         - serviceName: keycloak-auth-gateway
           servicePort: 8080
+          resolveGranularity: service
     - name: keycloak-auth-gateway-internal
       match:
         hosts:
@@ -25,3 +26,4 @@ spec:
       backends:
         - serviceName: keycloak-auth-gateway-internal
           servicePort: 8080
+          resolveGranularity: service
