@@ -6,6 +6,7 @@ metadata:
   name: keycloak-auth-gateway-external
   namespace: keycloak
 spec:
+  ingressClassName: apisix
   http:
     - name: keycloak-auth-gateway
       match:
