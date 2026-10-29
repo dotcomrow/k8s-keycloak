@@ -231,9 +231,22 @@ spec:
                 vault secrets enable -path=yugabyte-db database
               fi
 
+              # Keep Keycloak on its own Vault database connection so another app
+              # cannot remove keycloak-app from a shared allowed_roles list.
+              retry_cmd "vault keycloak database connection" \
+                vault write yugabyte-db/config/keycloak \
+                  plugin_name="postgresql-database-plugin" \
+                  connection_url="postgresql://{{username}}:{{password}}@${PGHOST}:${PGPORT}/yugabyte?sslmode=disable" \
+                  username="${VAULTADMIN_USER}" \
+                  password="${VAULTADMIN_PASS}" \
+                  allowed_roles="keycloak-app" \
+                  max_open_connections="40" \
+                  max_idle_connections="0" \
+                  max_connection_lifetime="0s"
+
               retry_cmd "vault static role keycloak-app" \
                 vault write yugabyte-db/static-roles/keycloak-app \
-                  db_name="yugabyte" \
+                  db_name="keycloak" \
                   username="${ROLE_OWNER}" \
                   rotation_statements="ALTER ROLE ${ROLE_OWNER} WITH PASSWORD '{{password}}';" \
                   rotation_period="720h"
