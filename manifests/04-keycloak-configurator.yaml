@@ -399,6 +399,15 @@ data:
           -s "clientAuthenticatorType=client-secret" \
           -s "secret=$client_secret" >/dev/null 2>&1 || true
       fi
+      # client_uuid may have cached an empty lookup before this client was
+      # created. Clear the cache so later service-account role assignment
+      # resolves the newly created client instead of returning early.
+      CLIENT_UUID_CACHE=()
+      cid="$(client_uuid "$realm" "$client_id")"
+      if [ -z "${cid:-}" ]; then
+        echo "WARN: confidential service client '${client_id}' was not found after reconciliation in realm '${realm}'"
+        return 1
+      fi
     }
     
     ensure_audience_mapper() {
