@@ -177,6 +177,7 @@ data:
         writer.writerows(rows)
     PY
 
+    DB_SYNCED="false"
     for attempt in $(seq 1 120); do
       if psql -h "${DB_HOST}" -p "${DB_PORT}" -U "${DB_USER}" -d "${DB_NAME}" -v ON_ERROR_STOP=1 <<SQL
       CREATE TEMP TABLE _registry_apps (
@@ -225,13 +226,173 @@ data:
     SQL
       then
         echo "auth gateway app sync completed"
-        exit 0
+        DB_SYNCED="true"
+        break
       fi
       echo "sync attempt ${attempt}/120 failed; retrying..."
       sleep 5
     done
 
-    echo "failed to sync auth gateway apps"
+    if [ "$DB_SYNCED" != "true" ]; then
+      echo "failed to sync auth gateway apps"
+      exit 1
+    fi
+
+    for attempt in $(seq 1 12); do
+      if python3 - "$APPS_FILE" <<'PY'
+    import json
+    import os
+    import sys
+    import urllib.error
+    import urllib.parse
+    import urllib.request
+
+    apps_path = sys.argv[1]
+    keycloak_url = (os.environ.get("KEYCLOAK_URL") or "").strip().rstrip("/")
+    client_id = (os.environ.get("KEYCLOAK_CONFIGURATOR_CLIENT_ID") or "keycloak-configurator").strip()
+    client_secret_file = (os.environ.get("KEYCLOAK_CONFIGURATOR_CLIENT_SECRET_FILE") or "").strip()
+    client_config_root = (os.environ.get("KEYCLOAK_CLIENT_CONFIG_ROOT") or "/keycloak-client-config").rstrip("/")
+    client_to_update = (os.environ.get("KEYCLOAK_REDIRECT_CLIENT_ID") or "auth-gateway-public").strip()
+    realms = [value.strip() for value in (os.environ.get("KEYCLOAK_REALMS") or "internal,external").split(",") if value.strip()]
+    allowed_suffixes = [
+        value.strip().lower().lstrip(".")
+        for value in (os.environ.get("KEYCLOAK_REDIRECT_ALLOWED_HOST_SUFFIXES") or "suncoast.systems").split(",")
+        if value.strip()
+    ]
+
+    if not keycloak_url:
+        raise SystemExit("KEYCLOAK_URL is required.")
+    if not client_secret_file:
+        raise SystemExit("KEYCLOAK_CONFIGURATOR_CLIENT_SECRET_FILE is required.")
+    if not realms:
+        raise SystemExit("KEYCLOAK_REALMS must contain at least one realm.")
+
+    with open(client_secret_file, "r", encoding="utf-8") as secret_file:
+        client_secret = secret_file.read().strip()
+    if not client_secret:
+        raise SystemExit("Keycloak configurator client secret is empty.")
+
+    with open(apps_path, "r", encoding="utf-8") as apps_file:
+        payload = json.load(apps_file)
+    items = payload.get("items") if isinstance(payload, dict) else payload
+    if not isinstance(items, list):
+        raise SystemExit("Registry apps response does not contain an items array.")
+
+    def enabled(value):
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, (int, float)):
+            return int(value) == 1
+        if isinstance(value, str):
+            return value.strip().lower() in {"1", "true", "yes", "on"}
+        return False
+
+    def redirect_entries(value):
+        if not isinstance(value, str) or not value.strip():
+            return []
+        parsed = urllib.parse.urlsplit(value.strip())
+        hostname = (parsed.hostname or "").lower()
+        if parsed.scheme.lower() != "https" or not hostname:
+            raise ValueError(f"Only HTTPS app URLs can become Keycloak redirects: {value!r}")
+        if parsed.username or parsed.password or parsed.query or parsed.fragment:
+            raise ValueError(f"App URL must not contain credentials, a query, or a fragment: {value!r}")
+        if parsed.path not in {"", "/"}:
+            raise ValueError(f"App URL must be an origin without a path: {value!r}")
+        if not any(hostname == suffix or hostname.endswith(f".{suffix}") for suffix in allowed_suffixes):
+            raise ValueError(f"App URL host is outside the approved redirect domains: {hostname}")
+        origin = f"https://{parsed.netloc}"
+        return [origin, f"{origin}/", f"{origin}/*"]
+
+    dynamic_redirects = set()
+    for item in items:
+        if not isinstance(item, dict) or not enabled(item.get("enabled", True)):
+            continue
+        urls = item.get("base_urls") if isinstance(item.get("base_urls"), list) else []
+        if item.get("base_url"):
+            urls = [item.get("base_url"), *urls]
+        for value in urls:
+            dynamic_redirects.update(redirect_entries(value))
+
+    def request_json(method, url, token=None, body=None, form=None):
+        headers = {"Accept": "application/json"}
+        data = None
+        if token:
+            headers["Authorization"] = f"Bearer {token}"
+        if form is not None:
+            headers["Content-Type"] = "application/x-www-form-urlencoded"
+            data = urllib.parse.urlencode(form).encode("utf-8")
+        elif body is not None:
+            headers["Content-Type"] = "application/json"
+            data = json.dumps(body, separators=(",", ":")).encode("utf-8")
+        req = urllib.request.Request(url, data=data, headers=headers, method=method)
+        try:
+            with urllib.request.urlopen(req, timeout=20) as response:
+                raw = response.read().decode("utf-8", errors="replace")
+                return response.status, json.loads(raw) if raw else None
+        except urllib.error.HTTPError as err:
+            raw = err.read().decode("utf-8", errors="replace")
+            raise RuntimeError(f"Keycloak request failed: {method} {url} returned HTTP {err.code}: {raw[:1000]}") from err
+
+    _, token_payload = request_json(
+        "POST",
+        f"{keycloak_url}/realms/master/protocol/openid-connect/token",
+        form={
+            "grant_type": "client_credentials",
+            "client_id": client_id,
+            "client_secret": client_secret,
+        },
+    )
+    token = token_payload.get("access_token") if isinstance(token_payload, dict) else ""
+    if not token:
+        raise RuntimeError("Keycloak token response did not contain access_token.")
+
+    for realm in realms:
+        baseline_path = f"{client_config_root}/{realm}/auth-gateway-public.json"
+        with open(baseline_path, "r", encoding="utf-8") as baseline_file:
+            baseline = json.load(baseline_file)
+        static_redirects = baseline.get("redirectUris")
+        if not isinstance(static_redirects, list):
+            raise RuntimeError(f"Keycloak baseline for realm {realm} is missing redirectUris.")
+        desired_redirects = list(dict.fromkeys([*static_redirects, *sorted(dynamic_redirects)]))
+
+        query = urllib.parse.urlencode({"clientId": client_to_update})
+        _, clients = request_json(
+            "GET",
+            f"{keycloak_url}/admin/realms/{urllib.parse.quote(realm, safe='')}/clients?{query}",
+            token=token,
+        )
+        if not isinstance(clients, list) or len(clients) != 1 or not clients[0].get("id"):
+            raise RuntimeError(f"Expected exactly one {client_to_update!r} client in realm {realm!r}.")
+        client_id_value = clients[0]["id"]
+        _, client = request_json(
+            "GET",
+            f"{keycloak_url}/admin/realms/{urllib.parse.quote(realm, safe='')}/clients/{urllib.parse.quote(client_id_value, safe='')}",
+            token=token,
+        )
+        if not isinstance(client, dict):
+            raise RuntimeError(f"Keycloak returned an invalid client representation for realm {realm!r}.")
+        current_redirects = client.get("redirectUris") if isinstance(client.get("redirectUris"), list) else []
+        if current_redirects == desired_redirects:
+            print(f"Keycloak redirects already current for realm {realm} ({len(desired_redirects)} entries).")
+            continue
+        client["redirectUris"] = desired_redirects
+        request_json(
+            "PUT",
+            f"{keycloak_url}/admin/realms/{urllib.parse.quote(realm, safe='')}/clients/{urllib.parse.quote(client_id_value, safe='')}",
+            token=token,
+            body=client,
+        )
+        print(f"Reconciled Keycloak redirects for realm {realm} ({len(desired_redirects)} entries).")
+    PY
+      then
+        echo "keycloak auth gateway redirect sync completed"
+        exit 0
+      fi
+      echo "keycloak redirect sync attempt ${attempt}/12 failed; retrying..."
+      sleep 5
+    done
+
+    echo "failed to sync Keycloak auth gateway redirects"
     exit 1
 ---
 apiVersion: external-secrets.io/v1
@@ -285,6 +446,9 @@ spec:
         vault.hashicorp.com/agent-inject-secret-db-password: "yugabyte-db/static-creds/keycloak-app"
         vault.hashicorp.com/agent-inject-template-db-password: |
           {{- with secret "yugabyte-db/static-creds/keycloak-app" -}}{{ .Data.password }}{{- end -}}
+        vault.hashicorp.com/agent-inject-secret-keycloak-configurator-client-secret: "secret/data/keycloak-configurator-client-secret"
+        vault.hashicorp.com/agent-inject-template-keycloak-configurator-client-secret: |
+          {{- with secret "secret/data/keycloak-configurator-client-secret" -}}{{ .Data.data.value }}{{- end -}}
     spec:
       serviceAccountName: keycloak
       restartPolicy: Never
@@ -309,15 +473,39 @@ spec:
                   name: auth-gateway-registry-read-token
                   key: value
                   optional: false
+            - name: KEYCLOAK_URL
+              value: http://keycloak-bootstrap.keycloak.svc.cluster.local:8080
+            - name: KEYCLOAK_CONFIGURATOR_CLIENT_ID
+              value: keycloak-configurator
+            - name: KEYCLOAK_CONFIGURATOR_CLIENT_SECRET_FILE
+              value: /vault/secrets/keycloak-configurator-client-secret
+            - name: KEYCLOAK_REALMS
+              value: internal,external
+            - name: KEYCLOAK_REDIRECT_CLIENT_ID
+              value: auth-gateway-public
+            - name: KEYCLOAK_REDIRECT_ALLOWED_HOST_SUFFIXES
+              value: suncoast.systems
           command: ["/bin/sh", "/scripts/sync-auth-gateway-apps.sh"]
           volumeMounts:
             - name: sync-script
               mountPath: /scripts
               readOnly: true
+            - name: keycloak-client-config-internal
+              mountPath: /keycloak-client-config/internal
+              readOnly: true
+            - name: keycloak-client-config-external
+              mountPath: /keycloak-client-config/external
+              readOnly: true
       volumes:
         - name: sync-script
           configMap:
             name: keycloak-auth-gateway-sync-apps-script
+        - name: keycloak-client-config-internal
+          configMap:
+            name: keycloak-client-config-internal
+        - name: keycloak-client-config-external
+          configMap:
+            name: keycloak-client-config-external
 ---
 apiVersion: batch/v1
 kind: CronJob
@@ -351,6 +539,9 @@ spec:
             vault.hashicorp.com/agent-inject-secret-db-password: "yugabyte-db/static-creds/keycloak-app"
             vault.hashicorp.com/agent-inject-template-db-password: |
               {{- with secret "yugabyte-db/static-creds/keycloak-app" -}}{{ .Data.password }}{{- end -}}
+            vault.hashicorp.com/agent-inject-secret-keycloak-configurator-client-secret: "secret/data/keycloak-configurator-client-secret"
+            vault.hashicorp.com/agent-inject-template-keycloak-configurator-client-secret: |
+              {{- with secret "secret/data/keycloak-configurator-client-secret" -}}{{ .Data.data.value }}{{- end -}}
         spec:
           serviceAccountName: keycloak
           restartPolicy: Never
@@ -375,12 +566,36 @@ spec:
                       name: auth-gateway-registry-read-token
                       key: value
                       optional: false
+                - name: KEYCLOAK_URL
+                  value: http://keycloak-bootstrap.keycloak.svc.cluster.local:8080
+                - name: KEYCLOAK_CONFIGURATOR_CLIENT_ID
+                  value: keycloak-configurator
+                - name: KEYCLOAK_CONFIGURATOR_CLIENT_SECRET_FILE
+                  value: /vault/secrets/keycloak-configurator-client-secret
+                - name: KEYCLOAK_REALMS
+                  value: internal,external
+                - name: KEYCLOAK_REDIRECT_CLIENT_ID
+                  value: auth-gateway-public
+                - name: KEYCLOAK_REDIRECT_ALLOWED_HOST_SUFFIXES
+                  value: suncoast.systems
               command: ["/bin/sh", "/scripts/sync-auth-gateway-apps.sh"]
               volumeMounts:
                 - name: sync-script
                   mountPath: /scripts
                   readOnly: true
+                - name: keycloak-client-config-internal
+                  mountPath: /keycloak-client-config/internal
+                  readOnly: true
+                - name: keycloak-client-config-external
+                  mountPath: /keycloak-client-config/external
+                  readOnly: true
           volumes:
             - name: sync-script
               configMap:
                 name: keycloak-auth-gateway-sync-apps-script
+            - name: keycloak-client-config-internal
+              configMap:
+                name: keycloak-client-config-internal
+            - name: keycloak-client-config-external
+              configMap:
+                name: keycloak-client-config-external
