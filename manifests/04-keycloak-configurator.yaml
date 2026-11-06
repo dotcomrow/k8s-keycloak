@@ -370,13 +370,14 @@ data:
       local realm="$1"
       local client_id="$2"
       local client_secret="$3"
+      local reconcile_output=""
       if [ -z "${client_id:-}" ] || [ -z "${client_secret:-}" ]; then
         return 0
       fi
       local cid
       cid="$(client_uuid "$realm" "$client_id")"
       if [ -z "${cid:-}" ]; then
-        $KCADM create clients -r "$realm" \
+        if ! reconcile_output="$($KCADM create clients -r "$realm" \
           -s "clientId=$client_id" \
           -s enabled=true \
           -s serviceAccountsEnabled=true \
@@ -384,20 +385,24 @@ data:
           -s standardFlowEnabled=false \
           -s implicitFlowEnabled=false \
           -s directAccessGrantsEnabled=false \
-          -s "attributes.standard.token.exchange.enabled=true" \
+          -s 'attributes."standard.token.exchange.enabled"=true' \
           -s "clientAuthenticatorType=client-secret" \
-          -s "secret=$client_secret" >/dev/null 2>&1 || true
+          -s "secret=$client_secret" 2>&1)"; then
+          echo "WARN: failed to create confidential service client '${client_id}' in realm '${realm}': ${reconcile_output}"
+        fi
       else
-        $KCADM update "clients/$cid" -r "$realm" \
+        if ! reconcile_output="$($KCADM update "clients/$cid" -r "$realm" \
           -s enabled=true \
           -s serviceAccountsEnabled=true \
           -s publicClient=false \
           -s standardFlowEnabled=false \
           -s implicitFlowEnabled=false \
           -s directAccessGrantsEnabled=false \
-          -s "attributes.standard.token.exchange.enabled=true" \
+          -s 'attributes."standard.token.exchange.enabled"=true' \
           -s "clientAuthenticatorType=client-secret" \
-          -s "secret=$client_secret" >/dev/null 2>&1 || true
+          -s "secret=$client_secret" 2>&1)"; then
+          echo "WARN: failed to update confidential service client '${client_id}' in realm '${realm}': ${reconcile_output}"
+        fi
       fi
       # client_uuid may have cached an empty lookup before this client was
       # created. Clear the cache so later service-account role assignment
