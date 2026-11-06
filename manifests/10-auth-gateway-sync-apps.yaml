@@ -249,7 +249,7 @@ data:
 
     apps_path = sys.argv[1]
     keycloak_url = (os.environ.get("KEYCLOAK_URL") or "").strip().rstrip("/")
-    client_id = (os.environ.get("KEYCLOAK_CONFIGURATOR_CLIENT_ID") or "keycloak-configurator").strip()
+    client_id = (os.environ.get("KEYCLOAK_REDIRECT_RECONCILER_CLIENT_ID") or "keycloak-app-redirect-reconciler").strip()
     client_secret_file = (os.environ.get("KEYCLOAK_CONFIGURATOR_CLIENT_SECRET_FILE") or "").strip()
     client_config_root = (os.environ.get("KEYCLOAK_CLIENT_CONFIG_ROOT") or "/keycloak-client-config").rstrip("/")
     client_to_update = (os.environ.get("KEYCLOAK_REDIRECT_CLIENT_ID") or "auth-gateway-public").strip()
@@ -333,20 +333,20 @@ data:
             raw = err.read().decode("utf-8", errors="replace")
             raise RuntimeError(f"Keycloak request failed: {method} {url} returned HTTP {err.code}: {raw[:1000]}") from err
 
-    _, token_payload = request_json(
-        "POST",
-        f"{keycloak_url}/realms/master/protocol/openid-connect/token",
-        form={
-            "grant_type": "client_credentials",
-            "client_id": client_id,
-            "client_secret": client_secret,
-        },
-    )
-    token = token_payload.get("access_token") if isinstance(token_payload, dict) else ""
-    if not token:
-        raise RuntimeError("Keycloak token response did not contain access_token.")
-
     for realm in realms:
+        _, token_payload = request_json(
+            "POST",
+            f"{keycloak_url}/realms/{urllib.parse.quote(realm, safe='')}/protocol/openid-connect/token",
+            form={
+                "grant_type": "client_credentials",
+                "client_id": client_id,
+                "client_secret": client_secret,
+            },
+        )
+        token = token_payload.get("access_token") if isinstance(token_payload, dict) else ""
+        if not token:
+            raise RuntimeError(f"Keycloak token response did not contain access_token for realm {realm!r}.")
+
         baseline_path = f"{client_config_root}/{realm}/auth-gateway-public.json"
         with open(baseline_path, "r", encoding="utf-8") as baseline_file:
             baseline = json.load(baseline_file)
@@ -475,8 +475,8 @@ spec:
                   optional: false
             - name: KEYCLOAK_URL
               value: http://keycloak-bootstrap.keycloak.svc.cluster.local:8080
-            - name: KEYCLOAK_CONFIGURATOR_CLIENT_ID
-              value: keycloak-configurator
+            - name: KEYCLOAK_REDIRECT_RECONCILER_CLIENT_ID
+              value: keycloak-app-redirect-reconciler
             - name: KEYCLOAK_CONFIGURATOR_CLIENT_SECRET_FILE
               value: /vault/secrets/keycloak-configurator-client-secret
             - name: KEYCLOAK_REALMS
@@ -568,8 +568,8 @@ spec:
                       optional: false
                 - name: KEYCLOAK_URL
                   value: http://keycloak-bootstrap.keycloak.svc.cluster.local:8080
-                - name: KEYCLOAK_CONFIGURATOR_CLIENT_ID
-                  value: keycloak-configurator
+                - name: KEYCLOAK_REDIRECT_RECONCILER_CLIENT_ID
+                  value: keycloak-app-redirect-reconciler
                 - name: KEYCLOAK_CONFIGURATOR_CLIENT_SECRET_FILE
                   value: /vault/secrets/keycloak-configurator-client-secret
                 - name: KEYCLOAK_REALMS

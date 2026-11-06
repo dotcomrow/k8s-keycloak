@@ -102,6 +102,7 @@ data:
     INTERNAL_REALM_ROLES_RAW="${KEYCLOAK_INTERNAL_REALM_ROLES:-}"
     CONFIG_CLIENT_ID="keycloak-configurator"
     CONFIG_CLIENT_SECRET="$(cat /vault/secrets/keycloak-configurator-client-secret 2>/dev/null || true)"
+    APP_REDIRECT_RECONCILER_CLIENT_ID="keycloak-app-redirect-reconciler"
     CONFIGURATOR_DELETE_CLIENT="${CONFIGURATOR_DELETE_CLIENT:-false}"
     CLIENT_SECRET_MAP_FILE="/vault/secrets/client-secrets"
     CLIENT_SECRET_DIR="/vault/secrets"
@@ -583,6 +584,8 @@ data:
     
     ensure_confidential_service_client "$INTERNAL_REALM" "$GRAVITEE_INTROSPECT_CLIENT_ID" "$GRAVITEE_INTROSPECT_CLIENT_SECRET"
     ensure_confidential_service_client "$EXTERNAL_REALM" "$GRAVITEE_INTROSPECT_CLIENT_ID" "$GRAVITEE_INTROSPECT_CLIENT_SECRET"
+    ensure_confidential_service_client "$INTERNAL_REALM" "$APP_REDIRECT_RECONCILER_CLIENT_ID" "$CONFIG_CLIENT_SECRET"
+    ensure_confidential_service_client "$EXTERNAL_REALM" "$APP_REDIRECT_RECONCILER_CLIENT_ID" "$CONFIG_CLIENT_SECRET"
     ensure_audience_mapper "$INTERNAL_REALM" "$GRAVITEE_INTROSPECT_CLIENT_ID" "$GRAVITEE_INTROSPECT_CLIENT_ID"
     ensure_audience_mapper "$EXTERNAL_REALM" "$GRAVITEE_INTROSPECT_CLIENT_ID" "$GRAVITEE_INTROSPECT_CLIENT_ID"
     ensure_audience_mapper "$EXTERNAL_REALM" "$GRAPHQL_API_CLIENT_ID" "$OPENWEBUI_CLIENT_ID"
@@ -2452,6 +2455,12 @@ data:
     assign_client_role_to_service_account "$INTERNAL_REALM" "$CMS_SITE_INTERNAL_CLIENT_ID" "realm-management" "view-realm"
     assign_client_role_to_service_account "$EXTERNAL_REALM" "$CMS_SITE_EXTERNAL_CLIENT_ID" "realm-management" "query-roles"
     assign_client_role_to_service_account "$EXTERNAL_REALM" "$CMS_SITE_EXTERNAL_CLIENT_ID" "realm-management" "view-realm"
+    assign_client_role_to_service_account "$INTERNAL_REALM" "$APP_REDIRECT_RECONCILER_CLIENT_ID" "realm-management" "query-clients"
+    assign_client_role_to_service_account "$INTERNAL_REALM" "$APP_REDIRECT_RECONCILER_CLIENT_ID" "realm-management" "view-clients"
+    assign_client_role_to_service_account "$INTERNAL_REALM" "$APP_REDIRECT_RECONCILER_CLIENT_ID" "realm-management" "manage-clients"
+    assign_client_role_to_service_account "$EXTERNAL_REALM" "$APP_REDIRECT_RECONCILER_CLIENT_ID" "realm-management" "query-clients"
+    assign_client_role_to_service_account "$EXTERNAL_REALM" "$APP_REDIRECT_RECONCILER_CLIENT_ID" "realm-management" "view-clients"
+    assign_client_role_to_service_account "$EXTERNAL_REALM" "$APP_REDIRECT_RECONCILER_CLIENT_ID" "realm-management" "manage-clients"
     
     enable_token_exchange_for_client() {
       local realm="$1"
