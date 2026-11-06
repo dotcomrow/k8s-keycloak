@@ -406,7 +406,13 @@ data:
       cid="$(client_uuid "$realm" "$client_id")"
       if [ -z "${cid:-}" ]; then
         echo "WARN: confidential service client '${client_id}' was not found after reconciliation in realm '${realm}'"
-        return 1
+        # Preserve the existing non-fatal behavior for unrelated optional
+        # service clients, but require the redirect reconciler because the
+        # scheduled app registration depends on it.
+        if [ "$client_id" = "$APP_REDIRECT_RECONCILER_CLIENT_ID" ]; then
+          return 1
+        fi
+        return 0
       fi
     }
     
