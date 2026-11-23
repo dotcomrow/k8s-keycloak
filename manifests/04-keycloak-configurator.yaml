@@ -1530,7 +1530,10 @@ data:
           if ! create_err="$($KCADM create clients -r "$realm" -f "$json_file" 2>&1)"; then
             echo "⚠️  failed to create client ${effective_id} in realm ${realm}: ${create_err}"
           fi
-          CLIENT_UUID_CACHE["${realm}|${effective_id}"]=""
+          # client_uuid may have cached the pre-create empty lookup. Clear the
+          # cache so the newly created client can be resolved immediately and
+          # receive its secret, mappers, and other post-create settings.
+          CLIENT_UUID_CACHE=()
           CID="$(client_uuid "$realm" "$effective_id")"
         fi
         if [ -z "${CID:-}" ]; then
@@ -1607,6 +1610,23 @@ data:
         -s "attributes.\"pkce.code.challenge.method\"=S256" || true
       else
         echo "ℹ️  client not found for PKCE enforcement: $clientId"
+      fi
+    }
+
+    enforce_public_pkce_for_client() {
+      local realm="$1"
+      local clientId="$2"
+      CID="$(client_uuid "$realm" "$clientId")"
+      if [ -n "${CID:-}" ]; then
+        $KCADM update "clients/$CID" -r "$realm" \
+          -s "publicClient=true" \
+          -s "standardFlowEnabled=true" \
+          -s "directAccessGrantsEnabled=false" \
+          -s "implicitFlowEnabled=false" \
+          -s "serviceAccountsEnabled=false" \
+          -s "attributes.\"pkce.code.challenge.method\"=S256" || true
+      else
+        echo "ℹ️  public client not found for PKCE enforcement: $clientId"
       fi
     }
     
@@ -1878,6 +1898,7 @@ data:
     ensure_suncoast_membership_roles_mapper "$INTERNAL_REALM" "shell-spa-public"
     ensure_suncoast_membership_roles_mapper "$INTERNAL_REALM" "auth-gateway-exchange"
     ensure_suncoast_membership_roles_mapper "$INTERNAL_REALM" "discourse"
+    enforce_public_pkce_for_client "$INTERNAL_REALM" "discourse"
     clear_pkce_for_client "$INTERNAL_REALM" "$DROOLS_WORKBENCH_CLIENT_ID"
     
     log_progress "Applying external realm clients and auth settings..."
