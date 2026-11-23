@@ -1624,7 +1624,7 @@ data:
           -s "directAccessGrantsEnabled=false" \
           -s "implicitFlowEnabled=false" \
           -s "serviceAccountsEnabled=false" \
-          -s "attributes.\"pkce.code.challenge.method\"=S256" || true
+          -s 'attributes={"pkce.code.challenge.method":"S256"}' || true
       else
         echo "ℹ️  public client not found for PKCE enforcement: $clientId"
       fi
