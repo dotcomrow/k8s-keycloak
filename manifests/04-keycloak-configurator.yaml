@@ -1877,6 +1877,7 @@ data:
     ensure_suncoast_membership_roles_mapper "$INTERNAL_REALM" "auth-gateway-public"
     ensure_suncoast_membership_roles_mapper "$INTERNAL_REALM" "shell-spa-public"
     ensure_suncoast_membership_roles_mapper "$INTERNAL_REALM" "auth-gateway-exchange"
+    ensure_suncoast_membership_roles_mapper "$INTERNAL_REALM" "discourse"
     clear_pkce_for_client "$INTERNAL_REALM" "$DROOLS_WORKBENCH_CLIENT_ID"
     
     log_progress "Applying external realm clients and auth settings..."

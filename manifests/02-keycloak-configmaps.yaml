@@ -6,6 +6,29 @@ metadata:
   annotations:
     argocd.argoproj.io/sync-wave: "1"
 data:
+  discourse.json: |
+    {
+      "clientId": "discourse",
+      "name": "Discourse",
+      "protocol": "openid-connect",
+      "publicClient": true,
+      "standardFlowEnabled": true,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": false,
+      "authorizationServicesEnabled": false,
+      "rootUrl": "https://discourse.teleport.app.suncoast.systems",
+      "baseUrl": "https://discourse.teleport.app.suncoast.systems",
+      "redirectUris": [
+        "https://discourse.teleport.app.suncoast.systems/auth/oidc/callback"
+      ],
+      "webOrigins": [
+        "https://discourse.teleport.app.suncoast.systems"
+      ],
+      "attributes": {
+        "pkce.code.challenge.method": "S256"
+      }
+    }
   ollama-service.json: |
     {
       "clientId": "<path:secret/data/keycloak-client-id-ollama-service#value>",
