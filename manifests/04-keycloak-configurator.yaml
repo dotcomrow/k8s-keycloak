@@ -2164,86 +2164,6 @@ data:
         -s "config.\"id.token.claim\"=true" \
         -s "config.\"userinfo.token.claim\"=true" >/dev/null 2>&1 || true
     }
-
-    # Stable application identity: derive a namespaced subject from the durable
-    # external IdP identifier (or service client) instead of Keycloak's database UUID.
-    # It is a realm default and is also attached to every existing OIDC client.
-    ensure_stable_identity_scope() {
-      local realm="$1"
-      local scope_name="suncoast-identity"
-      local scope_uuid=""
-      local mapper_name="suncoast-stable-identity"
-      local mapper_id=""
-      local mapper_json=""
-      local realm_defaults=""
-      local client_id=""
-      local client_name=""
-      local client_protocol=""
-
-      scope_uuid="$(client_scope_uuid "$realm" "$scope_name")"
-      if [ -z "${scope_uuid:-}" ]; then
-        scope_uuid=$($KCADM create client-scopes -r "$realm" \
-          -s "name=$scope_name" \
-          -s "protocol=openid-connect" \
-          -i 2>/dev/null || true)
-        scope_uuid="$(clean_id "$scope_uuid")"
-        CLIENT_SCOPE_UUID_CACHE["${realm}|${scope_name}"]="$scope_uuid"
-      fi
-      [ -n "${scope_uuid:-}" ] || fatal "Unable to create ${scope_name} client scope in realm=${realm}"
-
-      mapper_id="$(scope_mapper_id "$realm" "$scope_uuid" "$mapper_name")"
-      if [ -n "${mapper_id:-}" ]; then
-        mapper_json="$($KCADM get "client-scopes/$scope_uuid/protocol-mappers/models/$mapper_id" -r "$realm" 2>/dev/null || true)"
-      fi
-      if [ -z "${mapper_id:-}" ]; then
-        mapper_id=$($KCADM create "client-scopes/$scope_uuid/protocol-mappers/models" -r "$realm" \
-          -s "name=${mapper_name}" \
-          -s "protocol=openid-connect" \
-          -s "protocolMapper=suncoast-stable-identity-mapper" \
-          -s 'config."claim.name"=suncoast_identity_id' \
-          -s 'config."jsonType.label"=String' \
-          -s 'config."access.token.claim"=true' \
-          -s 'config."id.token.claim"=true' \
-          -s 'config."userinfo.token.claim"=true' \
-          -s 'config."introspection.token.claim"=true' \
-          -i 2>/dev/null || true)
-        mapper_id="$(clean_id "$mapper_id")"
-      elif ! printf '%s' "$mapper_json" | grep -Eq '"protocolMapper"[[:space:]]*:[[:space:]]*"suncoast-stable-identity-mapper"'; then
-        if ! $KCADM update "client-scopes/$scope_uuid/protocol-mappers/models/$mapper_id" -r "$realm" \
-          -s "name=${mapper_name}" \
-          -s "protocol=openid-connect" \
-          -s "protocolMapper=suncoast-stable-identity-mapper" \
-          -s 'config."claim.name"=suncoast_identity_id' \
-          -s 'config."jsonType.label"=String' \
-          -s 'config."access.token.claim"=true' \
-          -s 'config."id.token.claim"=true' \
-          -s 'config."userinfo.token.claim"=true' \
-          -s 'config."introspection.token.claim"=true'; then
-          fatal "Unable to update stable identity mapper in realm=${realm}"
-        fi
-      fi
-      refresh_scope_mapper_cache "$realm" "$scope_uuid"
-      mapper_id="$(scope_mapper_id "$realm" "$scope_uuid" "$mapper_name")"
-      [ -n "${mapper_id:-}" ] || fatal "Stable identity mapper is missing in realm=${realm}"
-
-      realm_defaults="$($KCADM get default-default-client-scopes -r "$realm" 2>/dev/null || true)"
-      if ! printf '%s' "$realm_defaults" | grep -q '"name"[[:space:]]*:[[:space:]]*"suncoast-identity"'; then
-        if ! $KCADM update "default-default-client-scopes/$scope_uuid" -r "$realm"; then
-          fatal "Unable to set ${scope_name} as a realm default in realm=${realm}"
-        fi
-      fi
-
-      while IFS=, read -r client_id client_name client_protocol; do
-        client_id="$(clean_id "$client_id")"
-        client_name="$(clean_id "$client_name")"
-        client_protocol="$(clean_id "$client_protocol")"
-        [ -n "${client_id:-}" ] || continue
-        [ "$client_protocol" = "openid-connect" ] || continue
-        if ! $KCADM update "clients/$client_id/default-client-scopes/$scope_uuid" -r "$realm" >/dev/null 2>&1; then
-          fatal "Unable to attach ${scope_name} to client=${client_name} realm=${realm}"
-        fi
-      done < <($KCADM get clients -r "$realm" --fields id,clientId,protocol --format csv 2>/dev/null | tail -n +2)
-    }
     
     # Common profile scope: attach to clients so apps can depend on consistent, high-signal profile claims.
     # Values come from user attributes populated by IdP mappers (GitHub, Google, etc).
@@ -2390,8 +2310,6 @@ data:
     # Standardize profile claims for apps via a shared client scope in both realms.
     ensure_user_profile_scope "$INTERNAL_REALM"
     ensure_user_profile_scope "$EXTERNAL_REALM"
-    ensure_stable_identity_scope "$INTERNAL_REALM"
-    ensure_stable_identity_scope "$EXTERNAL_REALM"
     ensure_notification_contact_scope "$INTERNAL_REALM"
     ensure_notification_contact_scope "$EXTERNAL_REALM"
     ensure_user_profile_schema "$INTERNAL_REALM"
@@ -3181,7 +3099,7 @@ spec:
       containers:
         # --- One-time configuration sidecar (IdPs + flows + attach providers) ---
         - name: keycloak-configurator
-          image: ghcr.io/dotcomrow/keycloak-image:26.6.2
+          image: ghcr.io/dotcomrow/keycloak-image:sha-61fb161
           imagePullPolicy: Always
           env:
             - name: KEYCLOAK_REALM

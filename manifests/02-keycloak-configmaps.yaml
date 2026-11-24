@@ -385,9 +385,10 @@ data:
         {
           "name": "hasura-user-id",
           "protocol": "openid-connect",
-          "protocolMapper": "suncoast-stable-identity-mapper",
+          "protocolMapper": "oidc-usermodel-property-mapper",
           "consentRequired": false,
           "config": {
+            "user.attribute": "id",
             "claim.name": "https://hasura.io/jwt/claims.x-hasura-user-id",
             "jsonType.label": "String",
             "access.token.claim": "true",
@@ -445,9 +446,10 @@ data:
         {
           "name": "hasura-user-id",
           "protocol": "openid-connect",
-          "protocolMapper": "suncoast-stable-identity-mapper",
+          "protocolMapper": "oidc-usermodel-property-mapper",
           "consentRequired": false,
           "config": {
+            "user.attribute": "id",
             "claim.name": "https://hasura.io/jwt/claims.x-hasura-user-id",
             "jsonType.label": "String",
             "access.token.claim": "true",
@@ -640,9 +642,10 @@ data:
         {
           "name": "hasura-user-id",
           "protocol": "openid-connect",
-          "protocolMapper": "suncoast-stable-identity-mapper",
+          "protocolMapper": "oidc-usermodel-property-mapper",
           "consentRequired": false,
           "config": {
+            "user.attribute": "id",
             "claim.name": "https://hasura.io/jwt/claims.x-hasura-user-id",
             "jsonType.label": "String",
             "access.token.claim": "true",
@@ -826,9 +829,10 @@ data:
         {
           "name": "hasura-user-id",
           "protocol": "openid-connect",
-          "protocolMapper": "suncoast-stable-identity-mapper",
+          "protocolMapper": "oidc-usermodel-property-mapper",
           "consentRequired": false,
           "config": {
+            "user.attribute": "id",
             "claim.name": "https://hasura.io/jwt/claims.x-hasura-user-id",
             "jsonType.label": "String",
             "access.token.claim": "true",
