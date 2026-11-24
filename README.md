@@ -1,6 +1,27 @@
 # k8s-keycloak
 Suncoast Systems Keycloak Auth server
 
+## Suncoast Account and Login Theme
+
+`manifests/04-keycloak-app.yaml` contains the complete `suncoast-account`
+Keycloak theme in the `keycloak-account-theme` ConfigMap. The ConfigMap mounts
+the theme at `/opt/keycloak/themes/suncoast-account` with both `account` and
+`login` theme types. It includes the Suncoast logo, responsive light/dark
+styles, and the existing read-only profile and identity-provider role panels.
+
+`manifests/04-keycloak-configurator.yaml` declaratively selects the theme as
+both `accountTheme` and `loginTheme` for the `internal` and `external` realms.
+The master realm login theme is intentionally unchanged. The Keycloak
+Deployment is watched by Stakater Reloader, so ConfigMap theme changes restart
+Keycloak and clear its theme cache during the normal GitOps rollout.
+
+Maintain the theme in these ConfigMap keys:
+
+- `theme.properties`, `account-lockdown.css`, `account-lockdown.js`,
+  `content.json`, and `suncoast-logo.svg` for the Account Console.
+- `login-theme.properties`, `suncoast-login.css`, `suncoast-login.js`, and
+  `suncoast-mark.svg` for realm login pages.
+
 ## Public SPA Client (External Realm)
 
 `manifests/02-keycloak-configmaps.yaml` defines a shared public OIDC client for browser apps:

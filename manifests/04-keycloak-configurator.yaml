@@ -118,6 +118,7 @@ data:
     INTERNAL_DISABLE_PROFILE_EDITS="${INTERNAL_DISABLE_PROFILE_EDITS:-true}"
     EXTERNAL_DISABLE_PROFILE_EDITS="${EXTERNAL_DISABLE_PROFILE_EDITS:-true}"
     KEYCLOAK_ACCOUNT_THEME="${KEYCLOAK_ACCOUNT_THEME:-suncoast-account}"
+    KEYCLOAK_LOGIN_THEME="${KEYCLOAK_LOGIN_THEME:-suncoast-account}"
     OPENWEBUI_CLIENT_ID="openwebui"
     OLLAMA_SERVICE_CLIENT_ID="ollama-service"
     DROOLS_WORKBENCH_CLIENT_ID="drools-workbench-5k32f99itpcixgacte"
@@ -1418,11 +1419,13 @@ data:
     $KCADM update "realms/$INTERNAL_REALM" \
       -s sslRequired=EXTERNAL -s loginWithEmailAllowed=true -s registrationAllowed=false \
       -s rememberMe=true -s resetPasswordAllowed=false -s bruteForceProtected=true -s permanentLockout=false \
-      -s "accountTheme=$KEYCLOAK_ACCOUNT_THEME" || true
+      -s "accountTheme=$KEYCLOAK_ACCOUNT_THEME" \
+      -s "loginTheme=$KEYCLOAK_LOGIN_THEME" || true
     $KCADM update "realms/$EXTERNAL_REALM" \
       -s sslRequired=EXTERNAL -s loginWithEmailAllowed=true -s registrationAllowed=false \
       -s rememberMe=false -s resetPasswordAllowed=false -s bruteForceProtected=true -s permanentLockout=false \
-      -s "accountTheme=$KEYCLOAK_ACCOUNT_THEME" || true
+      -s "accountTheme=$KEYCLOAK_ACCOUNT_THEME" \
+      -s "loginTheme=$KEYCLOAK_LOGIN_THEME" || true
     apply_account_theme_to_all_realms "$KEYCLOAK_ACCOUNT_THEME"
     if [ "$INTERNAL_DISABLE_PASSWORD_SETUP" = "true" ]; then
       # Remove account-console password setup/update actions in the internal realm.
@@ -3220,6 +3223,8 @@ spec:
             - name: EXTERNAL_DISABLE_PROFILE_EDITS
               value: "true"
             - name: KEYCLOAK_ACCOUNT_THEME
+              value: "suncoast-account"
+            - name: KEYCLOAK_LOGIN_THEME
               value: "suncoast-account"
             - name: KEYCLOAK_EXTERNAL_ADMIN_MODE
               value: "group"

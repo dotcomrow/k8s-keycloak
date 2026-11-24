@@ -77,7 +77,13 @@ data:
     parent=keycloak.v3
     styles=css/account-lockdown.css
     scripts=js/account-lockdown.js
-    logo=/public/blank-logo.svg
+    logo=/public/suncoast-logo.svg
+  login-theme.properties: |
+    parent=keycloak
+    import=common/keycloak
+    styles=css/login.css css/suncoast-login.css
+    scripts=js/suncoast-login.js
+    favicons=img/suncoast-mark.svg
   content.json: |
     [
       { "label": "personalInfo", "path": "" },
@@ -113,8 +119,289 @@ data:
     personalInfoDescription=Your profile information is managed by your linked identity provider. To make changes, update the identity provider profile and then sign in again.
     signingInDescription=Manage second-factor sign-in methods. Password setup and profile editing are disabled in this account page.
     linkedAccountsIntroMessage=Link additional login providers here. Unlinking providers is disabled in this account page.
-  blank-logo.svg: |
-    <svg xmlns="http://www.w3.org/2000/svg" width="1" height="1" viewBox="0 0 1 1" aria-hidden="true"></svg>
+  suncoast-logo.svg: |
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 252 48" role="img" aria-labelledby="title">
+      <title id="title">Suncoast Systems</title>
+      <style>
+        .suncoast-wordmark { fill: #0F172A; }
+        @media (prefers-color-scheme: dark) { .suncoast-wordmark { fill: #F8FAFC; } }
+      </style>
+      <g fill="none" stroke="#326CE5" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M24 5.5 37 13v15.2L24 35.8 11 28.2V13z"/>
+        <circle cx="24" cy="20.6" r="4.8"/>
+        <path d="M24 12v3.2M17.6 15.5l2.2 2.1M30.4 15.5l-2.2 2.1M15.3 28.8c2.2 1.7 4.4 1.7 6.5 0s4.4-1.7 6.6 0 4.4 1.7 6.5 0"/>
+      </g>
+      <text class="suncoast-wordmark" x="52" y="29" font-family="IBM Plex Sans, Segoe UI, system-ui, sans-serif" font-size="20" font-weight="650">Suncoast Systems</text>
+    </svg>
+  suncoast-mark.svg: |
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" role="img" aria-labelledby="title">
+      <title id="title">Suncoast Systems</title>
+      <g fill="none" stroke="#326CE5" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M24 5.5 37 13v15.2L24 35.8 11 28.2V13z"/>
+        <circle cx="24" cy="20.6" r="4.8"/>
+        <path d="M24 12v3.2M17.6 15.5l2.2 2.1M30.4 15.5l-2.2 2.1M15.3 28.8c2.2 1.7 4.4 1.7 6.5 0s4.4-1.7 6.6 0 4.4 1.7 6.5 0"/>
+      </g>
+    </svg>
+  suncoast-login.js: |
+    (function () {
+      "use strict";
+
+      function applyBrand() {
+        var header = document.getElementById("kc-header-wrapper");
+        if (!header || header.dataset.suncoastBranded === "true") {
+          return;
+        }
+        var match = window.location.pathname.match(/\/realms\/([^/]+)/);
+        var realm = match ? decodeURIComponent(match[1]) : "";
+        var realmLabel = realm === "internal" ? "Internal" : realm === "external" ? "External" : realm;
+
+        header.textContent = "";
+        var brand = document.createElement("span");
+        brand.className = "suncoast-login-brand";
+        brand.textContent = "Suncoast Systems";
+        header.appendChild(brand);
+
+        if (realmLabel) {
+          var badge = document.createElement("span");
+          badge.className = "suncoast-login-realm";
+          badge.textContent = realmLabel;
+          header.appendChild(badge);
+        }
+        header.dataset.suncoastBranded = "true";
+      }
+
+      if (document.readyState === "loading") {
+        document.addEventListener("DOMContentLoaded", applyBrand, { once: true });
+      } else {
+        applyBrand();
+      }
+    })();
+  suncoast-login.css: |
+    :root {
+      --suncoast-bg: #f8fafc;
+      --suncoast-surface: #ffffff;
+      --suncoast-text: #0f172a;
+      --suncoast-muted: #475569;
+      --suncoast-border: #dbe3ee;
+      --suncoast-accent: #326ce5;
+      --suncoast-accent-strong: #1d4ed8;
+      --suncoast-focus: rgba(50, 108, 229, 0.24);
+      --suncoast-shadow: 0 22px 60px rgba(15, 23, 42, 0.12);
+    }
+
+    html,
+    body,
+    .login-pf body,
+    body.keycloak-bg {
+      min-height: 100%;
+      background:
+        radial-gradient(circle at 14% 12%, rgba(50, 108, 229, 0.10), transparent 28rem),
+        linear-gradient(180deg, #ffffff 0%, var(--suncoast-bg) 72%) !important;
+      color: var(--suncoast-text);
+      font-family: "IBM Plex Sans", "Segoe UI", system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+    }
+
+    .login-pf-page {
+      min-height: 100vh;
+      padding: clamp(2rem, 7vh, 5.5rem) 1.25rem 2rem;
+    }
+
+    #kc-header {
+      margin: 0 auto 1.5rem;
+      max-width: 34rem;
+      color: var(--suncoast-text);
+    }
+
+    #kc-header-wrapper {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 0.75rem;
+      padding: 0;
+      color: var(--suncoast-text);
+      font-size: 1rem;
+      font-weight: 650;
+      letter-spacing: -0.015em;
+      text-transform: none;
+    }
+
+    .suncoast-login-brand {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.65rem;
+    }
+
+    .suncoast-login-brand::before {
+      width: 2rem;
+      height: 2rem;
+      content: "";
+      background: url("../img/suncoast-mark.svg") center / contain no-repeat;
+    }
+
+    .suncoast-login-realm {
+      padding: 0.25rem 0.6rem;
+      border: 1px solid var(--suncoast-border);
+      border-radius: 999px;
+      background: rgba(255, 255, 255, 0.78);
+      color: var(--suncoast-muted);
+      font-size: 0.7rem;
+      font-weight: 650;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+
+    .login-pf-page .card-pf,
+    #kc-content-wrapper {
+      border: 1px solid var(--suncoast-border);
+      border-radius: 1.25rem;
+      background: rgba(255, 255, 255, 0.96);
+      box-shadow: var(--suncoast-shadow);
+    }
+
+    .login-pf-page .card-pf {
+      max-width: 34rem;
+      margin: 0 auto;
+      padding: clamp(1.6rem, 4vw, 3rem);
+      border-top: 1px solid var(--suncoast-border);
+    }
+
+    #kc-page-title {
+      margin-bottom: 1.5rem;
+      color: var(--suncoast-text);
+      font-size: clamp(1.75rem, 3.5vw, 2.35rem);
+      font-weight: 700;
+      letter-spacing: -0.035em;
+      line-height: 1.08;
+    }
+
+    #kc-form label,
+    #kc-form-login label {
+      color: var(--suncoast-text);
+      font-size: 0.82rem;
+      font-weight: 650;
+    }
+
+    #kc-form input,
+    #kc-form-login input,
+    .pf-c-form-control,
+    .pf-v5-c-form-control {
+      min-height: 2.85rem;
+      border: 1px solid #cbd5e1;
+      border-radius: 0.65rem;
+      background: #ffffff;
+      color: var(--suncoast-text);
+      box-shadow: none;
+    }
+
+    #kc-form input:focus,
+    #kc-form-login input:focus,
+    .pf-c-form-control:focus,
+    .pf-v5-c-form-control:focus {
+      border-color: var(--suncoast-accent);
+      box-shadow: 0 0 0 3px var(--suncoast-focus);
+      outline: none;
+    }
+
+    #kc-login,
+    .pf-c-button.pf-m-primary,
+    .pf-v5-c-button.pf-m-primary {
+      min-height: 2.85rem;
+      border: 0;
+      border-radius: 0.65rem;
+      background: var(--suncoast-accent) !important;
+      color: #ffffff !important;
+      font-weight: 650;
+      box-shadow: none;
+    }
+
+    #kc-login:hover,
+    #kc-login:focus,
+    .pf-c-button.pf-m-primary:hover,
+    .pf-v5-c-button.pf-m-primary:hover {
+      background: var(--suncoast-accent-strong) !important;
+    }
+
+    #kc-social-providers li a,
+    .kc-social-item {
+      min-height: 2.85rem;
+      border: 1px solid var(--suncoast-border) !important;
+      border-radius: 0.65rem !important;
+      background: #ffffff !important;
+      color: var(--suncoast-text) !important;
+      box-shadow: none !important;
+      font-weight: 600;
+    }
+
+    #kc-social-providers li a:hover,
+    .kc-social-item:hover {
+      border-color: var(--suncoast-accent) !important;
+      background: #f8fbff !important;
+    }
+
+    #kc-social-providers hr,
+    #kc-form-options + hr {
+      border-color: var(--suncoast-border);
+    }
+
+    #kc-social-providers,
+    #kc-info,
+    #kc-form-options,
+    .login-pf-page .login-pf-settings {
+      color: var(--suncoast-muted);
+    }
+
+    a,
+    a:visited {
+      color: var(--suncoast-accent-strong);
+    }
+
+    @media (max-width: 540px) {
+      .login-pf-page {
+        padding: 1.25rem 0.85rem;
+      }
+
+      .login-pf-page .card-pf {
+        padding: 1.4rem;
+        border-radius: 1rem;
+      }
+
+      #kc-header-wrapper {
+        flex-wrap: wrap;
+      }
+    }
+
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --suncoast-bg: #0f172a;
+        --suncoast-surface: #111827;
+        --suncoast-text: #f8fafc;
+        --suncoast-muted: #cbd5e1;
+        --suncoast-border: #334155;
+        --suncoast-shadow: 0 22px 60px rgba(0, 0, 0, 0.38);
+      }
+
+      html,
+      body,
+      .login-pf body,
+      body.keycloak-bg {
+        background:
+          radial-gradient(circle at 14% 12%, rgba(50, 108, 229, 0.18), transparent 28rem),
+          linear-gradient(180deg, #111827 0%, var(--suncoast-bg) 72%) !important;
+      }
+
+      .login-pf-page .card-pf,
+      #kc-content-wrapper,
+      .suncoast-login-realm,
+      #kc-form input,
+      #kc-form-login input,
+      .pf-c-form-control,
+      .pf-v5-c-form-control,
+      #kc-social-providers li a,
+      .kc-social-item {
+        background: var(--suncoast-surface) !important;
+        color: var(--suncoast-text) !important;
+      }
+    }
   account-lockdown.css: |
     #save-btn,
     #cancel-btn,
@@ -344,6 +631,226 @@ data:
 
     #suncoast-account-return-link {
       display: none !important;
+    }
+
+    /* Suncoast visual system: shared with www-preview.suncoast.systems. */
+    :root {
+      --suncoast-bg: #f8fafc;
+      --suncoast-surface: #ffffff;
+      --suncoast-elevated: #f1f5f9;
+      --suncoast-text: #0f172a;
+      --suncoast-muted: #475569;
+      --suncoast-border: #dbe3ee;
+      --suncoast-accent: #326ce5;
+      --suncoast-accent-strong: #1d4ed8;
+      --suncoast-focus: rgba(50, 108, 229, 0.24);
+      --suncoast-shadow: 0 14px 40px rgba(15, 23, 42, 0.08);
+      --pf-v5-global--FontFamily--sans-serif: "IBM Plex Sans", "Segoe UI", system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+      --pf-v5-global--Color--100: var(--suncoast-text);
+      --pf-v5-global--Color--200: var(--suncoast-muted);
+      --pf-v5-global--BackgroundColor--100: var(--suncoast-surface);
+      --pf-v5-global--BackgroundColor--200: var(--suncoast-bg);
+      --pf-v5-global--primary-color--100: var(--suncoast-accent);
+      --pf-v5-global--primary-color--200: var(--suncoast-accent-strong);
+    }
+
+    html,
+    body,
+    #root,
+    #root .pf-v5-c-page,
+    #root .pf-c-page {
+      background: var(--suncoast-bg);
+      color: var(--suncoast-text);
+      font-family: "IBM Plex Sans", "Segoe UI", system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+    }
+
+    #root .pf-v5-c-masthead,
+    #root .pf-c-page__header {
+      min-height: 4rem;
+      border-bottom: 1px solid var(--suncoast-border);
+      background: rgba(255, 255, 255, 0.96);
+      color: var(--suncoast-text);
+      box-shadow: none;
+      backdrop-filter: blur(14px);
+    }
+
+    #root .pf-v5-c-brand,
+    #root .pf-c-brand {
+      width: auto;
+      max-width: min(15.75rem, 58vw);
+      height: 2.45rem;
+    }
+
+    #root .pf-v5-c-page__sidebar,
+    #root .pf-c-page__sidebar {
+      border-right: 1px solid var(--suncoast-border);
+      background: var(--suncoast-surface);
+      box-shadow: none;
+    }
+
+    #root .pf-v5-c-nav__link,
+    #root .pf-c-nav__link {
+      margin: 0.18rem 0.65rem;
+      border-radius: 0.65rem;
+      color: var(--suncoast-muted);
+      font-weight: 550;
+    }
+
+    #root .pf-v5-c-nav__link:hover,
+    #root .pf-c-nav__link:hover {
+      background: var(--suncoast-elevated);
+      color: var(--suncoast-text);
+    }
+
+    #root .pf-v5-c-nav__link.pf-m-current,
+    #root .pf-c-nav__link.pf-m-current,
+    #root .pf-v5-c-nav__item.pf-m-current > .pf-v5-c-nav__link {
+      background: rgba(50, 108, 229, 0.10);
+      color: var(--suncoast-accent-strong);
+    }
+
+    #root .pf-v5-c-page__main-section,
+    #root .pf-c-page__main-section {
+      background: var(--suncoast-bg);
+    }
+
+    #root h1,
+    #root h2,
+    #root h3,
+    #root .pf-v5-c-title,
+    #root .pf-c-title {
+      color: var(--suncoast-text);
+      letter-spacing: -0.025em;
+    }
+
+    #root h1,
+    #root .pf-v5-c-title.pf-m-2xl,
+    #root .pf-c-title.pf-m-2xl {
+      font-weight: 700;
+    }
+
+    #root .pf-v5-c-card,
+    #root .pf-c-card,
+    #root .pf-v5-c-content,
+    #root .pf-c-content {
+      border: 1px solid var(--suncoast-border);
+      border-radius: 1rem;
+      background: var(--suncoast-surface);
+      box-shadow: var(--suncoast-shadow);
+    }
+
+    #root .pf-v5-c-button.pf-m-primary,
+    #root .pf-c-button.pf-m-primary {
+      border-radius: 0.65rem;
+      background: var(--suncoast-accent);
+      color: #ffffff;
+      font-weight: 650;
+      box-shadow: none;
+    }
+
+    #root .pf-v5-c-button.pf-m-primary:hover,
+    #root .pf-c-button.pf-m-primary:hover {
+      background: var(--suncoast-accent-strong);
+    }
+
+    #root .pf-v5-c-button.pf-m-secondary,
+    #root .pf-c-button.pf-m-secondary {
+      border-radius: 0.65rem;
+      color: var(--suncoast-accent-strong);
+    }
+
+    #root input,
+    #root textarea,
+    #root select,
+    #root .pf-v5-c-form-control,
+    #root .pf-c-form-control {
+      border-color: #cbd5e1;
+      border-radius: 0.65rem;
+      background: var(--suncoast-surface);
+      color: var(--suncoast-text);
+      box-shadow: none;
+    }
+
+    #root input:focus,
+    #root textarea:focus,
+    #root select:focus,
+    #root .pf-v5-c-form-control:focus,
+    #root .pf-c-form-control:focus {
+      border-color: var(--suncoast-accent);
+      box-shadow: 0 0 0 3px var(--suncoast-focus);
+      outline: none;
+    }
+
+    #suncoast-account-readonly-note {
+      border: 1px solid rgba(50, 108, 229, 0.24);
+      border-left: 4px solid var(--suncoast-accent);
+      border-radius: 0.75rem;
+      background: rgba(50, 108, 229, 0.07);
+      color: var(--suncoast-text);
+    }
+
+    #suncoast-idp-profile-panel,
+    #suncoast-account-roles-panel {
+      padding: 1.1rem 1.2rem;
+      border: 1px solid var(--suncoast-border);
+      border-radius: 1rem;
+      background: var(--suncoast-surface);
+      color: var(--suncoast-text);
+      box-shadow: var(--suncoast-shadow);
+    }
+
+    #suncoast-idp-profile-panel h3,
+    #suncoast-account-roles-panel h3,
+    #suncoast-idp-profile-panel th,
+    #suncoast-account-roles-panel .suncoast-roles-list-title,
+    #suncoast-account-roles-panel .suncoast-roles-summary-value {
+      color: var(--suncoast-text);
+    }
+
+    #suncoast-idp-profile-panel td,
+    #suncoast-account-roles-panel .suncoast-roles-help,
+    #suncoast-account-roles-panel .suncoast-roles-note,
+    #suncoast-account-roles-panel .suncoast-roles-summary-label {
+      color: var(--suncoast-muted);
+    }
+
+    #suncoast-account-roles-panel .suncoast-roles-summary-item,
+    #suncoast-account-roles-panel .suncoast-roles-list {
+      border-color: var(--suncoast-border);
+      border-radius: 0.75rem;
+      background: var(--suncoast-bg);
+    }
+
+    #suncoast-account-roles-panel .suncoast-role-chip {
+      border-color: rgba(50, 108, 229, 0.22);
+      background: rgba(50, 108, 229, 0.08);
+      color: var(--suncoast-accent-strong);
+      font-weight: 600;
+    }
+
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --suncoast-bg: #0f172a;
+        --suncoast-surface: #111827;
+        --suncoast-elevated: #1f2937;
+        --suncoast-text: #f8fafc;
+        --suncoast-muted: #cbd5e1;
+        --suncoast-border: #334155;
+        --suncoast-shadow: 0 14px 40px rgba(0, 0, 0, 0.28);
+      }
+
+      #root .pf-v5-c-masthead,
+      #root .pf-c-page__header {
+        background: rgba(17, 24, 39, 0.96);
+      }
+
+      #root input,
+      #root textarea,
+      #root select,
+      #root .pf-v5-c-form-control,
+      #root .pf-c-form-control {
+        border-color: var(--suncoast-border);
+      }
     }
   account-lockdown.js: |
     (function () {
@@ -3007,17 +3514,25 @@ spec:
             name: keycloak-account-theme
             items:
               - key: theme.properties
-                path: theme.properties
+                path: account/theme.properties
               - key: content.json
-                path: resources/content.json
+                path: account/resources/content.json
               - key: messages_en.properties
-                path: messages/messages_en.properties
+                path: account/messages/messages_en.properties
               - key: account-lockdown.js
-                path: resources/js/account-lockdown.js
+                path: account/resources/js/account-lockdown.js
               - key: account-lockdown.css
-                path: resources/css/account-lockdown.css
-              - key: blank-logo.svg
-                path: resources/public/blank-logo.svg
+                path: account/resources/css/account-lockdown.css
+              - key: suncoast-logo.svg
+                path: account/resources/public/suncoast-logo.svg
+              - key: login-theme.properties
+                path: login/theme.properties
+              - key: suncoast-login.css
+                path: login/resources/css/suncoast-login.css
+              - key: suncoast-login.js
+                path: login/resources/js/suncoast-login.js
+              - key: suncoast-mark.svg
+                path: login/resources/img/suncoast-mark.svg
 
       initContainers:
         - name: wait-for-config-job
@@ -3580,5 +4095,5 @@ spec:
               mountPath: /opt/keycloak/data/clients/external
               readOnly: true
             - name: keycloak-account-theme
-              mountPath: /opt/keycloak/themes/suncoast-account/account
+              mountPath: /opt/keycloak/themes/suncoast-account
               readOnly: true
