@@ -454,7 +454,7 @@ spec:
       restartPolicy: Never
       containers:
         - name: sync-apps
-          image: postgres:18-alpine
+          image: postgres:15-alpine
           imagePullPolicy: IfNotPresent
           env:
             - name: DB_HOST
@@ -547,7 +547,7 @@ spec:
           restartPolicy: Never
           containers:
             - name: sync-apps
-              image: postgres:18-alpine
+              image: postgres:15-alpine
               imagePullPolicy: IfNotPresent
               env:
                 - name: DB_HOST
