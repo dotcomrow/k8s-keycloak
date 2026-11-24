@@ -88,43 +88,27 @@ data:
     [
       { "label": "personalInfo", "path": "" },
       {
-        "label": "accountSecurity",
-        "children": [
-          { "label": "signingIn", "path": "account-security/signing-in" },
-          { "label": "deviceActivity", "path": "account-security/device-activity" },
-          {
-            "label": "linkedAccounts",
-            "path": "account-security/linked-accounts",
-            "isVisible": "isLinkedAccountsEnabled"
-          }
-        ]
+        "label": "linkedAccounts",
+        "path": "account-security/linked-accounts",
+        "isVisible": "isLinkedAccountsEnabled"
       },
-      {
-        "label": "organizations",
-        "path": "organizations",
-        "isVisible": "isViewOrganizationsEnabled"
-      },
-      {
-        "label": "resources",
-        "path": "resources",
-        "isVisible": "isMyResourcesEnabled"
-      },
-      {
-        "label": "oid4vci",
-        "path": "oid4vci",
-        "isVisible":"isOid4VciEnabled"
-      }
+      { "label": "signingIn", "path": "account-security/signing-in" },
+      { "label": "deviceActivity", "path": "account-security/device-activity" }
     ]
   messages_en.properties: |
-    personalInfoDescription=Your profile information is managed by your linked identity provider. To make changes, update the identity provider profile and then sign in again.
-    signingInDescription=Manage second-factor sign-in methods. Password setup and profile editing are disabled in this account page.
-    linkedAccountsIntroMessage=Link additional login providers here. Unlinking providers is disabled in this account page.
+    personalInfo=Profile
+    personalInfoDescription=Identity details provided by your connected account.
+    linkedAccounts=Connected accounts
+    linkedAccountsIntroMessage=Review the identity provider used to sign in to Suncoast Systems. Unlinking providers is disabled.
+    signingIn=Security
+    signingInDescription=Review the security methods associated with your federated account. Local password setup is disabled.
+    deviceActivity=Sessions
+    deviceActivityDescription=Review sessions associated with your Suncoast Systems account.
   suncoast-logo.svg: |
     <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 252 48" role="img" aria-labelledby="title">
       <title id="title">Suncoast Systems</title>
       <style>
         .suncoast-wordmark { fill: #0F172A; }
-        @media (prefers-color-scheme: dark) { .suncoast-wordmark { fill: #F8FAFC; } }
       </style>
       <g fill="none" stroke="#326CE5" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">
         <path d="M24 5.5 37 13v15.2L24 35.8 11 28.2V13z"/>
@@ -828,28 +812,505 @@ data:
       font-weight: 600;
     }
 
-    @media (prefers-color-scheme: dark) {
-      :root {
-        --suncoast-bg: #0f172a;
-        --suncoast-surface: #111827;
-        --suncoast-elevated: #1f2937;
-        --suncoast-text: #f8fafc;
-        --suncoast-muted: #cbd5e1;
-        --suncoast-border: #334155;
-        --suncoast-shadow: 0 14px 40px rgba(0, 0, 0, 0.28);
+    /* Authenticated account shell. Keep this light to match the public Suncoast site. */
+    :root {
+      color-scheme: light;
+      --suncoast-bg: #f8fafc;
+      --suncoast-surface: #ffffff;
+      --suncoast-elevated: #f1f5f9;
+      --suncoast-text: #0f172a;
+      --suncoast-muted: #475569;
+      --suncoast-border: #dbe3ee;
+      --suncoast-accent: #326ce5;
+      --suncoast-accent-strong: #1d4ed8;
+      --suncoast-shadow: 0 16px 45px rgba(15, 23, 42, 0.07);
+    }
+
+    html,
+    body,
+    #root,
+    #root .pf-v5-c-page {
+      min-height: 100%;
+      background:
+        radial-gradient(circle at 52% 8%, rgba(50, 108, 229, 0.11), transparent 34rem),
+        var(--suncoast-bg) !important;
+      color: var(--suncoast-text) !important;
+    }
+
+    #root .pf-v5-c-masthead {
+      min-height: 5.15rem;
+      padding: 0 clamp(1rem, 3vw, 3.25rem);
+      border-bottom: 1px solid var(--suncoast-border);
+      background: rgba(255, 255, 255, 0.94) !important;
+      color: var(--suncoast-text) !important;
+      backdrop-filter: blur(16px);
+    }
+
+    #root .pf-v5-c-masthead__toggle {
+      display: none;
+    }
+
+    #root .suncoast-account-brand {
+      display: inline-flex;
+      flex: 0 0 auto;
+      align-items: center;
+      width: 15.75rem;
+      max-width: 44vw;
+      height: 3rem;
+      cursor: default;
+    }
+
+    #root .suncoast-account-brand img {
+      display: block !important;
+      width: 100%;
+      height: 100%;
+      object-fit: contain;
+      object-position: left center;
+    }
+
+    #root .suncoast-realm-badge {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      margin-left: 1rem;
+      padding: 0.35rem 0.75rem;
+      border: 1px solid rgba(50, 108, 229, 0.2);
+      border-radius: 999px;
+      background: rgba(50, 108, 229, 0.1);
+      color: var(--suncoast-accent-strong);
+      font-size: 0.72rem;
+      font-weight: 700;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+
+    #root .pf-v5-c-masthead__content,
+    #root .pf-v5-c-toolbar,
+    #root .pf-v5-c-toolbar__content,
+    #root .pf-v5-c-toolbar__content-section {
+      background: transparent !important;
+    }
+
+    #root .suncoast-user-name {
+      display: inline-flex;
+      align-items: center;
+      margin-right: 0.8rem;
+      color: var(--suncoast-text);
+      font-size: 0.9rem;
+      font-weight: 650;
+    }
+
+    #root .pf-v5-c-avatar {
+      width: 2.45rem;
+      height: 2.45rem;
+      border: 2px solid #ffffff;
+      border-radius: 999px;
+      box-shadow: 0 0 0 1px var(--suncoast-border);
+    }
+
+    #root [data-testid="referrer-link"] {
+      border-radius: 0.6rem;
+      color: var(--suncoast-accent-strong);
+      font-size: 0.86rem;
+      font-weight: 650;
+      text-decoration: none;
+    }
+
+    #root .pf-v5-c-page__sidebar {
+      width: 19.25rem;
+      border: 0;
+      background: transparent !important;
+      box-shadow: none;
+    }
+
+    #root .pf-v5-c-page__sidebar-body {
+      min-height: calc(100vh - 8.2rem);
+      margin: 1.5rem 0 1.5rem 2rem;
+      padding: 0.8rem;
+      border: 1px solid var(--suncoast-border);
+      border-radius: 0.9rem;
+      background: rgba(255, 255, 255, 0.92);
+      box-shadow: 0 10px 32px rgba(15, 23, 42, 0.04);
+    }
+
+    #root .pf-v5-c-nav,
+    #root .pf-v5-c-nav__list,
+    #root .pf-v5-c-nav__item,
+    #root .pf-v5-c-nav__link {
+      background: transparent !important;
+    }
+
+    #root .pf-v5-c-nav__link {
+      display: flex;
+      align-items: center;
+      min-height: 3.25rem;
+      margin: 0.2rem 0;
+      padding: 0.75rem 0.95rem;
+      border-radius: 0.65rem;
+      color: var(--suncoast-muted) !important;
+      font-weight: 560;
+    }
+
+    #root .pf-v5-c-nav__link::before {
+      width: 1.25rem;
+      height: 1.25rem;
+      margin-right: 0.75rem;
+      content: "";
+      background-position: center;
+      background-repeat: no-repeat;
+      background-size: contain;
+      opacity: 0.85;
+    }
+
+    #root .pf-v5-c-nav__item:nth-child(1) > .pf-v5-c-nav__link::before {
+      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23475569' stroke-width='1.8'%3E%3Ccircle cx='12' cy='8' r='3.5'/%3E%3Cpath d='M4.5 20c.6-4.2 3.1-6.2 7.5-6.2s6.9 2 7.5 6.2'/%3E%3C/svg%3E");
+    }
+
+    #root .pf-v5-c-nav__item:nth-child(2) > .pf-v5-c-nav__link::before {
+      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23475569' stroke-width='1.8'%3E%3Cpath d='M9.5 14.5l5-5M7 17l-1 1a3.5 3.5 0 0 1-5-5l4-4a3.5 3.5 0 0 1 5 0M17 7l1-1a3.5 3.5 0 0 1 5 5l-4 4a3.5 3.5 0 0 1-5 0'/%3E%3C/svg%3E");
+    }
+
+    #root .pf-v5-c-nav__item:nth-child(3) > .pf-v5-c-nav__link::before {
+      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23475569' stroke-width='1.8'%3E%3Cpath d='M12 3l8 3v5c0 5-3.2 8.4-8 10-4.8-1.6-8-5-8-10V6z'/%3E%3C/svg%3E");
+    }
+
+    #root .pf-v5-c-nav__item:nth-child(4) > .pf-v5-c-nav__link::before {
+      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23475569' stroke-width='1.8'%3E%3Ccircle cx='12' cy='12' r='8.5'/%3E%3Cpath d='M12 7v5l3.4 2'/%3E%3C/svg%3E");
+    }
+
+    #root .pf-v5-c-nav__link:hover {
+      background: var(--suncoast-elevated) !important;
+      color: var(--suncoast-text) !important;
+    }
+
+    #root .pf-v5-c-nav__link.pf-m-current,
+    #root .pf-v5-c-nav__item.pf-m-current > .pf-v5-c-nav__link,
+    #root .suncoast-transactions-nav.pf-m-current {
+      border-left: 3px solid var(--suncoast-accent);
+      background: rgba(50, 108, 229, 0.1) !important;
+      color: var(--suncoast-accent-strong) !important;
+    }
+
+    #root .suncoast-transactions-nav::before {
+      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23475569' stroke-width='1.8'%3E%3Cpath d='M6 3h12v18l-3-2-3 2-3-2-3 2zM9 8h6M9 12h6M9 16h4'/%3E%3C/svg%3E") !important;
+    }
+
+    #root .pf-v5-c-page__main {
+      background: transparent;
+    }
+
+    #root .pf-v5-c-page__main-section {
+      width: calc(100% - 4rem);
+      max-width: 72rem;
+      margin: 0 auto;
+      padding: 1.4rem 0 0;
+      background: transparent !important;
+    }
+
+    #root .pf-v5-c-page__main-section:first-child {
+      padding-top: 2rem;
+    }
+
+    #root .pf-v5-c-page__main-section:first-child .pf-v5-c-content {
+      border: 0;
+      background: transparent;
+      box-shadow: none;
+    }
+
+    #root [data-testid="page-heading"] {
+      margin-bottom: 0.35rem;
+      font-size: clamp(2rem, 3vw, 2.65rem);
+      line-height: 1.08;
+    }
+
+    #root [data-testid="page-heading"] + p {
+      color: var(--suncoast-muted);
+      font-size: 1rem;
+    }
+
+    #root .suncoast-profile-content {
+      padding: 0 0 2.5rem;
+    }
+
+    #root form.suncoast-native-profile-form {
+      position: absolute !important;
+      width: 1px !important;
+      height: 1px !important;
+      margin: -1px !important;
+      padding: 0 !important;
+      overflow: hidden !important;
+      clip: rect(0 0 0 0) !important;
+      clip-path: inset(50%) !important;
+      white-space: nowrap !important;
+    }
+
+    #root #suncoast-account-readonly-note {
+      display: none;
+    }
+
+    #suncoast-profile-summary,
+    #suncoast-connected-account-card,
+    #suncoast-account-roles-panel,
+    #suncoast-transactions-page .suncoast-transactions-card {
+      border: 1px solid var(--suncoast-border);
+      border-radius: 0.9rem;
+      background: rgba(255, 255, 255, 0.96);
+      box-shadow: var(--suncoast-shadow);
+    }
+
+    #suncoast-profile-summary {
+      padding: clamp(1.25rem, 2.5vw, 2rem);
+    }
+
+    .suncoast-managed-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.45rem;
+      margin-bottom: 1.35rem;
+      padding: 0.45rem 0.75rem;
+      border-radius: 0.6rem;
+      background: rgba(50, 108, 229, 0.1);
+      color: #1e3a8a;
+      font-size: 0.85rem;
+      font-weight: 650;
+    }
+
+    .suncoast-managed-badge::before {
+      content: "\1F512";
+      font-size: 0.8rem;
+    }
+
+    .suncoast-profile-fields {
+      display: grid;
+      gap: 0.8rem;
+    }
+
+    .suncoast-profile-field {
+      display: grid;
+      grid-template-columns: minmax(8.5rem, 0.26fr) 1fr;
+      align-items: center;
+      gap: 1rem;
+    }
+
+    .suncoast-profile-field-label {
+      color: var(--suncoast-muted);
+      font-size: 0.88rem;
+      font-weight: 650;
+    }
+
+    .suncoast-profile-field-value {
+      position: relative;
+      min-height: 3rem;
+      padding: 0.78rem 1rem 0.78rem 2.7rem;
+      border: 1px solid #cbd5e1;
+      border-radius: 0.65rem;
+      background: #f8fafc;
+      color: var(--suncoast-text);
+      font-size: 0.96rem;
+      overflow-wrap: anywhere;
+    }
+
+    .suncoast-profile-field-value::before {
+      position: absolute;
+      top: 50%;
+      left: 1rem;
+      color: var(--suncoast-muted);
+      content: "\1F512";
+      font-size: 0.75rem;
+      transform: translateY(-50%);
+    }
+
+    .suncoast-profile-helper {
+      margin: 1.35rem 0 0;
+      padding-top: 1rem;
+      border-top: 1px solid var(--suncoast-border);
+      color: var(--suncoast-muted);
+      font-size: 0.86rem;
+    }
+
+    #suncoast-connected-account-card {
+      margin-top: 1.25rem;
+      padding: 1.4rem 1.6rem;
+    }
+
+    #suncoast-connected-account-card h2,
+    #suncoast-transactions-page h2 {
+      margin: 0 0 1rem;
+      color: var(--suncoast-text);
+      font-size: 1.25rem;
+    }
+
+    .suncoast-provider-row {
+      display: flex;
+      align-items: center;
+      gap: 0.9rem;
+      padding: 1rem;
+      border: 1px solid var(--suncoast-border);
+      border-radius: 0.7rem;
+      background: #ffffff;
+    }
+
+    .suncoast-provider-icon {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 2.6rem;
+      height: 2.6rem;
+      border-radius: 999px;
+      background: #0f172a;
+      color: #ffffff;
+      font-size: 1rem;
+      font-weight: 750;
+    }
+
+    .suncoast-provider-copy {
+      min-width: 0;
+      flex: 1;
+    }
+
+    .suncoast-provider-title {
+      color: var(--suncoast-text);
+      font-weight: 700;
+    }
+
+    .suncoast-provider-description {
+      margin-top: 0.15rem;
+      color: var(--suncoast-muted);
+      font-size: 0.86rem;
+    }
+
+    .suncoast-connected-status {
+      padding: 0.28rem 0.65rem;
+      border-radius: 999px;
+      background: #dcfce7;
+      color: #166534;
+      font-size: 0.75rem;
+      font-weight: 700;
+    }
+
+    #suncoast-account-roles-panel {
+      margin-top: 1.25rem;
+      padding: 1.4rem 1.6rem;
+    }
+
+    #suncoast-account-return-link {
+      display: inline-flex !important;
+      align-items: center;
+      gap: 0.35rem;
+      margin: 1.25rem 0 0.5rem;
+      color: var(--suncoast-accent-strong) !important;
+      font-size: 0.9rem;
+      font-weight: 650;
+      text-decoration: none;
+    }
+
+    #suncoast-account-return-link::before {
+      content: "\2190";
+      font-size: 1rem;
+    }
+
+    #suncoast-transactions-page {
+      width: calc(100% - 4rem);
+      max-width: 72rem;
+      margin: 0 auto;
+      padding: 2rem 0 2.5rem;
+    }
+
+    #suncoast-transactions-page .suncoast-page-intro {
+      margin-bottom: 1.35rem;
+    }
+
+    #suncoast-transactions-page .suncoast-page-intro h1 {
+      margin: 0 0 0.35rem;
+      color: var(--suncoast-text);
+      font-size: clamp(2rem, 3vw, 2.65rem);
+    }
+
+    #suncoast-transactions-page .suncoast-page-intro p,
+    .suncoast-transactions-empty p {
+      margin: 0;
+      color: var(--suncoast-muted);
+    }
+
+    #suncoast-transactions-page .suncoast-transactions-card {
+      padding: clamp(1.35rem, 2.5vw, 2rem);
+    }
+
+    .suncoast-transactions-empty {
+      display: grid;
+      justify-items: center;
+      padding: clamp(2.5rem, 7vw, 5rem) 1rem;
+      text-align: center;
+    }
+
+    .suncoast-transactions-empty-icon {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 3.5rem;
+      height: 3.5rem;
+      margin-bottom: 1rem;
+      border-radius: 999px;
+      background: rgba(50, 108, 229, 0.1);
+      color: var(--suncoast-accent-strong);
+      font-size: 1.35rem;
+    }
+
+    .suncoast-transactions-empty h2 {
+      margin-bottom: 0.45rem !important;
+    }
+
+    @media (max-width: 900px) {
+      #root .pf-v5-c-masthead__toggle {
+        display: inline-flex;
       }
 
-      #root .pf-v5-c-masthead,
-      #root .pf-c-page__header {
-        background: rgba(17, 24, 39, 0.96);
+      #root .pf-v5-c-page__sidebar {
+        width: min(19rem, 86vw);
+        background: var(--suncoast-bg) !important;
       }
 
-      #root input,
-      #root textarea,
-      #root select,
-      #root .pf-v5-c-form-control,
-      #root .pf-c-form-control {
-        border-color: var(--suncoast-border);
+      #root .pf-v5-c-page__sidebar-body {
+        min-height: auto;
+        margin: 0.75rem;
+      }
+
+      #root .suncoast-user-name,
+      #root .suncoast-realm-badge {
+        display: none;
+      }
+
+      .suncoast-profile-field {
+        grid-template-columns: 1fr;
+        gap: 0.35rem;
+      }
+    }
+
+    @media (max-width: 640px) {
+      #root .pf-v5-c-masthead {
+        padding: 0 0.75rem;
+      }
+
+      #root .suncoast-account-brand {
+        width: 11.5rem;
+      }
+
+      #root [data-testid="referrer-link"] {
+        display: none;
+      }
+
+      #root .pf-v5-c-page__main-section,
+      #suncoast-transactions-page {
+        width: calc(100% - 2rem);
+      }
+
+      .suncoast-provider-row {
+        align-items: flex-start;
+        flex-wrap: wrap;
+      }
+
+      .suncoast-connected-status {
+        margin-left: 3.5rem;
       }
     }
   account-lockdown.js: |
@@ -859,6 +1320,11 @@ data:
       var NOTE_ID = "suncoast-account-readonly-note";
       var IDP_PANEL_ID = "suncoast-idp-profile-panel";
       var RETURN_LINK_ID = "suncoast-account-return-link";
+      var PROFILE_SUMMARY_ID = "suncoast-profile-summary";
+      var CONNECTED_ACCOUNT_ID = "suncoast-connected-account-card";
+      var TRANSACTIONS_NAV_ID = "suncoast-transactions-nav";
+      var TRANSACTIONS_PAGE_ID = "suncoast-transactions-page";
+      var TRANSACTIONS_HASH = "#suncoast-transactions";
       var NOTE_TEXT = "Profile edits are disabled. Update your linked identity provider to change your name, email, or other profile details.";
       var PROFILE_FIELDS = [
         "username",
@@ -944,6 +1410,9 @@ data:
         var hashRoute = hash.replace(/^#\/?/, "").replace(/^\/+/, "");
         if (!hashRoute) {
           return true;
+        }
+        if (hashRoute.indexOf("suncoast-transactions") === 0) {
+          return false;
         }
         if (
           hashRoute.indexOf("personal-info") === 0 ||
@@ -1299,8 +1768,39 @@ data:
 
       function ensureReturnToHeaderLink() {
         var existing = document.getElementById(RETURN_LINK_ID);
-        if (existing && existing.parentElement) {
-          existing.parentElement.removeChild(existing);
+        var returnTo = resolveReturnToUrl();
+        if (!returnTo) {
+          if (existing && existing.parentElement) {
+            existing.parentElement.removeChild(existing);
+          }
+          return;
+        }
+
+        var parsed = parseUrl(returnTo);
+        var label = "Return to Application";
+        if (parsed && parsed.hostname === "research.suncoast.systems") {
+          label = "Return to Research";
+        }
+
+        if (!existing) {
+          existing = document.createElement("a");
+          existing.id = RETURN_LINK_ID;
+        }
+        existing.href = returnTo;
+        if (existing.textContent !== label) {
+          existing.textContent = label;
+        }
+        existing.setAttribute("aria-label", label);
+
+        var target = document.getElementById(TRANSACTIONS_PAGE_ID);
+        if (!target) {
+          target =
+            document.querySelector(".suncoast-profile-content") ||
+            document.querySelector(".pf-v5-c-page__main-section:last-child") ||
+            findFallbackReturnLinkContainer();
+        }
+        if (target && existing.parentElement !== target) {
+          target.appendChild(existing);
         }
       }
 
@@ -3270,27 +3770,364 @@ data:
         });
       }
 
-      function hideHeaderBrand() {
-        var selectors = [
-          "[data-testid='brand'] img",
-          "[data-testid='brand'] svg",
-          "[data-testid='page-header-brand'] img",
-          "[data-testid='page-header-brand'] svg",
-          ".pf-v5-c-masthead__brand img",
-          ".pf-v5-c-masthead__brand svg",
-          ".pf-v5-c-page__header-brand-link img",
-          ".pf-v5-c-page__header-brand-link svg"
-        ];
-        selectors.forEach(function (selector) {
-          document.querySelectorAll(selector).forEach(hideElement);
+      function ensureSuncoastMasthead() {
+        var masthead = document.querySelector(".pf-v5-c-masthead, .pf-c-page__header");
+        if (!masthead) {
+          return;
+        }
+
+        var linkedBrand = masthead.querySelector("a.pf-v5-c-masthead__brand, a.pf-c-page__header-brand-link");
+        var brand = masthead.querySelector(".suncoast-account-brand");
+        if (linkedBrand) {
+          brand = document.createElement("div");
+          brand.className = "pf-v5-c-masthead__brand suncoast-account-brand";
+          brand.setAttribute("role", "img");
+          brand.setAttribute("aria-label", "Suncoast Systems");
+          while (linkedBrand.firstChild) {
+            brand.appendChild(linkedBrand.firstChild);
+          }
+          linkedBrand.replaceWith(brand);
+        }
+        if (brand) {
+          brand.removeAttribute("href");
+          brand.removeAttribute("tabindex");
+          brand.querySelectorAll("img, svg").forEach(function (image) {
+            image.removeAttribute("aria-hidden");
+            if (image.tagName.toLowerCase() === "img") {
+              image.setAttribute("alt", "Suncoast Systems");
+            }
+          });
+        }
+
+        var realm = getRealmFromPath();
+        var badge = masthead.querySelector(".suncoast-realm-badge");
+        if (!badge && brand) {
+          badge = document.createElement("span");
+          badge.className = "suncoast-realm-badge";
+          brand.insertAdjacentElement("afterend", badge);
+        }
+        if (badge && badge.textContent !== (realm || "Account")) {
+          badge.textContent = realm || "Account";
+        }
+
+        var hiddenUserToggle = masthead.querySelector("[data-testid='options-toggle']");
+        var userName = normalizeString(hiddenUserToggle && hiddenUserToggle.textContent);
+        var userNameLabel = masthead.querySelector(".suncoast-user-name");
+        var avatar = masthead.querySelector(".pf-v5-c-avatar");
+        var avatarItem = avatar && avatar.closest(".pf-v5-c-toolbar__item");
+        if (userName && !userNameLabel && avatarItem && avatarItem.parentElement) {
+          userNameLabel = document.createElement("span");
+          userNameLabel.className = "suncoast-user-name";
+          avatarItem.parentElement.insertBefore(userNameLabel, avatarItem);
+        }
+        if (userNameLabel && userNameLabel.textContent !== userName) {
+          userNameLabel.textContent = userName;
+        }
+
+        var headerReturnLink = masthead.querySelector("[data-testid='referrer-link']");
+        hideElement(headerReturnLink);
+      }
+
+      function removeAdminConsoleLinks() {
+        document.querySelectorAll("a[href]").forEach(function (link) {
+          var href = normalizeString(link.getAttribute("href"));
+          var parsed = parseUrl(href);
+          var isAdminPath = /(^|\/)admin(\/|$)/i.test(href);
+          var isAdminHost = parsed && /^keycloak-admin\./i.test(parsed.hostname || "");
+          if (!isAdminPath && !isAdminHost) {
+            return;
+          }
+          var navItem = link.closest("li, [role='listitem'], .pf-v5-c-nav__item");
+          hideElement(navItem || link);
         });
+      }
+
+      function readProfileValue(selectors) {
+        for (var i = 0; i < selectors.length; i += 1) {
+          var field = document.querySelector(selectors[i]);
+          if (!field || typeof field.value === "undefined") {
+            continue;
+          }
+          var value = normalizeString(field.value);
+          if (value) {
+            return value;
+          }
+        }
+        return "";
+      }
+
+      function organizationFromProfile(email) {
+        var organization = readProfileValue([
+          "input[name='attributes.company']",
+          "input[name='company']",
+          "input[name='attributes.hd']",
+          "input[name='hd']"
+        ]);
+        if (organization) {
+          return organization === "suncoast.systems" ? "Suncoast Systems" : organization;
+        }
+        var normalizedEmail = normalizeString(email).toLowerCase();
+        if (/[@.]suncoast\.systems$/.test(normalizedEmail)) {
+          return "Suncoast Systems";
+        }
+        var atIndex = normalizedEmail.lastIndexOf("@");
+        return atIndex > -1 ? normalizedEmail.slice(atIndex + 1) : "";
+      }
+
+      function providerForRealm(realm) {
+        if (realm === "internal") {
+          return { name: "GitHub", mark: "GH" };
+        }
+        if (realm === "external") {
+          return { name: "Google", mark: "G" };
+        }
+        return { name: "Identity provider", mark: "ID" };
+      }
+
+      function appendProfileField(container, label, value) {
+        if (!container || !value) {
+          return;
+        }
+        var row = document.createElement("div");
+        row.className = "suncoast-profile-field";
+        var fieldLabel = document.createElement("span");
+        fieldLabel.className = "suncoast-profile-field-label";
+        fieldLabel.textContent = label;
+        var fieldValue = document.createElement("span");
+        fieldValue.className = "suncoast-profile-field-value";
+        fieldValue.textContent = value;
+        row.appendChild(fieldLabel);
+        row.appendChild(fieldValue);
+        container.appendChild(row);
+      }
+
+      function ensureProfileSummary() {
+        if (!isPersonalInfoPage()) {
+          return;
+        }
+
+        var heading = document.querySelector("[data-testid='page-heading']");
+        if (heading && heading.textContent !== "Your profile") {
+          heading.textContent = "Your profile";
+        }
+        var headingDescription = heading && heading.parentElement && heading.parentElement.querySelector("p");
+        if (
+          headingDescription &&
+          headingDescription.textContent !== "Identity details provided by your connected account."
+        ) {
+          headingDescription.textContent = "Identity details provided by your connected account.";
+        }
+
+        var form = findPersonalInfoContainer();
+        if (!form || !form.matches || !form.matches("form")) {
+          return;
+        }
+        form.classList.add("suncoast-native-profile-form");
+        var contentSection = form.closest(".pf-v5-c-page__main-section");
+        if (!contentSection) {
+          return;
+        }
+        contentSection.classList.add("suncoast-profile-content");
+
+        var username = readProfileValue([
+          "input[name='username']",
+          "input[id='username']",
+          "input[name='preferred_username']"
+        ]);
+        var email = readProfileValue(["input[name='email']", "input[id='email']"]);
+        var firstName = readProfileValue(["input[name='firstName']", "input[id='firstName']"]);
+        var lastName = readProfileValue(["input[name='lastName']", "input[id='lastName']"]);
+        var fullName = normalizeString(firstName + " " + lastName) || username || email;
+        var organization = organizationFromProfile(email);
+        var realm = getRealmFromPath();
+        var provider = providerForRealm(realm);
+        var signature = JSON.stringify([fullName, email, username, organization, provider.name]);
+
+        var summary = document.getElementById(PROFILE_SUMMARY_ID);
+        if (!summary) {
+          summary = document.createElement("section");
+          summary.id = PROFILE_SUMMARY_ID;
+          contentSection.insertBefore(summary, form);
+        }
+        if (summary.getAttribute("data-profile-signature") !== signature) {
+          summary.setAttribute("data-profile-signature", signature);
+          summary.replaceChildren();
+
+          var managed = document.createElement("div");
+          managed.className = "suncoast-managed-badge";
+          managed.textContent = "Managed by " + provider.name;
+          summary.appendChild(managed);
+
+          var fields = document.createElement("div");
+          fields.className = "suncoast-profile-fields";
+          appendProfileField(fields, "Full name", fullName);
+          appendProfileField(fields, "Email", email);
+          appendProfileField(fields, "Username", username);
+          appendProfileField(fields, "Organization", organization);
+          summary.appendChild(fields);
+
+          var helper = document.createElement("p");
+          helper.className = "suncoast-profile-helper";
+          helper.textContent = "Profile information is synchronized from your identity provider.";
+          summary.appendChild(helper);
+        }
+
+        var connected = document.getElementById(CONNECTED_ACCOUNT_ID);
+        if (!connected) {
+          connected = document.createElement("section");
+          connected.id = CONNECTED_ACCOUNT_ID;
+          contentSection.insertBefore(connected, form);
+        }
+        if (connected.getAttribute("data-provider") !== provider.name) {
+          connected.setAttribute("data-provider", provider.name);
+          connected.replaceChildren();
+
+          var connectedTitle = document.createElement("h2");
+          connectedTitle.textContent = "Connected account";
+          connected.appendChild(connectedTitle);
+
+          var providerRow = document.createElement("div");
+          providerRow.className = "suncoast-provider-row";
+          var providerIcon = document.createElement("span");
+          providerIcon.className = "suncoast-provider-icon";
+          providerIcon.textContent = provider.mark;
+          var providerCopy = document.createElement("div");
+          providerCopy.className = "suncoast-provider-copy";
+          var providerTitle = document.createElement("div");
+          providerTitle.className = "suncoast-provider-title";
+          providerTitle.textContent = provider.name;
+          var providerDescription = document.createElement("div");
+          providerDescription.className = "suncoast-provider-description";
+          providerDescription.textContent = "Used to sign in to Suncoast Systems.";
+          providerCopy.appendChild(providerTitle);
+          providerCopy.appendChild(providerDescription);
+          var providerStatus = document.createElement("span");
+          providerStatus.className = "suncoast-connected-status";
+          providerStatus.textContent = "Connected";
+          providerRow.appendChild(providerIcon);
+          providerRow.appendChild(providerCopy);
+          providerRow.appendChild(providerStatus);
+          connected.appendChild(providerRow);
+        }
+      }
+
+      function isTransactionsPage() {
+        return (window.location.hash || "").toLowerCase() === TRANSACTIONS_HASH;
+      }
+
+      function ensureTransactionsNavigation() {
+        var list = document.querySelector("#page-sidebar .pf-v5-c-nav > .pf-v5-c-nav__list");
+        if (!list) {
+          return;
+        }
+        var item = document.getElementById(TRANSACTIONS_NAV_ID);
+        var link = item && item.querySelector("a");
+        if (!item) {
+          item = document.createElement("li");
+          item.id = TRANSACTIONS_NAV_ID;
+          item.className = "pf-v5-c-nav__item";
+          link = document.createElement("a");
+          link.className = "pf-v5-c-nav__link suncoast-transactions-nav";
+          link.href = TRANSACTIONS_HASH;
+          link.textContent = "Transactions";
+          link.setAttribute("data-testid", "suncoast-transactions");
+          link.addEventListener("click", function (event) {
+            event.preventDefault();
+            if (window.location.hash !== TRANSACTIONS_HASH) {
+              window.location.hash = TRANSACTIONS_HASH;
+            } else {
+              scheduleApplyLockdown();
+            }
+          });
+          item.appendChild(link);
+          list.appendChild(item);
+        }
+
+        var active = isTransactionsPage();
+        if (link) {
+          link.classList.toggle("pf-m-current", active);
+          if (active) {
+            link.setAttribute("aria-current", "page");
+          } else {
+            link.removeAttribute("aria-current");
+          }
+        }
+        if (active) {
+          list.querySelectorAll(".pf-v5-c-nav__link").forEach(function (navLink) {
+            if (navLink !== link) {
+              navLink.classList.remove("pf-m-current");
+              navLink.removeAttribute("aria-current");
+            }
+          });
+        }
+      }
+
+      function renderTransactionsPage() {
+        var main = document.querySelector("main.pf-v5-c-page__main, main, [role='main']");
+        if (!main) {
+          return;
+        }
+        var active = isTransactionsPage();
+        var page = document.getElementById(TRANSACTIONS_PAGE_ID);
+        if (!active) {
+          main.querySelectorAll("[data-suncoast-transactions-hidden='true']").forEach(function (element) {
+            element.style.removeProperty("display");
+            element.removeAttribute("data-suncoast-transactions-hidden");
+          });
+          if (page && page.parentElement) {
+            page.parentElement.removeChild(page);
+          }
+          return;
+        }
+
+        Array.prototype.slice.call(main.children).forEach(function (element) {
+          if (element.id === TRANSACTIONS_PAGE_ID) {
+            return;
+          }
+          element.setAttribute("data-suncoast-transactions-hidden", "true");
+          element.style.display = "none";
+        });
+
+        if (!page) {
+          page = document.createElement("section");
+          page.id = TRANSACTIONS_PAGE_ID;
+
+          var intro = document.createElement("div");
+          intro.className = "suncoast-page-intro";
+          var heading = document.createElement("h1");
+          heading.textContent = "Transactions";
+          var description = document.createElement("p");
+          description.textContent = "Payments, invoices, and receipts associated with your Suncoast Systems account.";
+          intro.appendChild(heading);
+          intro.appendChild(description);
+          page.appendChild(intro);
+
+          var card = document.createElement("div");
+          card.className = "suncoast-transactions-card";
+          var empty = document.createElement("div");
+          empty.className = "suncoast-transactions-empty";
+          var emptyIcon = document.createElement("span");
+          emptyIcon.className = "suncoast-transactions-empty-icon";
+          emptyIcon.textContent = "$";
+          var emptyTitle = document.createElement("h2");
+          emptyTitle.textContent = "Transactions are not available yet";
+          var emptyDescription = document.createElement("p");
+          emptyDescription.textContent = "Stripe billing is not connected yet. When it is enabled, your payment history and receipts will appear here.";
+          empty.appendChild(emptyIcon);
+          empty.appendChild(emptyTitle);
+          empty.appendChild(emptyDescription);
+          card.appendChild(empty);
+          page.appendChild(card);
+          main.appendChild(page);
+        }
       }
 
       function applyLockdown() {
         if (redirectApplicationsPage()) {
           return;
         }
-        ensureReturnToHeaderLink();
+        ensureSuncoastMasthead();
+        removeAdminConsoleLinks();
         hideApplicationsNavLink();
         hideGroupsNavLink();
         hideSelectors();
@@ -3299,8 +4136,12 @@ data:
         hideDeviceSignOutControls();
         lockPersonalInfoFields();
         addReadonlyNote();
+        ensureProfileSummary();
         ensureRolesPanel();
         ensureIdpProfilePanel();
+        ensureTransactionsNavigation();
+        renderTransactionsPage();
+        ensureReturnToHeaderLink();
       }
 
       var applyLockdownScheduled = false;
@@ -3320,6 +4161,8 @@ data:
       observer.observe(document.body, { childList: true, subtree: true });
       window.addEventListener("popstate", scheduleApplyLockdown);
       window.addEventListener("hashchange", scheduleApplyLockdown);
+      window.setTimeout(scheduleApplyLockdown, 500);
+      window.setTimeout(scheduleApplyLockdown, 2000);
     })();
 ---
 apiVersion: apps/v1

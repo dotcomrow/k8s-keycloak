@@ -6,8 +6,17 @@ Suncoast Systems Keycloak Auth server
 `manifests/04-keycloak-app.yaml` contains the complete `suncoast-account`
 Keycloak theme in the `keycloak-account-theme` ConfigMap. The ConfigMap mounts
 the theme at `/opt/keycloak/themes/suncoast-account` with both `account` and
-`login` theme types. It includes the Suncoast logo, responsive light/dark
-styles, and the existing read-only profile and identity-provider role panels.
+`login` theme types. The Account Console uses the Suncoast light visual system,
+a non-interactive brand mark, a flat Profile/Connected accounts/Security/
+Sessions navigation, read-only identity cards, and the identity-provider role
+panels. The brand deliberately has no link to the Keycloak root or admin
+console.
+
+The Account Console also includes a `Transactions` navigation item implemented
+by `account-lockdown.js`. Until Stripe is integrated, it renders an explicit
+not-yet-available state. No transaction data, Stripe API call, credential, or
+secret is implied by this placeholder; the future Stripe integration should
+replace that view while keeping the route and styling contract.
 
 `manifests/04-keycloak-configurator.yaml` declaratively selects the theme as
 both `accountTheme` and `loginTheme` for the `internal` and `external` realms.
