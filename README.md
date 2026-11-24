@@ -22,12 +22,16 @@ replace that view while keeping the route and styling contract.
 both `accountTheme` and `loginTheme` for the `internal` and `external` realms.
 The master realm login theme is intentionally unchanged. The Keycloak
 Deployment is watched by Stakater Reloader, so ConfigMap theme changes restart
-Keycloak and clear its theme cache during the normal GitOps rollout.
+Keycloak and clear its server-side theme cache during the normal GitOps rollout.
+Keycloak serves theme resources with a long browser cache lifetime, so the
+version suffix on the Account Console CSS, JavaScript, and logo filenames must
+also be incremented whenever those resources change.
 
 Maintain the theme in these ConfigMap keys:
 
-- `theme.properties`, `account-lockdown.css`, `account-lockdown.js`,
-  `content.json`, and `suncoast-logo.svg` for the Account Console.
+- `theme.properties`, the versioned `account-lockdown-v*.css` and
+  `account-lockdown-v*.js` resources, `content.json`, and the versioned
+  `suncoast-logo-v*.svg` for the Account Console.
 - `login-theme.properties`, `suncoast-login.css`, `suncoast-login.js`, and
   `suncoast-mark.svg` for realm login pages.
 
