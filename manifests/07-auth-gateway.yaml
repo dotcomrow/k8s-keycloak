@@ -104,7 +104,7 @@ spec:
       restartPolicy: Never
       containers:
         - name: schema-guard
-          image: postgres:15-alpine
+          image: postgres:18-alpine
           imagePullPolicy: IfNotPresent
           env:
             - name: DB_HOST
