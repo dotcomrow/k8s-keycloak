@@ -3056,7 +3056,7 @@ spec:
 
       containers:
         - name: kc-db-preflight
-          image: postgres:15-alpine
+          image: postgres:18-alpine
           imagePullPolicy: IfNotPresent
           env:
             - name: PGHOST
