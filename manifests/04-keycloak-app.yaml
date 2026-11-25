@@ -75,9 +75,9 @@ metadata:
 data:
   theme.properties: |
     parent=keycloak.v3
-    styles=css/account-lockdown-v6.css
-    scripts=js/account-lockdown-v6.js
-    logo=/public/suncoast-logo-v6.svg
+    styles=css/account-lockdown-v7.css
+    scripts=js/account-lockdown-v7.js
+    logo=/public/suncoast-logo-v7.svg
   login-theme.properties: |
     parent=keycloak
     import=common/keycloak
@@ -104,7 +104,7 @@ data:
     signingInDescription=Review the security methods associated with your federated account. Local password setup is disabled.
     deviceActivity=Sessions
     deviceActivityDescription=Review sessions associated with your Suncoast Systems account.
-  suncoast-logo-v6.svg: |
+  suncoast-logo-v7.svg: |
     <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 252 48" role="img" aria-labelledby="title">
       <title id="title">Suncoast Systems</title>
       <style>
@@ -386,7 +386,7 @@ data:
         color: var(--suncoast-text) !important;
       }
     }
-  account-lockdown-v6.css: |
+  account-lockdown-v7.css: |
     #save-btn,
     #cancel-btn,
     #update-email-btn,
@@ -1311,7 +1311,7 @@ data:
     }
 
     .suncoast-access-overview strong,
-    .suncoast-access-overview span {
+    .suncoast-access-overview div > span {
       display: block;
     }
 
@@ -1514,7 +1514,7 @@ data:
         margin-left: 3.5rem;
       }
     }
-  account-lockdown-v6.js: |
+  account-lockdown-v7.js: |
     (function () {
       "use strict";
 
@@ -4753,12 +4753,12 @@ spec:
                 path: account/resources/content.json
               - key: messages_en.properties
                 path: account/messages/messages_en.properties
-              - key: account-lockdown-v6.js
-                path: account/resources/js/account-lockdown-v6.js
-              - key: account-lockdown-v6.css
-                path: account/resources/css/account-lockdown-v6.css
-              - key: suncoast-logo-v6.svg
-                path: account/resources/public/suncoast-logo-v6.svg
+              - key: account-lockdown-v7.js
+                path: account/resources/js/account-lockdown-v7.js
+              - key: account-lockdown-v7.css
+                path: account/resources/css/account-lockdown-v7.css
+              - key: suncoast-logo-v7.svg
+                path: account/resources/public/suncoast-logo-v7.svg
               - key: login-theme.properties
                 path: login/theme.properties
               - key: suncoast-login.css
