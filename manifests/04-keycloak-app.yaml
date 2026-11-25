@@ -75,9 +75,9 @@ metadata:
 data:
   theme.properties: |
     parent=keycloak.v3
-    styles=css/account-lockdown-v4.css
-    scripts=js/account-lockdown-v4.js
-    logo=/public/suncoast-logo-v4.svg
+    styles=css/account-lockdown-v5.css
+    scripts=js/account-lockdown-v5.js
+    logo=/public/suncoast-logo-v5.svg
   login-theme.properties: |
     parent=keycloak
     import=common/keycloak
@@ -104,7 +104,7 @@ data:
     signingInDescription=Review the security methods associated with your federated account. Local password setup is disabled.
     deviceActivity=Sessions
     deviceActivityDescription=Review sessions associated with your Suncoast Systems account.
-  suncoast-logo-v4.svg: |
+  suncoast-logo-v5.svg: |
     <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 252 48" role="img" aria-labelledby="title">
       <title id="title">Suncoast Systems</title>
       <style>
@@ -386,7 +386,7 @@ data:
         color: var(--suncoast-text) !important;
       }
     }
-  account-lockdown-v4.css: |
+  account-lockdown-v5.css: |
     #save-btn,
     #cancel-btn,
     #update-email-btn,
@@ -1277,6 +1277,123 @@ data:
       padding: 1.4rem 1.6rem;
     }
 
+    #suncoast-account-roles-panel h3 {
+      margin: 0 0 0.35rem;
+      font-size: 1.25rem;
+    }
+
+    #suncoast-account-roles-panel .suncoast-roles-help {
+      margin: 0 0 1rem;
+    }
+
+    .suncoast-access-overview {
+      display: flex;
+      align-items: center;
+      gap: 0.85rem;
+      padding: 0.9rem 1rem;
+      border: 1px solid var(--suncoast-border);
+      border-radius: 0.7rem;
+      background: var(--suncoast-elevated);
+    }
+
+    .suncoast-access-count {
+      display: inline-flex;
+      flex: 0 0 auto;
+      align-items: center;
+      justify-content: center;
+      width: 2.35rem;
+      height: 2.35rem;
+      border-radius: 999px;
+      background: rgba(50, 108, 229, 0.12);
+      color: var(--suncoast-accent-strong);
+      font-size: 1rem;
+      font-weight: 750;
+    }
+
+    .suncoast-access-overview strong,
+    .suncoast-access-overview span {
+      display: block;
+    }
+
+    .suncoast-access-overview strong {
+      color: var(--suncoast-text);
+      font-size: 0.92rem;
+    }
+
+    .suncoast-access-overview div > span {
+      margin-top: 0.12rem;
+      color: var(--suncoast-muted);
+      font-size: 0.8rem;
+    }
+
+    .suncoast-role-groups {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
+      gap: 0.75rem;
+      margin-top: 0.9rem;
+    }
+
+    .suncoast-role-group {
+      padding: 0.85rem;
+      border: 1px solid var(--suncoast-border);
+      border-radius: 0.7rem;
+      background: var(--suncoast-surface);
+    }
+
+    .suncoast-role-group h4 {
+      margin: 0 0 0.6rem;
+      color: var(--suncoast-muted);
+      font-size: 0.76rem;
+      font-weight: 700;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+    }
+
+    .suncoast-role-group-list {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.4rem;
+    }
+
+    #suncoast-account-roles-panel .suncoast-role-chip {
+      padding: 0.28rem 0.58rem;
+      border-color: rgba(50, 108, 229, 0.22);
+      background: rgba(50, 108, 229, 0.08);
+      color: var(--suncoast-accent-strong);
+      font-size: 0.76rem;
+    }
+
+    .suncoast-roles-details {
+      margin-top: 0.9rem;
+      border-top: 1px solid var(--suncoast-border);
+    }
+
+    .suncoast-roles-details summary {
+      padding: 0.85rem 0 0;
+      color: var(--suncoast-accent-strong);
+      cursor: pointer;
+      font-size: 0.84rem;
+      font-weight: 650;
+    }
+
+    .suncoast-roles-details-body {
+      display: grid;
+      gap: 0.8rem;
+      margin-top: 0.8rem;
+      padding: 0.9rem;
+      border-radius: 0.65rem;
+      background: var(--suncoast-elevated);
+    }
+
+    .suncoast-roles-details-body .suncoast-membership-source {
+      padding: 0;
+    }
+
+    .suncoast-roles-details-body .suncoast-roles-list {
+      max-height: 7rem;
+      background: var(--suncoast-surface);
+    }
+
     #suncoast-account-return-link {
       display: inline-flex !important;
       align-items: center;
@@ -1397,7 +1514,7 @@ data:
         margin-left: 3.5rem;
       }
     }
-  account-lockdown-v4.js: |
+  account-lockdown-v5.js: |
     (function () {
       "use strict";
 
@@ -3482,6 +3599,83 @@ data:
         });
       }
 
+      function friendlyRoleLabel(roleEntry) {
+        var raw = roleDisplayName(roleEntry);
+        if (!raw) {
+          return "";
+        }
+        var label = raw;
+        var clientSeparator = label.indexOf(":");
+        if (clientSeparator !== -1) {
+          label = label.slice(clientSeparator + 1);
+        }
+        return label
+          .replace(/^k8s[_-]+/i, "")
+          .replace(/[_-]+/g, " ")
+          .replace(/\b\w/g, function (character) {
+            return character.toUpperCase();
+          });
+      }
+
+      function roleCategory(roleEntry) {
+        var raw = roleDisplayName(roleEntry).toLowerCase();
+        if (/admin|owner|manage/.test(raw)) {
+          return "administrative";
+        }
+        if (/tier|feature|subscriber|subscription|patreon/.test(raw)) {
+          return "subscription";
+        }
+        return "application";
+      }
+
+      function renderRoleGroups(container, roles) {
+        if (!container) {
+          return;
+        }
+        container.replaceChildren();
+        var groups = [
+          { key: "administrative", label: "Administrative access", roles: [] },
+          { key: "application", label: "Application access", roles: [] },
+          { key: "subscription", label: "Subscriptions & features", roles: [] }
+        ];
+        var groupLookup = {};
+        groups.forEach(function (group) {
+          groupLookup[group.key] = group;
+        });
+        (Array.isArray(roles) ? roles : []).forEach(function (roleEntry) {
+          groupLookup[roleCategory(roleEntry)].roles.push(roleEntry);
+        });
+
+        groups.forEach(function (group) {
+          if (!group.roles.length) {
+            return;
+          }
+          var section = document.createElement("section");
+          section.className = "suncoast-role-group";
+          var heading = document.createElement("h4");
+          heading.textContent = group.label;
+          section.appendChild(heading);
+          var list = document.createElement("div");
+          list.className = "suncoast-role-group-list";
+          group.roles.forEach(function (roleEntry) {
+            var chip = document.createElement("span");
+            chip.className = "suncoast-role-chip";
+            chip.textContent = friendlyRoleLabel(roleEntry);
+            chip.title = roleDisplayName(roleEntry);
+            list.appendChild(chip);
+          });
+          section.appendChild(list);
+          container.appendChild(section);
+        });
+
+        if (!container.children.length) {
+          var empty = document.createElement("p");
+          empty.className = "suncoast-roles-empty";
+          empty.textContent = "No application access is currently assigned.";
+          container.appendChild(empty);
+        }
+      }
+
       function renderCompositeTree(container, compositeTree) {
         if (!container) {
           return;
@@ -3537,31 +3731,32 @@ data:
           return;
         }
         container.replaceChildren();
-        if (!Array.isArray(sources) || sources.length === 0) {
+        var activeSources = (Array.isArray(sources) ? sources : []).filter(function (source) {
+          return source && (source.memberships.length > 0 || source.roles.length > 0);
+        });
+        if (activeSources.length === 0) {
           var empty = document.createElement("p");
           empty.className = "suncoast-roles-empty";
-          empty.textContent = "No identity-provider membership sources were returned.";
+          empty.textContent = "No linked group memberships were returned.";
           container.appendChild(empty);
           return;
         }
 
-        sources.forEach(function (source) {
+        activeSources.forEach(function (source) {
           var sourceWrap = document.createElement("div");
           sourceWrap.className = "suncoast-membership-source";
 
           var sourceTitle = document.createElement("p");
           sourceTitle.className = "suncoast-roles-list-title";
-          var statusText = source.success ? "resolved" : source.attempted ? "unavailable" : "skipped";
           sourceTitle.textContent =
-            source.source +
-            " (" +
-            statusText +
-            ", " +
-            source.memberships.length +
-            " memberships, " +
-            source.roles.length +
-            " roles)";
+            source.source.charAt(0).toUpperCase() + source.source.slice(1) + " identity source";
           sourceWrap.appendChild(sourceTitle);
+
+          var sourceSummary = document.createElement("p");
+          sourceSummary.className = "suncoast-roles-note";
+          sourceSummary.textContent =
+            source.memberships.length + " memberships · " + source.roles.length + " roles";
+          sourceWrap.appendChild(sourceSummary);
 
           if (source.message) {
             var message = document.createElement("p");
@@ -3572,7 +3767,7 @@ data:
 
           var membershipsTitle = document.createElement("p");
           membershipsTitle.className = "suncoast-roles-list-title";
-          membershipsTitle.textContent = "Memberships";
+          membershipsTitle.textContent = "Groups and teams";
           sourceWrap.appendChild(membershipsTitle);
 
           var membershipsList = document.createElement("div");
@@ -3620,12 +3815,12 @@ data:
         panel.appendChild(titleAnchor);
 
         var title = document.createElement("h3");
-        title.textContent = "Roles";
+        title.textContent = "Access & roles";
         panel.appendChild(title);
 
         var helpText = document.createElement("p");
         helpText.className = "suncoast-roles-help";
-        helpText.textContent = ROLES_HELP_TEXT;
+        helpText.textContent = "Your application access is synchronized from your connected identity provider.";
         panel.appendChild(helpText);
 
         if (!state || state.status === "loading") {
@@ -3634,51 +3829,48 @@ data:
           loading.textContent = ROLES_LOADING_TEXT;
           panel.appendChild(loading);
         } else {
-          var summary = document.createElement("div");
-          summary.className = "suncoast-roles-summary";
+          var activeSources = (Array.isArray(state.sources) ? state.sources : []).filter(function (source) {
+            return source && (source.memberships.length > 0 || source.roles.length > 0);
+          });
+          var overview = document.createElement("div");
+          overview.className = "suncoast-access-overview";
+          var count = document.createElement("span");
+          count.className = "suncoast-access-count";
+          count.textContent = String(state.effectiveRoles.length);
+          var overviewCopy = document.createElement("div");
+          var overviewTitle = document.createElement("strong");
+          overviewTitle.textContent =
+            state.effectiveRoles.length === 1 ? "Active permission" : "Active permissions";
+          var overviewDetail = document.createElement("span");
+          overviewDetail.textContent =
+            activeSources.length > 0
+              ? "Synchronized from " + activeSources.map(function (source) {
+                  return source.source.charAt(0).toUpperCase() + source.source.slice(1);
+                }).join(" and ") + "."
+              : "Synchronized from your identity provider.";
+          overviewCopy.appendChild(overviewTitle);
+          overviewCopy.appendChild(overviewDetail);
+          overview.appendChild(count);
+          overview.appendChild(overviewCopy);
+          panel.appendChild(overview);
 
-          function appendSummary(label, value) {
-            var card = document.createElement("div");
-            card.className = "suncoast-roles-summary-item";
-            var cardLabel = document.createElement("span");
-            cardLabel.className = "suncoast-roles-summary-label";
-            cardLabel.textContent = label;
-            var cardValue = document.createElement("span");
-            cardValue.className = "suncoast-roles-summary-value";
-            cardValue.textContent = String(value);
-            card.appendChild(cardLabel);
-            card.appendChild(cardValue);
-            summary.appendChild(card);
+          var groups = document.createElement("div");
+          groups.className = "suncoast-role-groups";
+          renderRoleGroups(groups, state.directRoles);
+          panel.appendChild(groups);
+
+          if (activeSources.length > 0) {
+            var details = document.createElement("details");
+            details.className = "suncoast-roles-details";
+            var detailsSummary = document.createElement("summary");
+            detailsSummary.textContent = "View identity-provider details";
+            details.appendChild(detailsSummary);
+            var detailsBody = document.createElement("div");
+            detailsBody.className = "suncoast-roles-details-body";
+            renderMembershipSources(detailsBody, activeSources);
+            details.appendChild(detailsBody);
+            panel.appendChild(details);
           }
-
-          appendSummary("Resolved roles", state.effectiveRoles.length);
-          appendSummary("Sources", state.sourceCount || 0);
-          appendSummary("Memberships", state.membershipCount || 0);
-          panel.appendChild(summary);
-
-          var directWrap = document.createElement("div");
-          directWrap.className = "suncoast-roles-list-wrapper";
-          var directTitle = document.createElement("p");
-          directTitle.className = "suncoast-roles-list-title";
-          directTitle.textContent = "Resolved roles";
-          var directList = document.createElement("div");
-          directList.className = "suncoast-roles-list";
-          renderRoleList(directList, state.directRoles, "No roles resolved from linked identity providers.");
-          directWrap.appendChild(directTitle);
-          directWrap.appendChild(directList);
-          panel.appendChild(directWrap);
-
-          var sourcesWrap = document.createElement("div");
-          sourcesWrap.className = "suncoast-roles-list-wrapper";
-          var sourcesTitle = document.createElement("p");
-          sourcesTitle.className = "suncoast-roles-list-title";
-          sourcesTitle.textContent = "Membership sources";
-          var sourcesBody = document.createElement("div");
-          sourcesBody.className = "suncoast-roles-list-wrapper";
-          renderMembershipSources(sourcesBody, state.sources);
-          sourcesWrap.appendChild(sourcesTitle);
-          sourcesWrap.appendChild(sourcesBody);
-          panel.appendChild(sourcesWrap);
 
           if (!state.directMappingsAvailable) {
             var unavailable = document.createElement("p");
@@ -4540,12 +4732,12 @@ spec:
                 path: account/resources/content.json
               - key: messages_en.properties
                 path: account/messages/messages_en.properties
-              - key: account-lockdown-v4.js
-                path: account/resources/js/account-lockdown-v4.js
-              - key: account-lockdown-v4.css
-                path: account/resources/css/account-lockdown-v4.css
-              - key: suncoast-logo-v4.svg
-                path: account/resources/public/suncoast-logo-v4.svg
+              - key: account-lockdown-v5.js
+                path: account/resources/js/account-lockdown-v5.js
+              - key: account-lockdown-v5.css
+                path: account/resources/css/account-lockdown-v5.css
+              - key: suncoast-logo-v5.svg
+                path: account/resources/public/suncoast-logo-v5.svg
               - key: login-theme.properties
                 path: login/theme.properties
               - key: suncoast-login.css
