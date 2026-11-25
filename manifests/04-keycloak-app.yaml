@@ -75,8 +75,8 @@ metadata:
 data:
   theme.properties: |
     parent=keycloak.v3
-    styles=css/account-lockdown-v8.css
-    scripts=js/account-lockdown-v8.js
+    styles=css/account-lockdown-v9.css
+    scripts=js/account-lockdown-v9.js
     logo=/public/suncoast-logo-v8.svg
   login-theme.properties: |
     parent=keycloak
@@ -386,7 +386,7 @@ data:
         color: var(--suncoast-text) !important;
       }
     }
-  account-lockdown-v8.css: |
+  account-lockdown-v9.css: |
     #save-btn,
     #cancel-btn,
     #update-email-btn,
@@ -1504,11 +1504,13 @@ data:
         align-items: center;
         width: 2.5rem;
         height: 4rem;
+        margin: 0;
       }
 
       #app .pf-v5-c-masthead__toggle .pf-v5-c-button {
         width: 2.5rem;
         height: 2.5rem;
+        padding: 0.5rem;
         color: var(--suncoast-text) !important;
       }
 
@@ -1591,7 +1593,7 @@ data:
         padding: 0.75rem;
       }
     }
-  account-lockdown-v8.js: |
+  account-lockdown-v9.js: |
     (function () {
       "use strict";
 
@@ -4545,6 +4547,29 @@ data:
         }
       }
 
+      function bindMobileNavigationClose() {
+        var root = document.documentElement;
+        if (root.getAttribute("data-suncoast-mobile-nav-bound") === "true") {
+          return;
+        }
+        root.setAttribute("data-suncoast-mobile-nav-bound", "true");
+        document.addEventListener("click", function (event) {
+          var target = event.target;
+          var link = target && target.closest
+            ? target.closest("#page-sidebar a.pf-v5-c-nav__link")
+            : null;
+          if (!link || !window.matchMedia("(max-width: 900px)").matches) {
+            return;
+          }
+          window.setTimeout(function () {
+            var toggle = document.getElementById("nav-toggle");
+            if (toggle && toggle.getAttribute("aria-expanded") === "true") {
+              toggle.click();
+            }
+          }, 0);
+        });
+      }
+
       function renderTransactionsPage() {
         var main = document.querySelector("main.pf-v5-c-page__main, main, [role='main']");
         if (!main) {
@@ -4624,6 +4649,7 @@ data:
         ensureIdpProfilePanel();
         ensureTransactionsNavigation();
         ensureNavigationOrder();
+        bindMobileNavigationClose();
         renderTransactionsPage();
         ensureReturnToHeaderLink();
       }
@@ -4846,10 +4872,10 @@ spec:
                 path: account/resources/content.json
               - key: messages_en.properties
                 path: account/messages/messages_en.properties
-              - key: account-lockdown-v8.js
-                path: account/resources/js/account-lockdown-v8.js
-              - key: account-lockdown-v8.css
-                path: account/resources/css/account-lockdown-v8.css
+              - key: account-lockdown-v9.js
+                path: account/resources/js/account-lockdown-v9.js
+              - key: account-lockdown-v9.css
+                path: account/resources/css/account-lockdown-v9.css
               - key: suncoast-logo-v8.svg
                 path: account/resources/public/suncoast-logo-v8.svg
               - key: login-theme.properties
