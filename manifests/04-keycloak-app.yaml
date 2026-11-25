@@ -75,9 +75,9 @@ metadata:
 data:
   theme.properties: |
     parent=keycloak.v3
-    styles=css/account-lockdown-v7.css
-    scripts=js/account-lockdown-v7.js
-    logo=/public/suncoast-logo-v7.svg
+    styles=css/account-lockdown-v8.css
+    scripts=js/account-lockdown-v8.js
+    logo=/public/suncoast-logo-v8.svg
   login-theme.properties: |
     parent=keycloak
     import=common/keycloak
@@ -104,7 +104,7 @@ data:
     signingInDescription=Review the security methods associated with your federated account. Local password setup is disabled.
     deviceActivity=Sessions
     deviceActivityDescription=Review sessions associated with your Suncoast Systems account.
-  suncoast-logo-v7.svg: |
+  suncoast-logo-v8.svg: |
     <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 252 48" role="img" aria-labelledby="title">
       <title id="title">Suncoast Systems</title>
       <style>
@@ -386,7 +386,7 @@ data:
         color: var(--suncoast-text) !important;
       }
     }
-  account-lockdown-v7.css: |
+  account-lockdown-v8.css: |
     #save-btn,
     #cancel-btn,
     #update-email-btn,
@@ -1489,11 +1489,62 @@ data:
 
     @media (max-width: 640px) {
       #app .pf-v5-c-masthead {
+        grid-template-areas: "toggle main content" !important;
+        grid-template-columns: 2.5rem minmax(0, 1fr) auto !important;
+        grid-template-rows: 4rem !important;
+        align-items: center;
+        column-gap: 0.35rem;
+        height: 4rem;
+        min-height: 4rem;
         padding: 0 0.75rem;
       }
 
+      #app .pf-v5-c-masthead__toggle {
+        grid-area: toggle;
+        align-items: center;
+        width: 2.5rem;
+        height: 4rem;
+      }
+
+      #app .pf-v5-c-masthead__toggle .pf-v5-c-button {
+        width: 2.5rem;
+        height: 2.5rem;
+        color: var(--suncoast-text) !important;
+      }
+
       #app .suncoast-account-brand {
-        width: 11.5rem;
+        grid-area: main;
+        width: min(11.5rem, 100%);
+        min-width: 0;
+        max-width: 100%;
+        height: 2.25rem;
+      }
+
+      #app .pf-v5-c-masthead__content {
+        grid-area: content;
+        align-items: center;
+        width: auto;
+        min-width: 0;
+        height: 4rem;
+      }
+
+      #app .pf-v5-c-toolbar,
+      #app .pf-v5-c-toolbar__content {
+        width: auto;
+        min-width: 0;
+      }
+
+      #app .pf-v5-c-toolbar__content {
+        padding: 0;
+      }
+
+      #app .pf-v5-c-toolbar__content-section {
+        justify-content: flex-end;
+        gap: 0;
+      }
+
+      #app .pf-v5-c-toolbar__item {
+        margin: 0;
       }
 
       #app [data-testid="referrer-link"] {
@@ -1514,7 +1565,33 @@ data:
         margin-left: 3.5rem;
       }
     }
-  account-lockdown-v7.js: |
+
+    @media (max-width: 360px) {
+      #suncoast-profile-summary,
+      #suncoast-connected-account-card,
+      #suncoast-account-roles-panel {
+        padding: 1rem;
+      }
+
+      .suncoast-profile-field-value {
+        min-height: 2.75rem;
+        padding: 0.7rem 0.65rem;
+        overflow-wrap: normal;
+        font-size: clamp(0.74rem, 3.8vw, 0.82rem);
+        letter-spacing: -0.01em;
+        white-space: nowrap;
+      }
+
+      .suncoast-profile-field-value::before {
+        display: none;
+      }
+
+      .suncoast-access-overview {
+        gap: 0.65rem;
+        padding: 0.75rem;
+      }
+    }
+  account-lockdown-v8.js: |
     (function () {
       "use strict";
 
@@ -3455,7 +3532,23 @@ data:
           control.addEventListener("click", function (event) {
             event.preventDefault();
             var targetPanel = document.getElementById(ROLES_PANEL_ID);
-            if (targetPanel && typeof targetPanel.scrollIntoView === "function") {
+            var scrollContainer =
+              targetPanel &&
+              targetPanel.closest(".pf-v5-c-page__main, .pf-c-page__main, main");
+            if (
+              targetPanel &&
+              scrollContainer &&
+              typeof scrollContainer.scrollTo === "function"
+            ) {
+              var panelRect = targetPanel.getBoundingClientRect();
+              var containerRect = scrollContainer.getBoundingClientRect();
+              var targetTop =
+                scrollContainer.scrollTop + panelRect.top - containerRect.top - 16;
+              scrollContainer.scrollTo({
+                top: Math.max(0, targetTop),
+                behavior: "smooth"
+              });
+            } else if (targetPanel && typeof targetPanel.scrollIntoView === "function") {
               targetPanel.scrollIntoView({ behavior: "smooth", block: "start" });
             }
           });
@@ -4753,12 +4846,12 @@ spec:
                 path: account/resources/content.json
               - key: messages_en.properties
                 path: account/messages/messages_en.properties
-              - key: account-lockdown-v7.js
-                path: account/resources/js/account-lockdown-v7.js
-              - key: account-lockdown-v7.css
-                path: account/resources/css/account-lockdown-v7.css
-              - key: suncoast-logo-v7.svg
-                path: account/resources/public/suncoast-logo-v7.svg
+              - key: account-lockdown-v8.js
+                path: account/resources/js/account-lockdown-v8.js
+              - key: account-lockdown-v8.css
+                path: account/resources/css/account-lockdown-v8.css
+              - key: suncoast-logo-v8.svg
+                path: account/resources/public/suncoast-logo-v8.svg
               - key: login-theme.properties
                 path: login/theme.properties
               - key: suncoast-login.css
