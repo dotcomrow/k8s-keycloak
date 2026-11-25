@@ -75,14 +75,14 @@ metadata:
 data:
   theme.properties: |
     parent=keycloak.v3
-    styles=css/account-lockdown-v9.css
-    scripts=js/account-lockdown-v9.js
+    styles=css/account-lockdown-v10.css
+    scripts=js/account-lockdown-v10.js
     logo=/public/suncoast-logo-v8.svg
   login-theme.properties: |
     parent=keycloak
     import=common/keycloak
-    styles=css/login.css css/suncoast-login.css
-    scripts=js/suncoast-login.js
+    styles=css/login.css css/suncoast-login-v2.css
+    scripts=js/suncoast-login-v2.js
     favicons=img/suncoast-mark.svg
   content.json: |
     [
@@ -126,11 +126,72 @@ data:
         <path d="M24 12v3.2M17.6 15.5l2.2 2.1M30.4 15.5l-2.2 2.1M15.3 28.8c2.2 1.7 4.4 1.7 6.5 0s4.4-1.7 6.6 0 4.4 1.7 6.5 0"/>
       </g>
     </svg>
-  suncoast-login.js: |
+  suncoast-login-v2.js: |
     (function () {
       "use strict";
 
+      var scriptUrl = document.currentScript && document.currentScript.src;
+      var iconUrl = scriptUrl
+        ? scriptUrl.replace(/\/js\/[^/]+$/, "/img/suncoast-mark.svg")
+        : "";
+
+      function ensureHeadElement(selector, tagName, attributes) {
+        var element = document.head.querySelector(selector);
+        if (!element) {
+          element = document.createElement(tagName);
+          document.head.appendChild(element);
+        }
+        Object.keys(attributes).forEach(function (name) {
+          element.setAttribute(name, attributes[name]);
+        });
+      }
+
+      function applyMetadata() {
+        var heading = document.getElementById("kc-page-title");
+        var pageName = heading && heading.textContent.trim();
+        document.title = pageName
+          ? pageName + " | Suncoast Systems"
+          : "Sign in | Suncoast Systems";
+        ensureHeadElement('meta[name="description"]', "meta", {
+          name: "description",
+          content: "Secure access to Suncoast Systems applications and account security settings."
+        });
+        ensureHeadElement('meta[name="theme-color"]', "meta", {
+          name: "theme-color",
+          content: "#326ce5"
+        });
+        ensureHeadElement('meta[name="application-name"]', "meta", {
+          name: "application-name",
+          content: "Suncoast Systems"
+        });
+        ensureHeadElement('meta[name="msapplication-TileColor"]', "meta", {
+          name: "msapplication-TileColor",
+          content: "#326ce5"
+        });
+        if (iconUrl) {
+          ensureHeadElement('link[rel="icon"]', "link", {
+            rel: "icon",
+            type: "image/svg+xml",
+            href: iconUrl
+          });
+          ensureHeadElement('link[rel="apple-touch-icon"]', "link", {
+            rel: "apple-touch-icon",
+            href: iconUrl
+          });
+          ensureHeadElement('link[rel="mask-icon"]', "link", {
+            rel: "mask-icon",
+            color: "#326ce5",
+            href: iconUrl
+          });
+        }
+      }
+
       function applyBrand() {
+        applyMetadata();
+        document.body.classList.toggle(
+          "suncoast-totp-page",
+          Boolean(document.getElementById("kc-totp-settings"))
+        );
         var header = document.getElementById("kc-header-wrapper");
         if (!header || header.dataset.suncoastBranded === "true") {
           return;
@@ -160,7 +221,7 @@ data:
         applyBrand();
       }
     })();
-  suncoast-login.css: |
+  suncoast-login-v2.css: |
     :root {
       --suncoast-bg: #f8fafc;
       --suncoast-surface: #ffffff;
@@ -339,6 +400,123 @@ data:
       color: var(--suncoast-accent-strong);
     }
 
+    .suncoast-totp-page .card-pf {
+      max-width: 44rem;
+    }
+
+    .suncoast-totp-page #kc-content-wrapper {
+      border: 0;
+      border-radius: 0;
+      background: transparent;
+      box-shadow: none;
+    }
+
+    #kc-totp-settings {
+      display: grid;
+      gap: 1rem;
+      margin: 0 0 1.5rem;
+      padding: 0;
+      list-style: none;
+      counter-reset: suncoast-totp-step;
+    }
+
+    #kc-totp-settings > li {
+      position: relative;
+      margin: 0;
+      padding: 1.1rem 1.1rem 1.1rem 3.5rem;
+      border: 1px solid var(--suncoast-border);
+      border-radius: 0.9rem;
+      background: color-mix(in srgb, var(--suncoast-surface) 92%, var(--suncoast-bg));
+      color: var(--suncoast-muted);
+      counter-increment: suncoast-totp-step;
+    }
+
+    #kc-totp-settings > li::before {
+      position: absolute;
+      top: 1rem;
+      left: 1rem;
+      display: grid;
+      place-items: center;
+      width: 1.8rem;
+      height: 1.8rem;
+      border-radius: 999px;
+      background: rgba(50, 108, 229, 0.12);
+      color: var(--suncoast-accent-strong);
+      content: counter(suncoast-totp-step);
+      font-weight: 700;
+    }
+
+    #kc-totp-settings p {
+      margin: 0 0 0.8rem;
+      line-height: 1.55;
+    }
+
+    #kc-totp-settings p:last-child {
+      margin-bottom: 0;
+    }
+
+    #kc-totp-supported-apps {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.45rem;
+      margin: 0;
+      padding: 0;
+      list-style: none;
+    }
+
+    #kc-totp-supported-apps li {
+      padding: 0.35rem 0.65rem;
+      border: 1px solid var(--suncoast-border);
+      border-radius: 999px;
+      background: var(--suncoast-surface);
+      color: var(--suncoast-text);
+      font-size: 0.82rem;
+      font-weight: 600;
+    }
+
+    #kc-totp-secret-qr-code {
+      display: block;
+      width: min(12rem, 100%);
+      height: auto;
+      margin: 1rem 0;
+      padding: 0.65rem;
+      border: 1px solid var(--suncoast-border);
+      border-radius: 0.85rem;
+      background: #ffffff;
+    }
+
+    #kc-totp-settings-form .form-group {
+      margin-bottom: 1rem;
+    }
+
+    #kc-totp-settings-form label {
+      display: inline-block;
+      margin-bottom: 0.4rem;
+      color: var(--suncoast-text);
+      font-size: 0.85rem;
+      font-weight: 650;
+    }
+
+    #kc-totp-settings-form #kc-form-buttons {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.65rem;
+      margin-top: 1.25rem;
+    }
+
+    #kc-totp-settings-form #saveTOTPBtn,
+    #kc-totp-settings-form #cancelTOTPBtn {
+      min-height: 2.85rem;
+      padding: 0.7rem 1.1rem;
+      border-radius: 0.65rem;
+    }
+
+    #kc-totp-settings-form #cancelTOTPBtn {
+      border: 1px solid var(--suncoast-border);
+      background: var(--suncoast-surface);
+      color: var(--suncoast-text);
+    }
+
     @media (max-width: 540px) {
       .login-pf-page {
         padding: 1.25rem 0.85rem;
@@ -351,6 +529,23 @@ data:
 
       #kc-header-wrapper {
         flex-wrap: wrap;
+      }
+
+      #kc-page-title {
+        text-align: left;
+      }
+
+      #kc-totp-settings > li {
+        padding: 3.25rem 1rem 1rem;
+      }
+
+      #kc-totp-settings > li::before {
+        top: 0.9rem;
+        left: 1rem;
+      }
+
+      #kc-totp-settings-form #kc-form-buttons > * {
+        flex: 1 1 8rem;
       }
     }
 
@@ -386,7 +581,7 @@ data:
         color: var(--suncoast-text) !important;
       }
     }
-  account-lockdown-v9.css: |
+  account-lockdown-v10.css: |
     #save-btn,
     #cancel-btn,
     #update-email-btn,
@@ -1593,9 +1788,61 @@ data:
         padding: 0.75rem;
       }
     }
-  account-lockdown-v9.js: |
+  account-lockdown-v10.js: |
     (function () {
       "use strict";
+
+      var scriptUrl = document.currentScript && document.currentScript.src;
+      var accountIconUrl = scriptUrl
+        ? scriptUrl.replace(/\/js\/[^/]+$/, "/public/suncoast-mark.svg")
+        : "";
+
+      function ensureHeadElement(selector, tagName, attributes) {
+        var element = document.head.querySelector(selector);
+        if (!element) {
+          element = document.createElement(tagName);
+          document.head.appendChild(element);
+        }
+        Object.keys(attributes).forEach(function (name) {
+          element.setAttribute(name, attributes[name]);
+        });
+      }
+
+      function applyAccountMetadata() {
+        document.title = "Suncoast Systems Account";
+        ensureHeadElement('meta[name="description"]', "meta", {
+          name: "description",
+          content: "Manage your Suncoast Systems identity, security, sessions, and connected accounts."
+        });
+        ensureHeadElement('meta[name="theme-color"]', "meta", {
+          name: "theme-color",
+          content: "#326ce5"
+        });
+        ensureHeadElement('meta[name="application-name"]', "meta", {
+          name: "application-name",
+          content: "Suncoast Systems"
+        });
+        ensureHeadElement('meta[name="msapplication-TileColor"]', "meta", {
+          name: "msapplication-TileColor",
+          content: "#326ce5"
+        });
+        if (accountIconUrl) {
+          ensureHeadElement('link[rel="icon"]', "link", {
+            rel: "icon",
+            type: "image/svg+xml",
+            href: accountIconUrl
+          });
+          ensureHeadElement('link[rel="apple-touch-icon"]', "link", {
+            rel: "apple-touch-icon",
+            href: accountIconUrl
+          });
+          ensureHeadElement('link[rel="mask-icon"]', "link", {
+            rel: "mask-icon",
+            color: "#326ce5",
+            href: accountIconUrl
+          });
+        }
+      }
 
       var NOTE_ID = "suncoast-account-readonly-note";
       var IDP_PANEL_ID = "suncoast-idp-profile-panel";
@@ -4631,6 +4878,7 @@ data:
       }
 
       function applyLockdown() {
+        applyAccountMetadata();
         if (redirectApplicationsPage()) {
           return;
         }
@@ -4872,18 +5120,20 @@ spec:
                 path: account/resources/content.json
               - key: messages_en.properties
                 path: account/messages/messages_en.properties
-              - key: account-lockdown-v9.js
-                path: account/resources/js/account-lockdown-v9.js
-              - key: account-lockdown-v9.css
-                path: account/resources/css/account-lockdown-v9.css
+              - key: account-lockdown-v10.js
+                path: account/resources/js/account-lockdown-v10.js
+              - key: account-lockdown-v10.css
+                path: account/resources/css/account-lockdown-v10.css
               - key: suncoast-logo-v8.svg
                 path: account/resources/public/suncoast-logo-v8.svg
+              - key: suncoast-mark.svg
+                path: account/resources/public/suncoast-mark.svg
               - key: login-theme.properties
                 path: login/theme.properties
-              - key: suncoast-login.css
-                path: login/resources/css/suncoast-login.css
-              - key: suncoast-login.js
-                path: login/resources/js/suncoast-login.js
+              - key: suncoast-login-v2.css
+                path: login/resources/css/suncoast-login-v2.css
+              - key: suncoast-login-v2.js
+                path: login/resources/js/suncoast-login-v2.js
               - key: suncoast-mark.svg
                 path: login/resources/img/suncoast-mark.svg
 
