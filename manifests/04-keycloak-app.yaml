@@ -75,9 +75,9 @@ metadata:
 data:
   theme.properties: |
     parent=keycloak.v3
-    styles=css/account-lockdown-v2.css
-    scripts=js/account-lockdown-v2.js
-    logo=/public/suncoast-logo-v2.svg
+    styles=css/account-lockdown-v3.css
+    scripts=js/account-lockdown-v3.js
+    logo=/public/suncoast-logo-v3.svg
   login-theme.properties: |
     parent=keycloak
     import=common/keycloak
@@ -104,7 +104,7 @@ data:
     signingInDescription=Review the security methods associated with your federated account. Local password setup is disabled.
     deviceActivity=Sessions
     deviceActivityDescription=Review sessions associated with your Suncoast Systems account.
-  suncoast-logo-v2.svg: |
+  suncoast-logo-v3.svg: |
     <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 252 48" role="img" aria-labelledby="title">
       <title id="title">Suncoast Systems</title>
       <style>
@@ -386,7 +386,7 @@ data:
         color: var(--suncoast-text) !important;
       }
     }
-  account-lockdown-v2.css: |
+  account-lockdown-v3.css: |
     #save-btn,
     #cancel-btn,
     #update-email-btn,
@@ -640,16 +640,16 @@ data:
 
     html,
     body,
-    #root,
-    #root .pf-v5-c-page,
-    #root .pf-c-page {
+    #app,
+    #app .pf-v5-c-page,
+    #app .pf-c-page {
       background: var(--suncoast-bg);
       color: var(--suncoast-text);
       font-family: "IBM Plex Sans", "Segoe UI", system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
     }
 
-    #root .pf-v5-c-masthead,
-    #root .pf-c-page__header {
+    #app .pf-v5-c-masthead,
+    #app .pf-c-page__header {
       min-height: 4rem;
       border-bottom: 1px solid var(--suncoast-border);
       background: rgba(255, 255, 255, 0.96);
@@ -658,73 +658,73 @@ data:
       backdrop-filter: blur(14px);
     }
 
-    #root .pf-v5-c-brand,
-    #root .pf-c-brand {
+    #app .pf-v5-c-brand,
+    #app .pf-c-brand {
       width: auto;
       max-width: min(15.75rem, 58vw);
       height: 2.45rem;
     }
 
-    #root .pf-v5-c-page__sidebar,
-    #root .pf-c-page__sidebar {
+    #app .pf-v5-c-page__sidebar,
+    #app .pf-c-page__sidebar {
       border-right: 1px solid var(--suncoast-border);
       background: var(--suncoast-surface);
       box-shadow: none;
     }
 
-    #root .pf-v5-c-nav__link,
-    #root .pf-c-nav__link {
+    #app .pf-v5-c-nav__link,
+    #app .pf-c-nav__link {
       margin: 0.18rem 0.65rem;
       border-radius: 0.65rem;
       color: var(--suncoast-muted);
       font-weight: 550;
     }
 
-    #root .pf-v5-c-nav__link:hover,
-    #root .pf-c-nav__link:hover {
+    #app .pf-v5-c-nav__link:hover,
+    #app .pf-c-nav__link:hover {
       background: var(--suncoast-elevated);
       color: var(--suncoast-text);
     }
 
-    #root .pf-v5-c-nav__link.pf-m-current,
-    #root .pf-c-nav__link.pf-m-current,
-    #root .pf-v5-c-nav__item.pf-m-current > .pf-v5-c-nav__link {
+    #app .pf-v5-c-nav__link.pf-m-current,
+    #app .pf-c-nav__link.pf-m-current,
+    #app .pf-v5-c-nav__item.pf-m-current > .pf-v5-c-nav__link {
       background: rgba(50, 108, 229, 0.10);
       color: var(--suncoast-accent-strong);
     }
 
-    #root .pf-v5-c-page__main-section,
-    #root .pf-c-page__main-section {
+    #app .pf-v5-c-page__main-section,
+    #app .pf-c-page__main-section {
       background: var(--suncoast-bg);
     }
 
-    #root h1,
-    #root h2,
-    #root h3,
-    #root .pf-v5-c-title,
-    #root .pf-c-title {
+    #app h1,
+    #app h2,
+    #app h3,
+    #app .pf-v5-c-title,
+    #app .pf-c-title {
       color: var(--suncoast-text);
       letter-spacing: -0.025em;
     }
 
-    #root h1,
-    #root .pf-v5-c-title.pf-m-2xl,
-    #root .pf-c-title.pf-m-2xl {
+    #app h1,
+    #app .pf-v5-c-title.pf-m-2xl,
+    #app .pf-c-title.pf-m-2xl {
       font-weight: 700;
     }
 
-    #root .pf-v5-c-card,
-    #root .pf-c-card,
-    #root .pf-v5-c-content,
-    #root .pf-c-content {
+    #app .pf-v5-c-card,
+    #app .pf-c-card,
+    #app .pf-v5-c-content,
+    #app .pf-c-content {
       border: 1px solid var(--suncoast-border);
       border-radius: 1rem;
       background: var(--suncoast-surface);
       box-shadow: var(--suncoast-shadow);
     }
 
-    #root .pf-v5-c-button.pf-m-primary,
-    #root .pf-c-button.pf-m-primary {
+    #app .pf-v5-c-button.pf-m-primary,
+    #app .pf-c-button.pf-m-primary {
       border-radius: 0.65rem;
       background: var(--suncoast-accent);
       color: #ffffff;
@@ -732,22 +732,22 @@ data:
       box-shadow: none;
     }
 
-    #root .pf-v5-c-button.pf-m-primary:hover,
-    #root .pf-c-button.pf-m-primary:hover {
+    #app .pf-v5-c-button.pf-m-primary:hover,
+    #app .pf-c-button.pf-m-primary:hover {
       background: var(--suncoast-accent-strong);
     }
 
-    #root .pf-v5-c-button.pf-m-secondary,
-    #root .pf-c-button.pf-m-secondary {
+    #app .pf-v5-c-button.pf-m-secondary,
+    #app .pf-c-button.pf-m-secondary {
       border-radius: 0.65rem;
       color: var(--suncoast-accent-strong);
     }
 
-    #root input,
-    #root textarea,
-    #root select,
-    #root .pf-v5-c-form-control,
-    #root .pf-c-form-control {
+    #app input,
+    #app textarea,
+    #app select,
+    #app .pf-v5-c-form-control,
+    #app .pf-c-form-control {
       border-color: #cbd5e1;
       border-radius: 0.65rem;
       background: var(--suncoast-surface);
@@ -755,11 +755,11 @@ data:
       box-shadow: none;
     }
 
-    #root input:focus,
-    #root textarea:focus,
-    #root select:focus,
-    #root .pf-v5-c-form-control:focus,
-    #root .pf-c-form-control:focus {
+    #app input:focus,
+    #app textarea:focus,
+    #app select:focus,
+    #app .pf-v5-c-form-control:focus,
+    #app .pf-c-form-control:focus {
       border-color: var(--suncoast-accent);
       box-shadow: 0 0 0 3px var(--suncoast-focus);
       outline: none;
@@ -828,8 +828,8 @@ data:
 
     html,
     body,
-    #root,
-    #root .pf-v5-c-page {
+    #app,
+    #app .pf-v5-c-page {
       min-height: 100%;
       background:
         radial-gradient(circle at 52% 8%, rgba(50, 108, 229, 0.11), transparent 34rem),
@@ -837,7 +837,7 @@ data:
       color: var(--suncoast-text) !important;
     }
 
-    #root .pf-v5-c-masthead {
+    #app .pf-v5-c-masthead {
       min-height: 5.15rem;
       padding: 0 clamp(1rem, 3vw, 3.25rem);
       border-bottom: 1px solid var(--suncoast-border);
@@ -846,11 +846,11 @@ data:
       backdrop-filter: blur(16px);
     }
 
-    #root .pf-v5-c-masthead__toggle {
+    #app .pf-v5-c-masthead__toggle {
       display: none;
     }
 
-    #root .suncoast-account-brand {
+    #app .suncoast-account-brand {
       display: inline-flex;
       flex: 0 0 auto;
       align-items: center;
@@ -860,7 +860,7 @@ data:
       cursor: default;
     }
 
-    #root .suncoast-account-brand img {
+    #app .suncoast-account-brand img {
       display: block !important;
       width: 100%;
       height: 100%;
@@ -868,11 +868,11 @@ data:
       object-position: left center;
     }
 
-    #root .suncoast-realm-badge {
+    #app .suncoast-realm-badge {
       display: inline-flex;
       align-items: center;
       justify-content: center;
-      margin-left: 1rem;
+      margin-right: 1rem;
       padding: 0.35rem 0.75rem;
       border: 1px solid rgba(50, 108, 229, 0.2);
       border-radius: 999px;
@@ -884,23 +884,23 @@ data:
       text-transform: uppercase;
     }
 
-    #root .pf-v5-c-masthead__content,
-    #root .pf-v5-c-toolbar,
-    #root .pf-v5-c-toolbar__content,
-    #root .pf-v5-c-toolbar__content-section {
+    #app .pf-v5-c-masthead__content,
+    #app .pf-v5-c-toolbar,
+    #app .pf-v5-c-toolbar__content,
+    #app .pf-v5-c-toolbar__content-section {
       background: transparent !important;
     }
 
-    #root .suncoast-user-name {
+    #app .suncoast-user-name {
       display: inline-flex;
       align-items: center;
-      margin-right: 0.8rem;
+      margin-left: 0.7rem;
       color: var(--suncoast-text);
       font-size: 0.9rem;
       font-weight: 650;
     }
 
-    #root .pf-v5-c-avatar {
+    #app .pf-v5-c-avatar {
       width: 2.45rem;
       height: 2.45rem;
       border: 2px solid #ffffff;
@@ -908,7 +908,7 @@ data:
       box-shadow: 0 0 0 1px var(--suncoast-border);
     }
 
-    #root [data-testid="referrer-link"] {
+    #app [data-testid="referrer-link"] {
       border-radius: 0.6rem;
       color: var(--suncoast-accent-strong);
       font-size: 0.86rem;
@@ -916,14 +916,14 @@ data:
       text-decoration: none;
     }
 
-    #root .pf-v5-c-page__sidebar {
+    #app .pf-v5-c-page__sidebar {
       width: 19.25rem;
       border: 0;
       background: transparent !important;
       box-shadow: none;
     }
 
-    #root .pf-v5-c-page__sidebar-body {
+    #app .pf-v5-c-page__sidebar-body {
       min-height: calc(100vh - 8.2rem);
       margin: 1.5rem 0 1.5rem 2rem;
       padding: 0.8rem;
@@ -933,14 +933,14 @@ data:
       box-shadow: 0 10px 32px rgba(15, 23, 42, 0.04);
     }
 
-    #root .pf-v5-c-nav,
-    #root .pf-v5-c-nav__list,
-    #root .pf-v5-c-nav__item,
-    #root .pf-v5-c-nav__link {
+    #app .pf-v5-c-nav,
+    #app .pf-v5-c-nav__list,
+    #app .pf-v5-c-nav__item,
+    #app .pf-v5-c-nav__link {
       background: transparent !important;
     }
 
-    #root .pf-v5-c-nav__link {
+    #app .pf-v5-c-nav__link {
       display: flex;
       align-items: center;
       min-height: 3.25rem;
@@ -951,7 +951,7 @@ data:
       font-weight: 560;
     }
 
-    #root .pf-v5-c-nav__link::before {
+    #app .pf-v5-c-nav__link::before {
       width: 1.25rem;
       height: 1.25rem;
       margin-right: 0.75rem;
@@ -962,44 +962,44 @@ data:
       opacity: 0.85;
     }
 
-    #root .pf-v5-c-nav__item:nth-child(1) > .pf-v5-c-nav__link::before {
+    #app .pf-v5-c-nav__item:nth-child(1) > .pf-v5-c-nav__link::before {
       background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23475569' stroke-width='1.8'%3E%3Ccircle cx='12' cy='8' r='3.5'/%3E%3Cpath d='M4.5 20c.6-4.2 3.1-6.2 7.5-6.2s6.9 2 7.5 6.2'/%3E%3C/svg%3E");
     }
 
-    #root .pf-v5-c-nav__item:nth-child(2) > .pf-v5-c-nav__link::before {
+    #app .pf-v5-c-nav__item:nth-child(2) > .pf-v5-c-nav__link::before {
       background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23475569' stroke-width='1.8'%3E%3Cpath d='M9.5 14.5l5-5M7 17l-1 1a3.5 3.5 0 0 1-5-5l4-4a3.5 3.5 0 0 1 5 0M17 7l1-1a3.5 3.5 0 0 1 5 5l-4 4a3.5 3.5 0 0 1-5 0'/%3E%3C/svg%3E");
     }
 
-    #root .pf-v5-c-nav__item:nth-child(3) > .pf-v5-c-nav__link::before {
+    #app .pf-v5-c-nav__item:nth-child(3) > .pf-v5-c-nav__link::before {
       background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23475569' stroke-width='1.8'%3E%3Cpath d='M12 3l8 3v5c0 5-3.2 8.4-8 10-4.8-1.6-8-5-8-10V6z'/%3E%3C/svg%3E");
     }
 
-    #root .pf-v5-c-nav__item:nth-child(4) > .pf-v5-c-nav__link::before {
+    #app .pf-v5-c-nav__item:nth-child(4) > .pf-v5-c-nav__link::before {
       background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23475569' stroke-width='1.8'%3E%3Ccircle cx='12' cy='12' r='8.5'/%3E%3Cpath d='M12 7v5l3.4 2'/%3E%3C/svg%3E");
     }
 
-    #root .pf-v5-c-nav__link:hover {
+    #app .pf-v5-c-nav__link:hover {
       background: var(--suncoast-elevated) !important;
       color: var(--suncoast-text) !important;
     }
 
-    #root .pf-v5-c-nav__link.pf-m-current,
-    #root .pf-v5-c-nav__item.pf-m-current > .pf-v5-c-nav__link,
-    #root .suncoast-transactions-nav.pf-m-current {
+    #app .pf-v5-c-nav__link.pf-m-current,
+    #app .pf-v5-c-nav__item.pf-m-current > .pf-v5-c-nav__link,
+    #app .suncoast-transactions-nav.pf-m-current {
       border-left: 3px solid var(--suncoast-accent);
       background: rgba(50, 108, 229, 0.1) !important;
       color: var(--suncoast-accent-strong) !important;
     }
 
-    #root .suncoast-transactions-nav::before {
+    #app .suncoast-transactions-nav::before {
       background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23475569' stroke-width='1.8'%3E%3Cpath d='M6 3h12v18l-3-2-3 2-3-2-3 2zM9 8h6M9 12h6M9 16h4'/%3E%3C/svg%3E") !important;
     }
 
-    #root .pf-v5-c-page__main {
+    #app .pf-v5-c-page__main {
       background: transparent;
     }
 
-    #root .pf-v5-c-page__main-section {
+    #app .pf-v5-c-page__main-section {
       width: calc(100% - 4rem);
       max-width: 72rem;
       margin: 0 auto;
@@ -1007,32 +1007,36 @@ data:
       background: transparent !important;
     }
 
-    #root .pf-v5-c-page__main-section:first-child {
+    #app .pf-v5-c-page__main-section:first-child {
       padding-top: 2rem;
     }
 
-    #root .pf-v5-c-page__main-section:first-child .pf-v5-c-content {
+    #app .pf-v5-c-page__main-section:first-child .pf-v5-c-content {
       border: 0;
       background: transparent;
       box-shadow: none;
     }
 
-    #root [data-testid="page-heading"] {
+    #app [data-testid="page-heading"] {
       margin-bottom: 0.35rem;
       font-size: clamp(2rem, 3vw, 2.65rem);
       line-height: 1.08;
     }
 
-    #root [data-testid="page-heading"] + p {
+    #app [data-testid="page-heading"] + p {
       color: var(--suncoast-muted);
       font-size: 1rem;
     }
 
-    #root .suncoast-profile-content {
-      padding: 0 0 2.5rem;
+    #app .suncoast-profile-heading-source {
+      display: none !important;
     }
 
-    #root form.suncoast-native-profile-form {
+    #app .suncoast-profile-content {
+      padding: 2rem 0 2.5rem;
+    }
+
+    #app form.suncoast-native-profile-form {
       position: absolute !important;
       width: 1px !important;
       height: 1px !important;
@@ -1044,7 +1048,7 @@ data:
       white-space: nowrap !important;
     }
 
-    #root #suncoast-account-readonly-note {
+    #app #suncoast-account-readonly-note {
       display: none;
     }
 
@@ -1062,6 +1066,23 @@ data:
       padding: clamp(1.25rem, 2.5vw, 2rem);
     }
 
+    .suncoast-profile-intro {
+      margin-bottom: 1.35rem;
+    }
+
+    .suncoast-profile-intro h1 {
+      margin: 0 0 0.4rem;
+      color: var(--suncoast-text);
+      font-size: clamp(1.75rem, 2.4vw, 2.2rem);
+      line-height: 1.12;
+    }
+
+    .suncoast-profile-intro p {
+      margin: 0;
+      color: var(--suncoast-muted);
+      font-size: 0.98rem;
+    }
+
     .suncoast-managed-badge {
       display: inline-flex;
       align-items: center;
@@ -1076,8 +1097,13 @@ data:
     }
 
     .suncoast-managed-badge::before {
-      content: "\1F512";
-      font-size: 0.8rem;
+      width: 1rem;
+      height: 1rem;
+      content: "";
+      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%231d4ed8' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='5' y='10' width='14' height='10' rx='2'/%3E%3Cpath d='M8 10V7a4 4 0 0 1 8 0v3'/%3E%3C/svg%3E");
+      background-position: center;
+      background-repeat: no-repeat;
+      background-size: contain;
     }
 
     .suncoast-profile-fields {
@@ -1114,18 +1140,36 @@ data:
       position: absolute;
       top: 50%;
       left: 1rem;
-      color: var(--suncoast-muted);
-      content: "\1F512";
-      font-size: 0.75rem;
+      width: 1rem;
+      height: 1rem;
+      content: "";
+      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23475569' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='5' y='10' width='14' height='10' rx='2'/%3E%3Cpath d='M8 10V7a4 4 0 0 1 8 0v3'/%3E%3C/svg%3E");
+      background-position: center;
+      background-repeat: no-repeat;
+      background-size: contain;
       transform: translateY(-50%);
     }
 
     .suncoast-profile-helper {
+      position: relative;
       margin: 1.35rem 0 0;
-      padding-top: 1rem;
+      padding: 1rem 0 0 1.55rem;
       border-top: 1px solid var(--suncoast-border);
       color: var(--suncoast-muted);
       font-size: 0.86rem;
+    }
+
+    .suncoast-profile-helper::before {
+      position: absolute;
+      top: 1.05rem;
+      left: 0;
+      width: 1rem;
+      height: 1rem;
+      content: "";
+      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23475569' stroke-width='1.9' stroke-linecap='round'%3E%3Ccircle cx='12' cy='12' r='9'/%3E%3Cpath d='M12 10v6M12 7h.01'/%3E%3C/svg%3E");
+      background-position: center;
+      background-repeat: no-repeat;
+      background-size: contain;
     }
 
     #suncoast-connected-account-card {
@@ -1261,22 +1305,22 @@ data:
     }
 
     @media (max-width: 900px) {
-      #root .pf-v5-c-masthead__toggle {
+      #app .pf-v5-c-masthead__toggle {
         display: inline-flex;
       }
 
-      #root .pf-v5-c-page__sidebar {
+      #app .pf-v5-c-page__sidebar {
         width: min(19rem, 86vw);
         background: var(--suncoast-bg) !important;
       }
 
-      #root .pf-v5-c-page__sidebar-body {
+      #app .pf-v5-c-page__sidebar-body {
         min-height: auto;
         margin: 0.75rem;
       }
 
-      #root .suncoast-user-name,
-      #root .suncoast-realm-badge {
+      #app .suncoast-user-name,
+      #app .suncoast-realm-badge {
         display: none;
       }
 
@@ -1287,19 +1331,19 @@ data:
     }
 
     @media (max-width: 640px) {
-      #root .pf-v5-c-masthead {
+      #app .pf-v5-c-masthead {
         padding: 0 0.75rem;
       }
 
-      #root .suncoast-account-brand {
+      #app .suncoast-account-brand {
         width: 11.5rem;
       }
 
-      #root [data-testid="referrer-link"] {
+      #app [data-testid="referrer-link"] {
         display: none;
       }
 
-      #root .pf-v5-c-page__main-section,
+      #app .pf-v5-c-page__main-section,
       #suncoast-transactions-page {
         width: calc(100% - 2rem);
       }
@@ -1313,7 +1357,7 @@ data:
         margin-left: 3.5rem;
       }
     }
-  account-lockdown-v2.js: |
+  account-lockdown-v3.js: |
     (function () {
       "use strict";
 
@@ -3824,6 +3868,25 @@ data:
           userNameLabel.textContent = userName;
         }
 
+        var userCluster =
+          (avatarItem && avatarItem.parentElement) ||
+          (userNameLabel && userNameLabel.parentElement);
+        if (userCluster) {
+          var firstUserElement = avatarItem || userNameLabel;
+          if (badge && badge.parentElement !== userCluster) {
+            userCluster.insertBefore(badge, firstUserElement);
+          }
+          if (
+            avatarItem &&
+            userNameLabel &&
+            avatarItem.parentElement === userCluster &&
+            userNameLabel.parentElement === userCluster &&
+            avatarItem.nextElementSibling !== userNameLabel
+          ) {
+            userCluster.insertBefore(avatarItem, userNameLabel);
+          }
+        }
+
         var headerReturnLink = masthead.querySelector("[data-testid='referrer-link']");
         hideElement(headerReturnLink);
       }
@@ -3910,6 +3973,10 @@ data:
         if (heading && heading.textContent !== "Your profile") {
           heading.textContent = "Your profile";
         }
+        var headingSection = heading && heading.closest(".pf-v5-c-page__main-section");
+        if (headingSection) {
+          headingSection.classList.add("suncoast-profile-heading-source");
+        }
         var headingDescription = heading && heading.parentElement && heading.parentElement.querySelector("p");
         if (
           headingDescription &&
@@ -3952,6 +4019,16 @@ data:
         if (summary.getAttribute("data-profile-signature") !== signature) {
           summary.setAttribute("data-profile-signature", signature);
           summary.replaceChildren();
+
+          var intro = document.createElement("div");
+          intro.className = "suncoast-profile-intro";
+          var introTitle = document.createElement("h1");
+          introTitle.textContent = "Your profile";
+          var introDescription = document.createElement("p");
+          introDescription.textContent = "Identity details provided by your connected account.";
+          intro.appendChild(introTitle);
+          intro.appendChild(introDescription);
+          summary.appendChild(intro);
 
           var managed = document.createElement("div");
           managed.className = "suncoast-managed-badge";
@@ -4062,6 +4139,58 @@ data:
         }
       }
 
+      function ensureNavigationOrder() {
+        var list = document.querySelector("#page-sidebar .pf-v5-c-nav > .pf-v5-c-nav__list");
+        if (!list) {
+          return;
+        }
+
+        var desiredLabels = [
+          "Profile",
+          "Connected accounts",
+          "Security",
+          "Sessions",
+          "Transactions"
+        ];
+        var links = Array.prototype.slice.call(
+          list.querySelectorAll("a.pf-v5-c-nav__link")
+        );
+        var desiredItems = desiredLabels.map(function (label) {
+          var link = links.find(function (candidate) {
+            return normalizeString(candidate.textContent) === label;
+          });
+          return link && link.closest("li.pf-v5-c-nav__item");
+        }).filter(Boolean);
+
+        if (desiredItems.length !== desiredLabels.length) {
+          return;
+        }
+
+        var accountSecurity = list.querySelector(":scope > [data-testid='accountSecurity']");
+        desiredItems.forEach(function (item) {
+          if (item.parentElement !== list) {
+            list.appendChild(item);
+          }
+        });
+        if (accountSecurity) {
+          hideElement(accountSecurity);
+        }
+
+        var visibleItems = Array.prototype.slice.call(list.children).filter(function (item) {
+          return item.style.display !== "none" && item.getAttribute("aria-hidden") !== "true";
+        });
+        var alreadyOrdered =
+          visibleItems.length === desiredItems.length &&
+          desiredItems.every(function (item, index) {
+            return visibleItems[index] === item;
+          });
+        if (!alreadyOrdered) {
+          desiredItems.forEach(function (item) {
+            list.appendChild(item);
+          });
+        }
+      }
+
       function renderTransactionsPage() {
         var main = document.querySelector("main.pf-v5-c-page__main, main, [role='main']");
         if (!main) {
@@ -4140,6 +4269,7 @@ data:
         ensureRolesPanel();
         ensureIdpProfilePanel();
         ensureTransactionsNavigation();
+        ensureNavigationOrder();
         renderTransactionsPage();
         ensureReturnToHeaderLink();
       }
@@ -4362,12 +4492,12 @@ spec:
                 path: account/resources/content.json
               - key: messages_en.properties
                 path: account/messages/messages_en.properties
-              - key: account-lockdown-v2.js
-                path: account/resources/js/account-lockdown-v2.js
-              - key: account-lockdown-v2.css
-                path: account/resources/css/account-lockdown-v2.css
-              - key: suncoast-logo-v2.svg
-                path: account/resources/public/suncoast-logo-v2.svg
+              - key: account-lockdown-v3.js
+                path: account/resources/js/account-lockdown-v3.js
+              - key: account-lockdown-v3.css
+                path: account/resources/css/account-lockdown-v3.css
+              - key: suncoast-logo-v3.svg
+                path: account/resources/public/suncoast-logo-v3.svg
               - key: login-theme.properties
                 path: login/theme.properties
               - key: suncoast-login.css
