@@ -75,14 +75,14 @@ metadata:
 data:
   theme.properties: |
     parent=keycloak.v3
-    styles=css/account-lockdown-v10.css
-    scripts=js/account-lockdown-v10.js
+    styles=css/account-lockdown-v11.css
+    scripts=js/account-lockdown-v11.js
     logo=/public/suncoast-logo-v8.svg
   login-theme.properties: |
     parent=keycloak
     import=common/keycloak
-    styles=css/login.css css/suncoast-login-v2.css
-    scripts=js/suncoast-login-v2.js
+    styles=css/login.css css/suncoast-login-v3.css
+    scripts=js/suncoast-login-v3.js
     favicons=img/suncoast-mark.svg
   content.json: |
     [
@@ -126,7 +126,7 @@ data:
         <path d="M24 12v3.2M17.6 15.5l2.2 2.1M30.4 15.5l-2.2 2.1M15.3 28.8c2.2 1.7 4.4 1.7 6.5 0s4.4-1.7 6.6 0 4.4 1.7 6.5 0"/>
       </g>
     </svg>
-  suncoast-login-v2.js: |
+  suncoast-login-v3.js: |
     (function () {
       "use strict";
 
@@ -187,11 +187,13 @@ data:
       }
 
       function applyBrand() {
+        var isTotpPage = Boolean(document.getElementById("kc-totp-settings"));
+        var pageTitle = document.getElementById("kc-page-title");
+        if (isTotpPage && pageTitle) {
+          pageTitle.textContent = "Set up an authenticator";
+        }
+        document.body.classList.toggle("suncoast-totp-page", isTotpPage);
         applyMetadata();
-        document.body.classList.toggle(
-          "suncoast-totp-page",
-          Boolean(document.getElementById("kc-totp-settings"))
-        );
         var header = document.getElementById("kc-header-wrapper");
         if (!header || header.dataset.suncoastBranded === "true") {
           return;
@@ -221,7 +223,7 @@ data:
         applyBrand();
       }
     })();
-  suncoast-login-v2.css: |
+  suncoast-login-v3.css: |
     :root {
       --suncoast-bg: #f8fafc;
       --suncoast-surface: #ffffff;
@@ -242,6 +244,9 @@ data:
       background:
         radial-gradient(circle at 14% 12%, rgba(50, 108, 229, 0.10), transparent 28rem),
         linear-gradient(180deg, #ffffff 0%, var(--suncoast-bg) 72%) !important;
+      background-color: var(--suncoast-bg) !important;
+      background-attachment: fixed !important;
+      background-repeat: no-repeat !important;
       color: var(--suncoast-text);
       font-family: "IBM Plex Sans", "Segoe UI", system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
     }
@@ -249,6 +254,7 @@ data:
     .login-pf-page {
       min-height: 100vh;
       padding: clamp(2rem, 7vh, 5.5rem) 1.25rem 2rem;
+      background: transparent !important;
     }
 
     #kc-header {
@@ -465,6 +471,8 @@ data:
     }
 
     #kc-totp-supported-apps li {
+      box-sizing: border-box;
+      min-height: 2.2rem;
       padding: 0.35rem 0.65rem;
       border: 1px solid var(--suncoast-border);
       border-radius: 999px;
@@ -472,6 +480,7 @@ data:
       color: var(--suncoast-text);
       font-size: 0.82rem;
       font-weight: 600;
+      line-height: 1.35;
     }
 
     #kc-totp-secret-qr-code {
@@ -549,6 +558,33 @@ data:
       }
     }
 
+    @media (max-width: 360px) {
+      .login-pf-page {
+        padding-inline: 0.7rem;
+      }
+
+      .login-pf-page .card-pf {
+        padding: 1.15rem;
+      }
+
+      #kc-page-title {
+        font-size: 1.75rem;
+      }
+
+      #kc-totp-supported-apps {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr);
+      }
+
+      #kc-totp-supported-apps li {
+        width: 100%;
+        padding: 0.42rem 0.6rem;
+        border-radius: 0.6rem;
+        font-size: 0.78rem;
+        white-space: nowrap;
+      }
+    }
+
     @media (prefers-color-scheme: dark) {
       :root {
         --suncoast-bg: #0f172a;
@@ -566,6 +602,7 @@ data:
         background:
           radial-gradient(circle at 14% 12%, rgba(50, 108, 229, 0.18), transparent 28rem),
           linear-gradient(180deg, #111827 0%, var(--suncoast-bg) 72%) !important;
+        background-color: var(--suncoast-bg) !important;
       }
 
       .login-pf-page .card-pf,
@@ -581,7 +618,7 @@ data:
         color: var(--suncoast-text) !important;
       }
     }
-  account-lockdown-v10.css: |
+  account-lockdown-v11.css: |
     #save-btn,
     #cancel-btn,
     #update-email-btn,
@@ -1656,6 +1693,193 @@ data:
       margin-bottom: 0.45rem !important;
     }
 
+    #app #two-factor-categ-title + .pf-v5-l-split {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      align-items: center;
+      gap: 1rem;
+      margin: 1rem 0 0 !important;
+      padding: 1.25rem;
+      border: 1px solid var(--suncoast-border);
+      border-radius: 0.9rem 0.9rem 0 0;
+      background: var(--suncoast-surface);
+    }
+
+    #app #two-factor-categ-title + .pf-v5-l-split [data-testid="otp/help-text"] {
+      color: var(--suncoast-muted);
+      line-height: 1.5;
+    }
+
+    #app [data-testid="otp/create"] {
+      display: inline-flex !important;
+      min-height: 2.65rem;
+      align-items: center;
+      padding: 0.65rem 0.9rem;
+      border-radius: 0.6rem;
+      background: var(--suncoast-accent) !important;
+      color: #ffffff !important;
+      font-weight: 650;
+      white-space: normal;
+      text-align: center;
+    }
+
+    #app #two-factor-categ-title + .pf-v5-l-split .pf-v5-c-menu-toggle {
+      display: none !important;
+    }
+
+    #app [data-testid="otp/credential-list"] {
+      margin: 0 !important;
+      border: 1px solid var(--suncoast-border);
+      border-top: 0;
+      border-radius: 0 0 0.9rem 0.9rem;
+      background: var(--suncoast-elevated);
+      overflow: hidden;
+    }
+
+    #app [data-testid="otp/credential-list"] .pf-v5-c-data-list__item,
+    #app [data-testid="otp/credential-list"] .pf-v5-c-data-list__item-row {
+      border: 0;
+      background: transparent;
+    }
+
+    #app [data-testid="otp/credential-list"] .pf-v5-c-data-list__cell {
+      padding: 1rem 1.25rem;
+      color: var(--suncoast-muted);
+    }
+
+    #app .pf-v5-c-page__main .pf-v5-l-stack__item > .pf-v5-c-toolbar {
+      display: none !important;
+    }
+
+    #app #linked-idps,
+    #app #unlinked-idps {
+      border: 0;
+      background: transparent;
+    }
+
+    #app #linked-idps .pf-v5-c-data-list__item,
+    #app #unlinked-idps .pf-v5-c-data-list__item {
+      border: 1px solid var(--suncoast-border);
+      border-radius: 0.9rem;
+      background: var(--suncoast-surface);
+      box-shadow: var(--suncoast-shadow);
+      overflow: hidden;
+    }
+
+    #app #linked-idps .pf-v5-c-data-list__item-row,
+    #app #unlinked-idps .pf-v5-c-data-list__item-row {
+      border: 0;
+      background: transparent;
+    }
+
+    #app #linked-idps .pf-v5-c-data-list__item-content {
+      display: grid;
+      grid-template-columns: minmax(10rem, 0.7fr) auto minmax(14rem, 1.3fr);
+      align-items: center;
+      gap: 1rem;
+      width: 100%;
+      padding: 1.1rem 1.25rem;
+    }
+
+    #app #linked-idps .pf-v5-c-data-list__cell,
+    #app #unlinked-idps .pf-v5-c-data-list__cell {
+      min-width: 0;
+      padding: 0;
+      color: var(--suncoast-text);
+      overflow-wrap: anywhere;
+    }
+
+    #app #unlinked-idps .pf-v5-c-data-list__cell {
+      padding: 1rem 1.25rem;
+      color: var(--suncoast-muted);
+    }
+
+    #app .suncoast-empty-provider-section {
+      display: none !important;
+    }
+
+    #app .signed-in-device-list,
+    #app .signed-in-device-list > .pf-v5-c-data-list__item {
+      border: 0;
+      background: transparent;
+    }
+
+    #app .signed-in-device-list > .pf-v5-c-data-list__item > .pf-v5-c-data-list__item-row {
+      margin-bottom: 1rem;
+      border: 0;
+      border-radius: 0.9rem;
+      background: var(--suncoast-surface);
+      box-shadow: var(--suncoast-shadow);
+    }
+
+    #app .signed-in-device-list [aria-label="device-sessions-content"] {
+      width: 100%;
+      padding: 1.25rem;
+      border: 1px solid var(--suncoast-border);
+      border-radius: 0.9rem;
+    }
+
+    #app .signed-in-device-list .pf-v5-l-grid {
+      display: grid;
+      grid-template-columns: 1.5rem minmax(0, 1fr) auto;
+      align-items: start;
+      gap: 0.7rem 0.8rem;
+    }
+
+    #app .signed-in-device-list .pf-v5-l-grid > :first-child {
+      grid-column: 1;
+      width: 1.25rem;
+      color: var(--suncoast-muted);
+    }
+
+    #app .signed-in-device-list .pf-v5-l-grid > :nth-child(2) {
+      grid-column: 2;
+      min-width: 0;
+    }
+
+    #app .signed-in-device-list .pf-v5-l-grid > :nth-child(3) {
+      grid-column: 3;
+    }
+
+    #app .signed-in-device-list .pf-v5-l-grid > :nth-child(4) {
+      grid-column: 2 / -1;
+      width: 100%;
+    }
+
+    #app .signed-in-device-list .session-title {
+      display: inline-block;
+      margin-bottom: 0.4rem;
+      color: var(--suncoast-text);
+      font-weight: 700;
+      overflow-wrap: anywhere;
+    }
+
+    #app .signed-in-device-list .signed-in-device-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 0.75rem;
+      width: 100%;
+    }
+
+    #app .signed-in-device-list .pf-v5-c-description-list__group {
+      min-width: 0;
+      padding: 0.75rem;
+      border: 1px solid var(--suncoast-border);
+      border-radius: 0.65rem;
+      background: var(--suncoast-elevated);
+    }
+
+    #app .signed-in-device-list .pf-v5-c-description-list__term {
+      margin-bottom: 0.3rem;
+      color: var(--suncoast-muted);
+      font-size: 0.78rem;
+    }
+
+    #app .signed-in-device-list .pf-v5-c-description-list__description {
+      color: var(--suncoast-text);
+      overflow-wrap: anywhere;
+    }
+
     @media (max-width: 900px) {
       #app .pf-v5-c-masthead__toggle {
         display: inline-flex;
@@ -1679,6 +1903,10 @@ data:
       .suncoast-profile-field {
         grid-template-columns: 1fr;
         gap: 0.35rem;
+      }
+
+      #app .signed-in-device-list .signed-in-device-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
       }
     }
 
@@ -1761,6 +1989,36 @@ data:
       .suncoast-connected-status {
         margin-left: 3.5rem;
       }
+
+      #app #two-factor-categ-title + .pf-v5-l-split {
+        grid-template-columns: minmax(0, 1fr);
+      }
+
+      #app [data-testid="otp/create"] {
+        width: 100%;
+        justify-content: center;
+      }
+
+      #app #linked-idps .pf-v5-c-data-list__item-content {
+        grid-template-columns: minmax(0, 1fr);
+        gap: 0.75rem;
+      }
+
+      #app .signed-in-device-list .pf-v5-l-grid {
+        grid-template-columns: 1.35rem minmax(0, 1fr);
+      }
+
+      #app .signed-in-device-list .pf-v5-l-grid > :nth-child(3) {
+        display: none;
+      }
+
+      #app .signed-in-device-list .pf-v5-l-grid > :nth-child(4) {
+        grid-column: 1 / -1;
+      }
+
+      #app .signed-in-device-list .signed-in-device-grid {
+        grid-template-columns: minmax(0, 1fr);
+      }
     }
 
     @media (max-width: 360px) {
@@ -1788,7 +2046,7 @@ data:
         padding: 0.75rem;
       }
     }
-  account-lockdown-v10.js: |
+  account-lockdown-v11.js: |
     (function () {
       "use strict";
 
@@ -4877,6 +5135,27 @@ data:
         }
       }
 
+      function enhanceNativeAccountPages() {
+        var authenticatorButton = document.querySelector('[data-testid="otp/create"]');
+        if (
+          authenticatorButton &&
+          authenticatorButton.textContent.trim() !== "Set up authenticator"
+        ) {
+          authenticatorButton.textContent = "Set up authenticator";
+        }
+
+        var unlinkedProviders = document.getElementById("unlinked-idps");
+        if (
+          unlinkedProviders &&
+          normalizeString(unlinkedProviders.textContent) === "No unlinked providers"
+        ) {
+          var emptyProviderSection = unlinkedProviders.closest(".pf-v5-l-stack__item");
+          if (emptyProviderSection) {
+            emptyProviderSection.classList.add("suncoast-empty-provider-section");
+          }
+        }
+      }
+
       function applyLockdown() {
         applyAccountMetadata();
         if (redirectApplicationsPage()) {
@@ -4897,6 +5176,7 @@ data:
         ensureIdpProfilePanel();
         ensureTransactionsNavigation();
         ensureNavigationOrder();
+        enhanceNativeAccountPages();
         bindMobileNavigationClose();
         renderTransactionsPage();
         ensureReturnToHeaderLink();
@@ -5120,20 +5400,20 @@ spec:
                 path: account/resources/content.json
               - key: messages_en.properties
                 path: account/messages/messages_en.properties
-              - key: account-lockdown-v10.js
-                path: account/resources/js/account-lockdown-v10.js
-              - key: account-lockdown-v10.css
-                path: account/resources/css/account-lockdown-v10.css
+              - key: account-lockdown-v11.js
+                path: account/resources/js/account-lockdown-v11.js
+              - key: account-lockdown-v11.css
+                path: account/resources/css/account-lockdown-v11.css
               - key: suncoast-logo-v8.svg
                 path: account/resources/public/suncoast-logo-v8.svg
               - key: suncoast-mark.svg
                 path: account/resources/public/suncoast-mark.svg
               - key: login-theme.properties
                 path: login/theme.properties
-              - key: suncoast-login-v2.css
-                path: login/resources/css/suncoast-login-v2.css
-              - key: suncoast-login-v2.js
-                path: login/resources/js/suncoast-login-v2.js
+              - key: suncoast-login-v3.css
+                path: login/resources/css/suncoast-login-v3.css
+              - key: suncoast-login-v3.js
+                path: login/resources/js/suncoast-login-v3.js
               - key: suncoast-mark.svg
                 path: login/resources/img/suncoast-mark.svg
 
