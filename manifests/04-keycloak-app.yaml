@@ -75,7 +75,7 @@ metadata:
 data:
   theme.properties: |
     parent=keycloak.v3
-    styles=css/account-lockdown-v11.css
+    styles=css/account-lockdown-v12.css
     scripts=js/account-lockdown-v11.js
     logo=/public/suncoast-logo-v8.svg
   login-theme.properties: |
@@ -618,7 +618,7 @@ data:
         color: var(--suncoast-text) !important;
       }
     }
-  account-lockdown-v11.css: |
+  account-lockdown-v12.css: |
     #save-btn,
     #cancel-btn,
     #update-email-btn,
@@ -1883,6 +1883,14 @@ data:
     @media (max-width: 900px) {
       #app .pf-v5-c-masthead__toggle {
         display: inline-flex;
+      }
+
+      #app .pf-v5-c-masthead__toggle .pf-v5-c-button {
+        color: var(--suncoast-text) !important;
+      }
+
+      #app .pf-v5-c-masthead__toggle .pf-v5-c-button svg {
+        fill: currentColor;
       }
 
       #app .pf-v5-c-page__sidebar {
@@ -5402,8 +5410,8 @@ spec:
                 path: account/messages/messages_en.properties
               - key: account-lockdown-v11.js
                 path: account/resources/js/account-lockdown-v11.js
-              - key: account-lockdown-v11.css
-                path: account/resources/css/account-lockdown-v11.css
+              - key: account-lockdown-v12.css
+                path: account/resources/css/account-lockdown-v12.css
               - key: suncoast-logo-v8.svg
                 path: account/resources/public/suncoast-logo-v8.svg
               - key: suncoast-mark.svg
